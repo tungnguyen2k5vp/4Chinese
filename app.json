@@ -1,36 +1,56 @@
 {
   "expo": {
-    "name": "HocTiengTrungApp",
-    "slug": "HocTiengTrungApp",
-    "version": "1.0.0",
+    "name": "4Chinese",
+    "slug": "4chinese",
+    "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "hoctiengtrungapp",
-    "userInterfaceStyle": "automatic",
+    "icon": "./assets/images/hanzi-icon.png",
+    "scheme": "4chinese",
+    "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/images/hanzi-icon.png",
+      "bundleIdentifier": "com.tungnguyen2k5vp.fourchinese"
     },
     "android": {
+      "package": "com.tungnguyen2k5vp.fourchinese",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#2457D6",
+        "foregroundImage": "./assets/images/hanzi-icon.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": true
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/hanzi-icon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#2457D6",
+          "image": "./assets/images/hanzi-icon.png",
+          "imageWidth": 140
+        }
+      ],
+      "expo-sqlite",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Cho phép 4Chinese dùng micro để nhận diện cách đọc tiếng Trung.",
+          "speechRecognitionPermission": "Cho phép 4Chinese nhận diện giọng nói tiếng Trung.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.tts",
+            "com.google.android.as"
+          ]
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Cho phép 4Chinese chọn ảnh minh họa cho từ vựng của bạn.",
+          "microphonePermission": false
         }
       ]
     ],

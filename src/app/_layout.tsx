@@ -1,18 +1,30 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { Stack } from 'expo-router';
+import { SQLiteProvider } from 'expo-sqlite';
+import { StatusBar } from 'expo-status-bar';
+import 'react-native-reanimated';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { colors } from '@/constants/design';
+import { initializeDatabase } from '@/db/database';
 
-SplashScreen.preventAutoHideAsync();
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
-  return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
-  );
+export default function RootLayout() {
+  return <SQLiteProvider databaseName="hanzi30.db" onInit={initializeDatabase} useSuspense>
+    <StatusBar style="dark" />
+    <Stack screenOptions={{ headerShadowVisible: false, headerTintColor: colors.text, headerStyle: { backgroundColor: colors.background }, contentStyle: { backgroundColor: colors.background } }}>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="word/[id]" options={{ title: 'Chi tiết từ vựng', headerBackTitle: 'Kho từ' }} />
+      <Stack.Screen name="learn/setup" options={{ title: 'Học từ mới' }} />
+      <Stack.Screen name="learn/session" options={{ title: 'Buổi học', gestureEnabled: false }} />
+      <Stack.Screen name="review/index" options={{ title: 'Ôn tập' }} />
+      <Stack.Screen name="review/session" options={{ title: 'Ôn tập', gestureEnabled: false }} />
+      <Stack.Screen name="review/result" options={{ title: 'Kết quả', gestureEnabled: false }} />
+      <Stack.Screen name="writing/index" options={{ title: 'Luyện viết' }} />
+      <Stack.Screen name="writing/[character]" options={{ title: 'Luyện viết' }} />
+      <Stack.Screen name="decks/index" options={{ title: 'Bộ từ riêng' }} />
+      <Stack.Screen name="decks/[id]" options={{ title: 'Chi tiết bộ từ' }} />
+      <Stack.Screen name="decks/word" options={{ title: 'Từ vựng cá nhân' }} />
+      <Stack.Screen name="decks/bulk-add" options={{ title: 'Thêm từ hàng loạt' }} />
+    </Stack>
+  </SQLiteProvider>;
 }
