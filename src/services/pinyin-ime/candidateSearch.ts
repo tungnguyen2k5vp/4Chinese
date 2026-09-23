@@ -27,7 +27,12 @@ export async function searchHanziCandidates(
   if (!normalizedQuery) return [];
   // Fetch a wider SQLite window than the rendered bar so target/HSK bonuses
   // can still promote a candidate that is not among the first frequency rows.
-  const words = await findPinyinCandidates(db, normalizedQuery, Math.max(40, context.limit ?? 8));
+  const words = await findPinyinCandidates(
+    db,
+    normalizedQuery,
+    Math.max(40, context.limit ?? 8),
+    false,
+  );
   const ranked = rankPinyinCandidates(
     words.map((word) => ({ word, normalizedPinyin: normalizePinyinInput(word.pinyinNumeric || word.pinyin) })),
     normalizedQuery,

@@ -27,6 +27,7 @@ export function HanziHandwritingPad({
   onHintUsed,
   characterCount = 1,
   targetWord = "",
+  resolveWordCandidates,
 }: {
   onSelect: (hanzi: string) => void;
   onHintUsed?: () => void;
@@ -34,6 +35,8 @@ export function HanziHandwritingPad({
   characterCount?: number;
   /** Used only to reveal one faint reference stroke at a time. */
   targetWord?: string;
+  /** Filters ML candidates against the app dictionary before showing whole words. */
+  resolveWordCandidates?: (characterCandidates: string[][]) => Promise<string[]>;
 }) {
   const recognitionAvailable = isChineseInkRecognitionAvailable();
   const pageCount = Math.max(1, Math.trunc(characterCount));
@@ -42,6 +45,7 @@ export function HanziHandwritingPad({
     Array.from({ length: pageCount }, () => []),
   );
   const [wordCandidates, setWordCandidates] = useState<string[]>([]);
+  const [manualCandidate, setManualCandidate] = useState("");
   const [selectedCharacters, setSelectedCharacters] = useState<string[]>(() =>
     Array.from({ length: pageCount }, () => ""),
   );
@@ -87,6 +91,7 @@ export function HanziHandwritingPad({
         setSelectedCharacters(empty);
         onSelect("");
         setWordCandidates([]);
+        setManualCandidate("");
       }
       updateCurrentStrokes((items) => {
         const next = items.filter((stroke) => !touchesPoint(stroke, point));
@@ -113,6 +118,7 @@ export function HanziHandwritingPad({
             setSelectedCharacters(Array.from({ length: pageCount }, () => ""));
             onSelect("");
             setWordCandidates([]);
+            setManualCandidate("");
           }
           updateCurrentStrokes((items) => [...items, { points: [point] }]);
         },
@@ -145,6 +151,7 @@ export function HanziHandwritingPad({
     if (next.length !== pageCount) return;
     setSelectedCharacters(next);
     setWordCandidates([]);
+    setManualCandidate("");
     emitSelection(next);
     setMessage(`Đã chọn cả từ ${next.join("")}.`);
   };
@@ -165,11 +172,40 @@ export function HanziHandwritingPad({
       const results = await Promise.all(
         strokesByPage.map((page) => recognizeChineseInk(page, size, size)),
       );
-      const candidates = combineCharacterCandidates(results.map((result) => result.candidates), 10);
+      const characterCandidates = results.map((result) => result.candidates);
+      const rawCandidates = combineCharacterCandidates(characterCandidates, 16);
+      let dictionaryCandidates: string[] = [];
+      let dictionaryLookupSucceeded = !resolveWordCandidates;
+      if (resolveWordCandidates) {
+        try {
+          dictionaryCandidates = await resolveWordCandidates(characterCandidates);
+          dictionaryLookupSucceeded = true;
+        } catch {
+          // Keep the raw ML candidates usable for custom words if the local
+          // dictionary lookup itself fails.
+        }
+      }
+      const candidates = (resolveWordCandidates && dictionaryLookupSucceeded
+        ? dictionaryCandidates
+        : rawCandidates).slice(0, 16);
       setWordCandidates(candidates);
-      setMessage(candidates.length ? "Chọn đúng cả từ bên dưới." : "Chưa nhận ra cả từ, hãy kiểm tra lại từng mặt.");
+      setManualCandidate(
+        resolveWordCandidates && dictionaryLookupSucceeded && !dictionaryCandidates.length
+          ? rawCandidates[0] ?? ""
+          : "",
+      );
+      setMessage(
+        dictionaryCandidates.length
+          ? "Đã lọc các từ có trong kho. Chọn từ đúng bên dưới."
+          : resolveWordCandidates && dictionaryLookupSucceeded
+            ? "Không có từ ghép tương ứng trong kho. Hãy viết lại hoặc thêm thủ công."
+            : candidates.length
+            ? "Kho chưa có từ ghép khớp hoàn toàn; bạn vẫn có thể chọn để thêm thủ công."
+            : "Chưa nhận ra cả từ, hãy kiểm tra lại từng mặt.",
+      );
     } catch {
       setWordCandidates([]);
+      setManualCandidate("");
       setMessage("Nhận diện thất bại. Hãy kiểm tra mô hình ML Kit rồi thử lại.");
     } finally {
       setBusy(false);
@@ -179,6 +215,7 @@ export function HanziHandwritingPad({
   const clearCurrentPage = () => {
     updateCurrentStrokes(() => []);
     setWordCandidates([]);
+    setManualCandidate("");
     const next = Array.from({ length: pageCount }, () => "");
     setSelectedCharacters(next);
     setFallbackByPage((pages) => {
@@ -280,6 +317,8 @@ export function HanziHandwritingPad({
                 return next;
               });
               setSelectedCharacters(Array.from({ length: pageCount }, () => ""));
+              setWordCandidates([]);
+              setManualCandidate("");
               onSelect("");
             }}
             placeholder="例如: 学"
@@ -298,6 +337,16 @@ export function HanziHandwritingPad({
             </Pressable>
           ))}
         </View>
+      ) : null}
+      {!wordCandidates.length && manualCandidate ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => selectWord(manualCandidate)}
+          style={styles.manualCandidate}
+        >
+          <Text style={styles.manualCandidateTitle}>Không có trong kho từ</Text>
+          <Text style={styles.manualCandidateText}>Dùng “{manualCandidate}” để thêm thủ công</Text>
+        </Pressable>
       ) : null}
 
       {currentHintPaths.length ? (
@@ -365,6 +414,9 @@ const styles = StyleSheet.create({
   candidates: { width: size, flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.sm },
   candidate: { width: 50, height: 52, borderRadius: 12, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   wordCandidate: { width: "auto", minWidth: 74, paddingHorizontal: spacing.md },
+  manualCandidate: { width: size, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: "#FFF7E8", alignItems: "center", gap: 2 },
+  manualCandidateTitle: { color: colors.warning, fontSize: 12, fontWeight: "900" },
+  manualCandidateText: { color: colors.textMuted, fontSize: 11, textAlign: "center" },
   hanzi: { width: "100%", paddingHorizontal: 2, fontSize: 25, lineHeight: 31, color: colors.primary, fontWeight: "800", textAlign: "center" },
   strokeHint: { width: size, minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: "#C9D6FA", backgroundColor: colors.primarySoft },
   strokeHintDisabled: { opacity: 0.6 },

@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Pressable,
@@ -18,6 +18,7 @@ import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
 import {
   findHanziCandidates,
+  findHanziWordCandidates,
   findMeaningCandidates,
   getVocabulary,
   saveCustomVocabulary,
@@ -60,6 +61,10 @@ export default function WordEditor() {
   const [meaningLoading, setMeaningLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [handwritingCount, setHandwritingCount] = useState(1);
+  const resolveHandwritingCandidates = useCallback(
+    (characterCandidates: string[][]) => findHanziWordCandidates(db, characterCandidates, 12),
+    [db],
+  );
   useEffect(() => {
     if (!id) return;
     getVocabulary(db, id).then((word) => {
@@ -333,7 +338,12 @@ export default function WordEditor() {
                 </Pressable>
               ))}
             </View>
-            <HanziHandwritingPad key={handwritingCount} characterCount={handwritingCount} onSelect={selectRecognizedHanzi} />
+            <HanziHandwritingPad
+              key={handwritingCount}
+              characterCount={handwritingCount}
+              onSelect={selectRecognizedHanzi}
+              resolveWordCandidates={resolveHandwritingCandidates}
+            />
           </View>
         </>
       ) : null}
@@ -416,8 +426,8 @@ export default function WordEditor() {
               </View>
             ) : (
               <Text style={styles.warningText}>
-                Chưa tìm thấy chữ này trong kho từ. Hãy viết lại hoặc chọn dự
-                đoán khác.
+                Chưa có mục ghép này trong kho. Bạn có thể nhập nghĩa/pinyin thủ
+                công, hoặc viết lại để chọn một từ gần đúng trong kho.
               </Text>
             )}
           </View>

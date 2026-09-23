@@ -19,4 +19,15 @@ describe("meaning search alternatives", () => {
     expect(alternatives).toContain("越南");
     expect(alternatives).not.toContain("nuoc");
   });
+
+  it("covers common Vietnamese food aliases and their Hanzi heads", () => {
+    expect(meaningSearchAlternatives("đồ ăn")).toEqual(expect.arrayContaining(["thuc an", "thuc pham", "食物"]));
+    expect(meaningSearchAlternatives("cái bát")).toEqual(expect.arrayContaining(["bat", "chen", "碗"]));
+    expect(meaningSearchAlternatives("nhà ăn")).toEqual(expect.arrayContaining(["nha hang", "食堂", "餐厅"]));
+    expect(meaningSearchAlternatives("mỳ")).toEqual(expect.arrayContaining(["mi", "面条儿"]));
+  });
+
+  it("does not steal unaccented pinyin input with a Vietnamese meaning alias", () => {
+    expect(meaningSearchAlternatives("an")).not.toContain("吃");
+  });
 });

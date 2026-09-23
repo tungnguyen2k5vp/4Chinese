@@ -24,7 +24,7 @@ import {
   listDeletedPersonalDecks,
   listPersonalDecks,
 } from "@/db/repository";
-import { fetchShortDeck, ShortDeckShareError } from "@/services/decks/short-share";
+import { fetchSharedDeck, ShortDeckShareError } from "@/services/decks/short-share";
 import type { PersonalDeck } from "@/types/models";
 
 export default function Decks() {
@@ -89,9 +89,9 @@ export default function Decks() {
     if (importingFriendDeck) return;
     setImportingFriendDeck(true);
     try {
-      const payload = await fetchShortDeck(friendCode);
+      const payload = await fetchSharedDeck(friendCode);
       if (!payload) {
-        Alert.alert("Mã không hợp lệ", "Nhập đúng mã bộ từ gồm 8 ký tự mà bạn bè đã chia sẻ.");
+        Alert.alert("Mã không hợp lệ", "Nhập mã 8 ký tự mới hoặc dán mã HZD1 cũ mà bạn bè đã chia sẻ.");
         return;
       }
       const outcome = await importSharedDeck(db, payload);
@@ -203,15 +203,16 @@ export default function Decks() {
           <View style={[card, styles.modalCard]}>
             <Text style={styles.modalTitle}>Nhập mã bộ từ</Text>
             <Text style={styles.modalDescription}>
-              Nhập mã 8 ký tự mà bạn bè đã lấy từ nút “Chia sẻ bộ từ”.
+              Nhập mã 8 ký tự mới hoặc dán mã HZD1 cũ từ nút “Chia sẻ bộ từ”.
             </Text>
             <TextInput
               autoCapitalize="characters"
               autoCorrect={false}
-              maxLength={9}
+              multiline
+              maxLength={1_000_000}
               value={friendCode}
               onChangeText={setFriendCode}
-              placeholder="Ví dụ: K7M9X2QF"
+              placeholder="Ví dụ: K7M9X2QF hoặc HZD1.…"
               placeholderTextColor={colors.textMuted}
               style={styles.modalInput}
             />

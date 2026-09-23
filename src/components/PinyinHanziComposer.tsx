@@ -91,7 +91,7 @@ export function PinyinHanziComposer({
       }).finally(() => {
         if (!cancelled) setLoading(false);
       });
-    }, 100);
+    }, 60);
     return () => {
       cancelled = true;
       clearTimeout(timer);

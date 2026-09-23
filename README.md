@@ -16,13 +16,14 @@
 - Luyện 50 bộ thủ thông dụng: ý nghĩa, cách dùng, từ liên quan và animation thứ tự nét.
 - Chia sẻ bộ từ bằng mã 8 ký tự; nhập mã để thêm bộ từ của bạn bè.
 - Đổi tên, tìm trong bộ từ bằng pinyin/Hán tự, xóa mềm/khôi phục bộ từ; giữ lâu một từ để xác nhận xóa.
+- Quiz điền chỗ trống/chọn Hán tự với ví dụ của chính bộ từ riêng, và luyện phát âm AI chấm điểm 0–100.
 
 ## Công nghệ
 
 - Expo SDK 57, React Native 0.86, Expo Router
 - TypeScript strict, Zustand, Expo SQLite
 - ML Kit Digital Ink thông qua native Expo module cho nhận diện nét Android
-- `expo-speech` và `expo-speech-recognition` cho phát âm/nhận giọng nói
+- `expo-speech`, `expo-speech-recognition` và `expo-audio` cho phát âm, nhận giọng nói, ghi âm và chấm AI
 - Supabase PostgREST RPC cho chia sẻ bộ từ
 - Vitest và ESLint
 
@@ -61,6 +62,24 @@ Chỉ dùng **Publishable key** (hoặc legacy `anon` key) của Supabase. Khôn
 6. Khởi động lại Metro với cache sạch.
 
 Schema này tạo các RPC an toàn để xuất bản và tải bộ từ qua mã gồm 8 ký tự. Dữ liệu học cá nhân vẫn nằm cục bộ trên thiết bị.
+
+## Chấm phát âm AI
+
+Từ chi tiết một bộ từ, chọn **Luyện phát âm AI**. App ghi một đoạn ngắn, gửi thẳng đến Supabase Edge Function để AI phiên âm tiếng Trung và trả về điểm 0–100. Khóa OpenAI chỉ nằm trên Supabase; Edge Function không lưu file ghi âm.
+
+Thiết lập một lần bằng Supabase CLI:
+
+```bash
+supabase link --project-ref your-project-ref
+supabase secrets set OPENAI_API_KEY=your_openai_api_key
+supabase functions deploy pronunciation-score --no-verify-jwt
+```
+
+`--no-verify-jwt` chỉ phù hợp khi kiểm tra development chưa có tài khoản. Trước khi phát hành công khai, hãy thêm Supabase Auth và rate limit để bảo vệ chi phí API. Sau khi thêm `expo-audio`, cài lại development build một lần để Android có quyền ghi âm:
+
+```bash
+npx expo run:android --device
+```
 
 ## Chạy ứng dụng
 

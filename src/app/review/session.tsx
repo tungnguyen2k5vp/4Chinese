@@ -16,6 +16,7 @@ import { card, colors, radius, spacing } from "@/constants/design";
 import {
   getProgress,
   getSettings,
+  markVocabularyNeedsReinforcement,
   reviewWord,
   saveSettings,
 } from "@/db/repository";
@@ -275,6 +276,9 @@ export default function ReviewSession() {
   const rate = async (rating: ReviewRating) => {
     if (saving || !responseComplete) return;
     setSaving(true);
+    if (rating === "again") {
+      await markVocabularyNeedsReinforcement(db, word.id);
+    }
     const passedAttempt = answerCorrect && rating !== "again" && !usedHint;
     const previousState = wordStates[word.id] ?? emptyWordReviewState();
     const nextWordState = recordReviewAttempt(
@@ -372,6 +376,7 @@ export default function ReviewSession() {
       ...current.filter((item) => item.word.id !== candidate.word.id),
       candidate,
     ]);
+    setPinyinQuery("");
     setComposeSubmitted(false);
     setFeedback(null);
   };
@@ -384,6 +389,7 @@ export default function ReviewSession() {
 
   const clearCompose = () => {
     setSelectedHanzi("");
+    setPinyinQuery("");
     setSelectedCandidates([]);
     setSelectedCandidateRank(null);
     setComposeSubmitted(false);

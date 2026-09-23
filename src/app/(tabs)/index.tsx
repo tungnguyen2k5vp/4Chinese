@@ -22,6 +22,7 @@ const quick = [
   ["Bộ từ riêng", "albums", "/decks"],
   ["Học từ mới", "add-circle", "/learn/setup"],
   ["Ôn tập", "repeat", "/review"],
+  ["Từ cần củng cố", "alert-circle", "/review/weak"],
   ["HSK", "layers", "/(tabs)/hsk"],
   ["Từ đã lưu", "bookmark", "/(tabs)/vocabulary?filter=favorite"],
   ["Luyện viết", "brush", "/writing"],

@@ -21,6 +21,7 @@ import {
   toggleFavorite,
 } from "@/db/repository";
 import { primaryEnglishMeaning } from "@/services/vocabulary/bilingual-meanings";
+import { analyzeVocabulary, buildMnemonicNote } from "@/services/vocabulary/character-analysis";
 import { useAppStore } from "@/stores/app-store";
 import type { Vocabulary } from "@/types/models";
 
@@ -73,6 +74,12 @@ export default function WordDetail() {
   const favorite = async () => {
     const next = await toggleFavorite(db, word.id);
     setWord({ ...word, isFavorite: next });
+  };
+  const analyses = analyzeVocabulary(word);
+  const generatedMnemonic = buildMnemonicNote(analyses);
+  const insertMnemonic = () => {
+    if (notes.includes(generatedMnemonic)) return;
+    setNotes(notes.trim() ? `${notes.trim()}\n\n${generatedMnemonic}` : generatedMnemonic);
   };
   return (
     <Screen>
@@ -220,7 +227,34 @@ export default function WordDetail() {
         </View>
       ) : null}
       {tab === "notes" ? (
-        <View style={card}>
+        <>
+          <View style={[card, styles.analysisCard]}>
+            <View style={styles.analysisHeader}>
+              <View style={styles.analysisCopy}>
+                <Text style={styles.section}>Phân tích bộ thủ & mẹo nhớ</Text>
+                <Text style={styles.analysisHint}>Phân tích tự động cho từng Hán tự.</Text>
+              </View>
+              <Text style={styles.analysisIcon}>忆</Text>
+            </View>
+            {analyses.map((analysis) => (
+              <View key={analysis.character} style={styles.analysisRow}>
+                <View style={styles.analysisCharacter}>
+                  <Text style={styles.analysisHanzi}>{analysis.character}</Text>
+                  <Text style={styles.analysisRadical}>{analysis.radical ?? "·"}</Text>
+                </View>
+                <View style={styles.analysisBody}>
+                  <Text style={styles.analysisLabel}>Bộ thủ / thành phần</Text>
+                  <Text style={styles.analysisText}>{analysis.radicalName} · {analysis.radicalMeaning}</Text>
+                  <Text style={styles.analysisLabel}>Phân rã</Text>
+                  <Text style={styles.analysisText}>{analysis.decomposition}</Text>
+                  <Text style={styles.analysisLabel}>Mnemonic</Text>
+                  <Text style={styles.mnemonic}>{analysis.mnemonic}</Text>
+                </View>
+              </View>
+            ))}
+            <PrimaryButton variant="secondary" label="Chèn mẹo nhớ vào ghi chú" onPress={insertMnemonic} />
+          </View>
+          <View style={card}>
           <Text style={styles.section}>Ghi chú cá nhân</Text>
           <TextInput
             multiline
@@ -234,7 +268,8 @@ export default function WordDetail() {
             label="Lưu ghi chú"
             onPress={() => void saveNotes(db, word.id, notes)}
           />
-        </View>
+          </View>
+        </>
       ) : null}
     </Screen>
   );
@@ -343,6 +378,19 @@ const styles = StyleSheet.create({
   characterTextActive: { color: "#fff" },
   meta: { color: colors.textMuted, fontSize: 12 },
   exampleList: { gap: spacing.md },
+  analysisCard: { gap: spacing.md, backgroundColor: colors.primarySoft },
+  analysisHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  analysisCopy: { flex: 1 },
+  analysisHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  analysisIcon: { color: colors.primary, fontSize: 34, fontWeight: "900" },
+  analysisRow: { flexDirection: "row", gap: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
+  analysisCharacter: { alignItems: "center", backgroundColor: colors.surface, borderRadius: radius.md, justifyContent: "center", minHeight: 78, width: 72 },
+  analysisHanzi: { color: colors.text, fontSize: 37, fontWeight: "900" },
+  analysisRadical: { color: colors.primary, fontSize: 12, fontWeight: "900", marginTop: 2 },
+  analysisBody: { flex: 1, gap: 2 },
+  analysisLabel: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.5, marginTop: 3 },
+  analysisText: { color: colors.text, fontSize: 13, lineHeight: 19 },
+  mnemonic: { color: colors.text, fontSize: 13, fontStyle: "italic", lineHeight: 19 },
   notes: {
     minHeight: 160,
     borderWidth: 1,

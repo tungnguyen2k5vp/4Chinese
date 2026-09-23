@@ -1,13 +1,13 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import {
-  findHanziCandidates,
-  findMeaningCandidates,
-  findPinyinCandidates,
+  findBulkLookupCandidates,
+  type BulkLookupQuery,
 } from "@/db/repository";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
 import { meaningSearchAlternatives } from "@/services/search/meaning-query";
 import { normalizeSearch } from "@/services/search/normalize";
+import { isLowQualityMeaning, vocabularySearchAliases } from "@/services/vocabulary/quality";
 import type { Vocabulary } from "@/types/models";
 
 export interface BulkResolvedWord {
@@ -57,56 +57,137 @@ function isLikelyPinyin(value: string): boolean {
 function hskPriority(word: Vocabulary): number {
   if (word.hskBand === 1) return 500;
   if (word.hskBand === 2) return 420;
-  if (word.hskBand === 3) return 160;
-  if (word.hskBand === 4) return 100;
+  // HSK 3-4 is part of the offline dictionary too. Keep HSK 1-2 as the
+  // beginner tie-breaker, while preventing intermediate entries from being
+  // buried under a loose match from a much higher level.
+  if (word.hskBand === 3) return 330;
+  if (word.hskBand === 4) return 280;
   if (word.hskBand === 5) return 60;
   if (word.hskBand === 6) return 30;
   return 0;
 }
 
-export function bulkCandidateScore(query: string, word: Vocabulary): number {
+function hasNameOrSurnameIntent(query: string): boolean {
   const normalized = normalizeSearch(query);
-  const semanticQueries = meaningSearchAlternatives(normalized);
-  const rawMeanings = [word.primaryMeaningVi, ...word.meaningsVi, ...word.meaningsEn]
+  return /(^| )(ho|ten|ten rieng|ho ten|nguoi)( |$)/.test(normalized);
+}
+
+function isNameOrSurnameCandidate(word: Vocabulary): boolean {
+  const fields = [
+    ...word.pos,
+    word.primaryMeaningVi,
+    ...word.meaningsVi,
+    ...word.meaningsEn,
+    word.source,
+  ].map(normalizeSearch);
+  return fields.some((field) =>
+    field.includes("ho") ||
+    field.includes("ten rieng") ||
+    field.includes("surname")
+  );
+}
+
+type BulkScoreContext = {
+  query: string;
+  normalized: string;
+  semanticQueries: string[];
+  normalizedPinyinQuery: string;
+  exactQuery: string;
+  hasVietnameseTone: boolean;
+  likelyPinyin: boolean;
+  nameIntent: boolean;
+};
+
+function createBulkScoreContext(query: string): BulkScoreContext {
+  return {
+    query,
+    normalized: normalizeSearch(query),
+    semanticQueries: meaningSearchAlternatives(normalizeSearch(query)),
+    normalizedPinyinQuery: normalizePinyinInput(query),
+    exactQuery: normalizeMeaningExact(query),
+    hasVietnameseTone: containsVietnameseTone(query),
+    likelyPinyin: isLikelyPinyin(query),
+    nameIntent: hasNameOrSurnameIntent(query),
+  };
+}
+
+function scoreBulkCandidate(context: BulkScoreContext, word: Vocabulary): number {
+  const {
+    query,
+    normalized,
+    semanticQueries,
+    normalizedPinyinQuery,
+    exactQuery,
+    hasVietnameseTone,
+    likelyPinyin,
+    nameIntent,
+  } = context;
+  const rawMeanings = [
+    word.primaryMeaningVi,
+    ...word.meaningsVi,
+    ...word.meaningsEn,
+    ...vocabularySearchAliases(word.simplified),
+  ]
     .map((meaning) => meaning.trim())
     .filter(Boolean);
   const meanings = rawMeanings
     .map(normalizeSearch)
     .filter(Boolean);
   const pinyin = normalizePinyinInput(word.pinyinNumeric || word.pinyin);
-  const normalizedPinyinQuery = normalizePinyinInput(query);
   const frequencyBonus = Math.max(0, 160 - (word.frequencyRank ?? 80_000) / 500);
   const levelBonus = hskPriority(word);
+  const nameIntentBonus = nameIntent && isNameOrSurnameCandidate(word) ? 5_000 : 0;
+  const nameIntentPenalty = nameIntent && !isNameOrSurnameCandidate(word) ? 4_000 : 0;
+  // Variant/phonology notes (for example “dùng trong 上聲”) must never beat
+  // the common word meaning in a learner-facing search result.
+  const technicalMeaningPenalty = rawMeanings.some(isLowQualityMeaning) ? 3_200 : 0;
 
   if (query.trim() === word.simplified || query.trim() === word.traditional) {
-    return 15_000 + levelBonus + frequencyBonus;
+    return 15_000 + levelBonus + frequencyBonus + nameIntentBonus - technicalMeaningPenalty;
+  }
+  if (containsHanzi(query)) {
+    return word.simplified.includes(query.trim()) || word.traditional.includes(query.trim())
+      ? 9_000 + levelBonus + frequencyBonus - technicalMeaningPenalty
+      : 0;
   }
   if (pinyin && pinyin === normalizedPinyinQuery) {
-    return 12_000 + levelBonus + frequencyBonus;
+    return 12_000 + levelBonus + frequencyBonus + nameIntentBonus - technicalMeaningPenalty;
   }
   if (normalizedPinyinQuery.length >= 2 && pinyin.startsWith(normalizedPinyinQuery)) {
-    return 7_000 + levelBonus + frequencyBonus - Math.min(300, pinyin.length - normalizedPinyinQuery.length);
+    return 7_000 + levelBonus + frequencyBonus + nameIntentBonus - nameIntentPenalty - technicalMeaningPenalty - Math.min(300, pinyin.length - normalizedPinyinQuery.length);
   }
 
   // Do not let accent-stripping turn different Vietnamese words into a false
   // positive.  For example “thứ” must not silently resolve to “thư/sách”.
   // An exact accent-preserving phrase still gets the strongest meaning score.
-  const exactQuery = normalizeMeaningExact(query);
   const exactMeaningMatch = rawMeanings.some((meaning) => {
     const exactMeaning = normalizeMeaningExact(meaning);
     return exactMeaning === exactQuery;
   });
+  const primaryMeaning = normalizeMeaningExact(word.primaryMeaningVi.split(/[;；]/u)[0] ?? word.primaryMeaningVi);
+  const primaryMeaningMatch =
+    primaryMeaning === exactQuery || ` ${primaryMeaning} `.includes(` ${exactQuery} `);
   const exactPhraseMatch = rawMeanings.some((meaning) => {
     const exactMeaning = normalizeMeaningExact(meaning);
     return ` ${exactMeaning} `.includes(` ${exactQuery} `);
   });
-  if (exactMeaningMatch) {
-    return 13_000 + levelBonus + frequencyBonus;
+  // A word's learner-facing primary meaning is stronger evidence than a
+  // technical/secondary dictionary sense. For example, "nhiều" should map
+  // to 多, not let the secondary sense of 百 win only because 百 is HSK 1.
+  if (primaryMeaningMatch) {
+    return 14_000 + levelBonus + frequencyBonus + nameIntentBonus - nameIntentPenalty;
   }
-  if (exactPhraseMatch) return 11_200 + levelBonus + frequencyBonus;
+  if (exactMeaningMatch) {
+    return 13_000 + levelBonus + frequencyBonus + nameIntentBonus - nameIntentPenalty - technicalMeaningPenalty;
+  }
+  if (exactPhraseMatch) return 11_200 + levelBonus + frequencyBonus + nameIntentBonus - nameIntentPenalty - technicalMeaningPenalty;
+
+  // Keep accent-sensitive one-word input safe. The exact-token checks above
+  // still allow “sớm” to find “sáng sớm”, while this prevents “thứ” from
+  // degrading to the unrelated unaccented token “thư” (book/letter).
   if (
-    containsVietnameseTone(query) &&
-    !isLikelyPinyin(query) &&
+    hasVietnameseTone &&
+    !likelyPinyin &&
     exactQuery.split(" ").length === 1
   ) return 0;
 
@@ -134,7 +215,13 @@ export function bulkCandidateScore(query: string, word: Vocabulary): number {
     else if (tokens.length === 1 && matches === 1) semanticScore = 3_500;
   }
 
-  return semanticScore ? semanticScore + levelBonus + frequencyBonus : 0;
+  return semanticScore
+    ? Math.max(0, semanticScore + levelBonus + frequencyBonus + nameIntentBonus - nameIntentPenalty - technicalMeaningPenalty)
+    : 0;
+}
+
+export function bulkCandidateScore(query: string, word: Vocabulary): number {
+  return scoreBulkCandidate(createBulkScoreContext(query), word);
 }
 
 export function rankBulkCandidates(
@@ -142,8 +229,9 @@ export function rankBulkCandidates(
   candidates: Vocabulary[],
   limit = 6,
 ): Vocabulary[] {
+  const context = createBulkScoreContext(query);
   const ranked = candidates
-    .map((word) => ({ word, score: bulkCandidateScore(query, word) }))
+    .map((word) => ({ word, score: scoreBulkCandidate(context, word) }))
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score);
   const best = ranked[0]?.score ?? 0;
@@ -159,33 +247,14 @@ export async function resolveBulkVocabulary(
   input: string,
 ): Promise<BulkResolvedWord[]> {
   const terms = parseBulkVocabularyInput(input);
-  const resolved: BulkResolvedWord[] = [];
-  // Keep SQLite work bounded so a 100-line import does not stall gestures on
-  // lower-end Android phones.
-  for (let offset = 0; offset < terms.length; offset += 6) {
-    const batch = await Promise.all(
-      terms.slice(offset, offset + 6).map(async (term) => {
-      const candidates = containsHanzi(term)
-        ? await findHanziCandidates(db, term, 24)
-        : (() => {
-            // Meaning lookup wins for natural-language input. Pinyin lookup is
-            // only used when no meaning matched, preventing words such as
-            // “thứ” or “book” from being interpreted as a pinyin prefix.
-            return findMeaningCandidates(db, term, containsVietnameseTone(term) ? 100 : 24).then(async (meaningCandidates) => [
-              ...meaningCandidates,
-              ...(isLikelyPinyin(term) && meaningCandidates.length === 0
-                ? await findPinyinCandidates(db, term, 18)
-                : []),
-            ]);
-          })();
-      const resolvedCandidates = await candidates;
-      const unique = rankBulkCandidates(term, Array.from(
-        new Map(resolvedCandidates.map((word) => [word.id, word])).values(),
-      ));
-      return { input: term, word: unique[0] ?? null, alternatives: unique.slice(0, 6) };
-      }),
-    );
-    resolved.push(...batch);
-  }
-  return resolved;
+  if (!terms.length) return [];
+  const queries: BulkLookupQuery[] = terms.map((term) => ({
+    value: term,
+    allowPinyin: !containsHanzi(term) && isLikelyPinyin(term),
+  }));
+  const candidates = await findBulkLookupCandidates(db, queries);
+  return terms.map((term) => {
+    const unique = rankBulkCandidates(term, candidates);
+    return { input: term, word: unique[0] ?? null, alternatives: unique.slice(0, 6) };
+  });
 }

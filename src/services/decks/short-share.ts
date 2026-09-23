@@ -1,4 +1,5 @@
 import {
+  decodeDeckShareCode,
   decodeSharedDeckPayload,
   type SharedDeckPayload,
 } from "@/services/decks/share-code";
@@ -93,4 +94,15 @@ export async function fetchShortDeck(codeInput: string): Promise<SharedDeckPaylo
     throw new ShortDeckShareError(`Không thể tìm mã bộ từ: ${await responseMessage(response)}`);
   }
   return decodeSharedDeckPayload(await response.json() as unknown);
+}
+
+/**
+ * Imports either the current short Supabase code or the original self-contained
+ * HZD1 code.  HZD1 payloads are decoded locally, so they remain usable even
+ * when the old code was created before the Supabase sharing table existed.
+ */
+export async function fetchSharedDeck(codeInput: string): Promise<SharedDeckPayload | null> {
+  const legacyPayload = decodeDeckShareCode(codeInput);
+  if (legacyPayload) return legacyPayload;
+  return fetchShortDeck(codeInput);
 }

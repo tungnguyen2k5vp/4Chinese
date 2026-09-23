@@ -137,6 +137,7 @@ export default function LearnSession() {
       await feedbackHaptic(true);
       setPass((value) => (value + 1) as 1 | 2 | 3);
       setRecognizedHanzi("");
+      setPinyinQuery("");
       setFeedback(
         pass === 1
           ? "Đúng. Lượt 2 sẽ ẩn đáp án."
@@ -194,6 +195,7 @@ export default function LearnSession() {
       if (!current || Array.from(value).length > 1) return value;
       return `${current}${value}`;
     });
+    setPinyinQuery("");
     setFeedback(null);
   };
 
@@ -318,6 +320,7 @@ export default function LearnSession() {
           <View style={styles.recognized}>
             <Text style={styles.recognizedLabel}>CHỮ ĐÃ CHỌN</Text>
             <Text style={styles.recognizedText}>{recognizedHanzi}</Text>
+            <AudioButton text={word.simplified} size={24} />
             <Text style={recognizedCorrect ? styles.good : styles.bad}>
               {recognizedCorrect
                 ? "Đúng chữ. Có thể hoàn tất bước ghi nhớ."

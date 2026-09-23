@@ -14,6 +14,12 @@ import {
 } from '@/db/schema';
 import { illustrationForVocabulary, isDeviceSelectedImage } from '@/services/media/illustration';
 import { normalizeSearch } from '@/services/search/normalize';
+import {
+  applyVocabularyQualityOverride,
+  cleanLearnerMeanings,
+  vocabularySearchAliases,
+} from '@/services/vocabulary/quality';
+import type { Vocabulary } from '@/types/models';
 
 export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   const current = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -60,6 +66,9 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   if (currentVersion < 6 && !seededNow) await refreshGeneratedTranslations(db);
   await seedSupplementalVocabulary(db);
   if (currentVersion < 7) await repairAutomaticIllustrations(db);
+  // A freshly seeded database already uses the canonical data above; the
+  // migration is only needed for an existing install with an older index.
+  if (currentVersion < DATABASE_VERSION && !seededNow) await refreshVocabularyQuality(db);
   if (currentVersion < DATABASE_VERSION) {
     await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
   }
@@ -147,8 +156,7 @@ async function insertVocabulary(
           $imageAttribution: word.imageAttribution, $audioUri: word.audioUri,
           $source: word.source, $sourceVersion: word.sourceVersion, $sourceUrl: word.sourceUrl,
           $translationStatus: word.translationStatus,
-          $searchText: normalizeSearch([word.simplified, word.traditional, word.pinyin,
-            word.pinyinNumeric, ...word.meaningsVi, ...word.meaningsEn].join(' ')),
+        $searchText: vocabularySearchText(word),
         });
         for (const example of word.examples) {
           await exampleStatement.executeAsync({
@@ -165,10 +173,23 @@ async function insertVocabulary(
   });
 }
 
-function getSeedVocabulary() {
+/**
+ * Returns the canonical dictionary already bundled inside the application.
+ *
+ * Bulk import uses this instead of round-tripping every base row through the
+ * SQLite bridge. The database remains the source of truth for progress and
+ * user-created words; this function is only the immutable offline dictionary.
+ */
+export function getOfflineVocabulary(): Vocabulary[] {
+  const words = [...getSeedVocabulary(), ...supplementalVocabulary];
+  return Array.from(new Map(words.map((word) => [word.id, word])).values());
+}
+
+function getSeedVocabulary(): Vocabulary[] {
   const curated = new Map(starterVocabulary.map((word) => [word.simplified, word]));
   const generated = generatedVocabulary as typeof starterVocabulary;
-  const merged = generated.map((word) => {
+  const merged = generated.map((rawWord) => {
+    const word = applyVocabularyQualityOverride(rawWord);
     const correction = curated.get(word.simplified);
     if (!correction) return word;
     curated.delete(word.simplified);
@@ -176,7 +197,23 @@ function getSeedVocabulary() {
       translationStatus: correction.translationStatus, strokeCount: correction.strokeCount,
       examples: correction.examples, source: `${word.source}; curated Vietnamese starter correction` };
   });
-  return [...merged, ...curated.values()];
+  return [...merged, ...curated.values()].map(applyVocabularyQualityOverride);
+}
+
+function vocabularySearchText(word: Pick<
+  typeof starterVocabulary[number],
+  'simplified' | 'traditional' | 'pinyin' | 'pinyinNumeric' | 'meaningsVi' | 'meaningsEn'
+>): string {
+  const meaningsVi = cleanLearnerMeanings(word.meaningsVi);
+  return normalizeSearch([
+    word.simplified,
+    word.traditional,
+    word.pinyin,
+    word.pinyinNumeric,
+    ...meaningsVi,
+    ...word.meaningsEn,
+    ...vocabularySearchAliases(word.simplified),
+  ].join(' '));
 }
 
 /**
@@ -206,14 +243,7 @@ async function refreshGeneratedTranslations(db: SQLiteDatabase): Promise<void> {
           $pinyinNumeric: word.pinyinNumeric,
           $meaningsEn: JSON.stringify(word.meaningsEn),
           $sourceVersion: word.sourceVersion,
-          $searchText: normalizeSearch([
-            word.simplified,
-            word.traditional,
-            word.pinyin,
-            word.pinyinNumeric,
-            ...word.meaningsVi,
-            ...word.meaningsEn,
-          ].join(' ')),
+          $searchText: vocabularySearchText(word),
         });
       }
     } finally {
@@ -253,6 +283,79 @@ async function refreshGeneratedTranslations(db: SQLiteDatabase): Promise<void> {
       }
     } finally {
       await copyStatement.finalizeAsync();
+    }
+  });
+}
+
+/**
+ * Version 9 refreshes the learner-facing dictionary fields and every search
+ * index from the bundled canonical data. Older installs had correct source
+ * data added after their SQLite file was first seeded, so new lookups such as
+ * "BUỔI SÁNG" could not find 上午 until this migration ran.
+ *
+ * Base dictionary rows can be refreshed safely. For a user/deck copy we only
+ * refresh shared metadata and its search index; the user's Vietnamese meaning
+ * remains untouched.
+ */
+async function refreshVocabularyQuality(db: SQLiteDatabase): Promise<void> {
+  const vocabulary = getSeedVocabulary();
+  // The generated source can gain new HSK entries between app releases.
+  // Insert missing base rows before refreshing their meanings and indexes so
+  // an existing install receives the expanded offline dictionary as well.
+  await insertVocabulary(db, vocabulary);
+  const canonicalByHanzi = new Map(vocabulary.map((word) => [word.simplified, word]));
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    const baseStatement = await db.prepareAsync(`UPDATE vocabulary SET
+      traditional=$traditional,pinyin=$pinyin,pinyin_numeric=$pinyinNumeric,
+      primary_meaning_vi=$primaryMeaningVi,meanings_vi=$meaningsVi,meanings_en=$meaningsEn,
+      pos=$pos,translation_status=$translationStatus,source_version=$sourceVersion,
+      search_text=$searchText,updated_at=$updatedAt WHERE id=$id AND is_custom=0`);
+    const customStatement = await db.prepareAsync(`UPDATE vocabulary SET
+      meanings_en=$meaningsEn,search_text=$searchText,updated_at=$updatedAt
+      WHERE id=$id AND is_custom=1`);
+    try {
+      for (const word of vocabulary) {
+        await baseStatement.executeAsync({
+          $id: word.id,
+          $traditional: word.traditional,
+          $pinyin: word.pinyin,
+          $pinyinNumeric: word.pinyinNumeric,
+          $primaryMeaningVi: word.primaryMeaningVi,
+          $meaningsVi: JSON.stringify(word.meaningsVi),
+          $meaningsEn: JSON.stringify(word.meaningsEn),
+          $pos: JSON.stringify(word.pos),
+          $translationStatus: word.translationStatus,
+          $sourceVersion: word.sourceVersion,
+          $searchText: vocabularySearchText(word),
+          $updatedAt: now,
+        });
+      }
+      const copies = await db.getAllAsync<{
+        id: string; simplified: string; traditional: string; pinyin: string;
+        pinyin_numeric: string; meanings_vi: string; meanings_en: string;
+      }>('SELECT id,simplified,traditional,pinyin,pinyin_numeric,meanings_vi,meanings_en FROM vocabulary WHERE is_custom=1');
+      for (const copy of copies) {
+        const canonical = canonicalByHanzi.get(copy.simplified);
+        const meaningsVi = JSON.parse(copy.meanings_vi) as string[];
+        const meaningsEn = canonical?.meaningsEn ?? JSON.parse(copy.meanings_en) as string[];
+        await customStatement.executeAsync({
+          $id: copy.id,
+          $meaningsEn: JSON.stringify(meaningsEn),
+          $searchText: vocabularySearchText({
+            simplified: copy.simplified,
+            traditional: copy.traditional,
+            pinyin: copy.pinyin,
+            pinyinNumeric: copy.pinyin_numeric,
+            meaningsVi,
+            meaningsEn,
+          }),
+          $updatedAt: now,
+        });
+      }
+    } finally {
+      await baseStatement.finalizeAsync();
+      await customStatement.finalizeAsync();
     }
   });
 }

@@ -25,6 +25,11 @@ export default function RootLayout() {
       <Stack.Screen name="decks/[id]" options={{ title: 'Chi tiết bộ từ' }} />
       <Stack.Screen name="decks/word" options={{ title: 'Từ vựng cá nhân' }} />
       <Stack.Screen name="decks/bulk-add" options={{ title: 'Thêm từ hàng loạt' }} />
+      <Stack.Screen name="decks/trash" options={{ title: 'Thùng rác bộ từ' }} />
+      <Stack.Screen name="decks/listening" options={{ title: 'Luyện nghe' }} />
+      <Stack.Screen name="decks/pronunciation" options={{ title: 'Luyện phát âm' }} />
+      <Stack.Screen name="decks/quiz" options={{ title: 'Bài kiểm tra' }} />
+      <Stack.Screen name="review/weak" options={{ title: 'Từ cần củng cố' }} />
     </Stack>
   </SQLiteProvider>;
 }

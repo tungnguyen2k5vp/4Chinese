@@ -1,11 +1,17 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
+import { getOfflineVocabulary } from "@/db/database";
 import {
   sharedWordToVocabulary,
   type SharedDeckPayload,
 } from "@/services/decks/share-code";
 import { illustrationForVocabulary } from "@/services/media/illustration";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
+import {
+  assessWeakness,
+  isWeakWord,
+  type WeakWordSignals,
+} from "@/services/review/weak-words";
 import { meaningSearchAlternatives } from "@/services/search/meaning-query";
 import { normalizeSearch } from "@/services/search/normalize";
 import {
@@ -19,6 +25,7 @@ import {
   createContextualExample,
   withSingleContextualExample,
 } from "@/services/vocabulary/contextual-example";
+import { cleanLearnerMeanings, vocabularySearchAliases } from "@/services/vocabulary/quality";
 import type {
   DashboardStats,
   EditableVocabulary,
@@ -68,6 +75,42 @@ type DbWord = {
   deck_id: string | null;
 };
 
+export type BulkLookupQuery = {
+  value: string;
+  allowPinyin?: boolean;
+};
+
+type BulkLookupIndexRow = {
+  id: string;
+  simplified: string;
+  traditional: string;
+  pinyin_numeric: string;
+  search_text: string;
+  searchTextPadded: string;
+  pinyinCompact: string;
+  hsk_band: string;
+  frequency_rank: number | null;
+  deck_id: string | null;
+  /** Present for immutable bundled words; absent for user-created DB rows. */
+  word?: Vocabulary;
+};
+
+type BulkLookupIndexDbRow = Omit<BulkLookupIndexRow, "searchTextPadded" | "pinyinCompact">;
+
+type BulkLookupQueryContext = BulkLookupQuery & {
+  raw: string;
+  normalized: string;
+  alternatives: string[];
+  tokens: string[];
+  pinyinQuery: string;
+  hasHanzi: boolean;
+};
+
+const BULK_INDEX_CANDIDATES_PER_QUERY = 128;
+const BULK_FETCH_ID_CHUNK_SIZE = 500;
+const bulkLookupIndexCache = new WeakMap<SQLiteDatabase, Promise<BulkLookupIndexRow[]>>();
+let bulkOfflineVocabularyCache: Vocabulary[] | null = null;
+
 type DbProgress = {
   vocabulary_id: string;
   status: string | null;
@@ -99,6 +142,21 @@ type DbProgress = {
   hint_used_count: number;
   average_response_time_ms: number;
   last_response_time_ms: number;
+};
+
+type DbWeakWord = DbWord & {
+  correct_count: number;
+  wrong_count: number;
+  lapse_count: number;
+  consecutive_wrong: number;
+  hint_used_count: number;
+};
+
+export type WeakVocabulary = {
+  word: Vocabulary;
+  score: number;
+  reasons: string[];
+  isDue: boolean;
 };
 
 const LEGACY_STATE = { New: 0, Learning: 1, Review: 2, Relearning: 3 } as const;
@@ -271,6 +329,21 @@ export async function startLearningWord(
 /** Semantic alias used by the learning screen to make the boundary explicit. */
 export const completeInitialLearning = startLearningWord;
 
+/** Records an explicit “Chưa nhớ” immediately, even if the learner leaves the
+ * three-pass session before its final SRS transition is written. */
+export async function markVocabularyNeedsReinforcement(
+  db: SQLiteDatabase,
+  vocabularyId: string,
+): Promise<void> {
+  await db.runAsync(
+    `UPDATE user_vocabulary_progress
+    SET consecutive_wrong=MAX(1, consecutive_wrong), consecutive_correct=0, updated_at=?
+    WHERE vocabulary_id=? AND status='LEARNING' AND studied=1 AND is_known=0 AND is_suspended=0`,
+    new Date().toISOString(),
+    vocabularyId,
+  );
+}
+
 const activeReviewWrites = new Set<string>();
 export async function reviewWord(
   db: SQLiteDatabase,
@@ -407,6 +480,64 @@ export async function getDueVocabulary(
     values,
   );
   return attachSingleExamples(db, rows.map(mapWord));
+}
+
+/**
+ * A read-only “mistake book”. It reuses the same persisted signals that the
+ * scheduler already uses to prioritize due reviews, without creating a second
+ * SRS source of truth or allowing an off-schedule review write.
+ */
+export async function getWeakVocabulary(
+  db: SQLiteDatabase,
+  limit = 30,
+): Promise<WeakVocabulary[]> {
+  const now = new Date().toISOString();
+  const rows = await db.getAllAsync<DbWeakWord>(
+    `SELECT v.*, p.mastery_level, p.is_favorite, p.due, p.status, p.studied,
+      p.is_known, p.next_review_at, p.review_count, p.correct_count,
+      p.wrong_count, p.lapse_count, p.consecutive_wrong, p.hint_used_count
+    FROM vocabulary v
+    JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+    WHERE p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.is_suspended=0
+      AND (v.deck_id IS NULL OR EXISTS (
+        SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+      ))
+      AND (
+        p.consecutive_wrong>=1 OR p.lapse_count>=1 OR p.wrong_count>=2
+        OR p.hint_used_count>=3
+      )
+    ORDER BY
+      p.consecutive_wrong DESC,
+      p.lapse_count DESC,
+      CASE WHEN p.review_count>0 THEN CAST(p.wrong_count AS REAL)/p.review_count ELSE 0 END DESC,
+      p.hint_used_count DESC,
+      p.next_review_at ASC
+    LIMIT ?`,
+    [limit],
+  );
+  const words = await attachSingleExamples(db, rows.map(mapWord));
+  return rows.flatMap((row, index) => {
+    const nextReviewAt = row.next_review_at ?? "";
+    const signals: WeakWordSignals = {
+      reviewCount: row.review_count ?? 0,
+      correctCount: row.correct_count ?? 0,
+      wrongCount: row.wrong_count ?? 0,
+      lapseCount: row.lapse_count ?? 0,
+      consecutiveWrong: row.consecutive_wrong ?? 0,
+      hintUsedCount: row.hint_used_count ?? 0,
+      nextReviewAt,
+    };
+    if (!isWeakWord(signals)) return [];
+    const word = words[index];
+    if (!word) return [];
+    const assessment = assessWeakness(signals);
+    return [{
+      word,
+      score: assessment.score,
+      reasons: assessment.reasons,
+      isDue: Boolean(nextReviewAt) && nextReviewAt <= now,
+    }];
+  });
 }
 
 export async function getUnlearnedVocabulary(
@@ -766,6 +897,7 @@ export async function findHanziCandidates(
   db: SQLiteDatabase,
   hanzi: string,
   limit = 8,
+  includeExamples = true,
 ): Promise<Vocabulary[]> {
   const value = hanzi.trim();
   if (!value) return [];
@@ -784,7 +916,88 @@ export async function findHanziCandidates(
     value,
     limit,
   );
-  return attachSingleExamples(db, rows.map(mapWord));
+  const words = rows.map(mapWord);
+  if (words.length) return includeExamples ? attachSingleExamples(db, words) : words;
+
+  // The bundled dictionary is canonical and may contain an entry that an old
+  // installed SQLite file has not received yet. Do not report a false
+  // "not found" just because the local migration is behind the APK bundle.
+  const offlineWords = (bulkOfflineVocabularyCache ??= getOfflineVocabulary())
+    .filter((word) =>
+      word.simplified === value ||
+      word.traditional === value ||
+      word.simplified.includes(value) ||
+      word.traditional.includes(value),
+    )
+    .slice(0, Math.max(1, Math.min(100, Math.trunc(limit))));
+  return includeExamples ? attachSingleExamples(db, offlineWords) : offlineWords;
+}
+
+function firstRecognizedHanzi(value: string): string {
+  return Array.from(value.trim()).find((character) => /[\u3400-\u9fff]/u.test(character)) ?? "";
+}
+
+/**
+ * Finds real dictionary words that can be formed from the recognizer's
+ * per-page candidates. ML Kit can return a plausible character that is not a
+ * word when the pages are combined blindly (for example 别白勺). Filtering at
+ * this boundary keeps whole-word suggestions in sync with the offline store.
+ */
+export async function findHanziWordCandidates(
+  db: SQLiteDatabase,
+  characterCandidates: string[][],
+  limit = 12,
+): Promise<string[]> {
+  const groups = characterCandidates.map((group) => {
+    const ranks = new Map<string, number>();
+    group.forEach((candidate, index) => {
+      const character = firstRecognizedHanzi(candidate);
+      if (character && !ranks.has(character)) ranks.set(character, index);
+    });
+    return ranks;
+  });
+  if (!groups.length || groups.some((group) => group.size === 0)) return [];
+
+  const ranked = new Map<string, { score: number; value: string }>();
+  const addWord = (word: Pick<Vocabulary, "simplified" | "traditional" | "hskBand" | "frequencyRank">) => {
+    for (const value of new Set([word.simplified, word.traditional])) {
+      const characters = Array.from(value);
+      if (characters.length !== groups.length) continue;
+      let score = 0;
+      let matches = true;
+      characters.forEach((character, index) => {
+        const group = groups[index];
+        const rank = group?.get(character);
+        if (rank === undefined) {
+          matches = false;
+          return;
+        }
+        score += 12_000 - rank * 700;
+      });
+      if (!matches) continue;
+      score += bulkIndexHskPriority(String(word.hskBand)) + bulkIndexFrequencyBonus(word.frequencyRank);
+      const previous = ranked.get(value);
+      if (!previous || score > previous.score) ranked.set(value, { score, value });
+    }
+  };
+
+  for (const word of (bulkOfflineVocabularyCache ??= getOfflineVocabulary())) addWord(word);
+
+  // Include user-created/deck words without transferring their large JSON
+  // fields. The common HSK path above remains entirely in memory.
+  const customRows = await db.getAllAsync<{
+    simplified: string;
+    traditional: string;
+  }>(`SELECT simplified,traditional FROM vocabulary WHERE is_custom=1
+      AND (deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=vocabulary.deck_id AND d.deleted_at IS NULL))`);
+  for (const word of customRows) {
+    addWord({ simplified: word.simplified, traditional: word.traditional, hskBand: 1, frequencyRank: null });
+  }
+
+  return Array.from(ranked.values())
+    .sort((left, right) => right.score - left.score || left.value.localeCompare(right.value))
+    .slice(0, Math.max(1, Math.min(32, Math.trunc(limit))))
+    .map((item) => item.value);
 }
 
 /**
@@ -798,6 +1011,7 @@ export async function findPinyinCandidates(
   db: SQLiteDatabase,
   query: string,
   limit = 40,
+  includeExamples = true,
 ): Promise<Vocabulary[]> {
   const normalized = normalizePinyinInput(query);
   if (!normalized) return [];
@@ -816,7 +1030,8 @@ export async function findPinyinCandidates(
     normalized,
     Math.max(1, Math.min(100, Math.trunc(limit))),
   );
-  return attachSingleExamples(db, rows.map(mapWord));
+  const words = rows.map(mapWord);
+  return includeExamples ? attachSingleExamples(db, words) : words;
 }
 
 /**
@@ -831,10 +1046,14 @@ export async function findMeaningCandidates(
   db: SQLiteDatabase,
   meaning: string,
   limit = 8,
+  includeExamples = true,
 ): Promise<Vocabulary[]> {
   const value = normalizeSearch(meaning.trim());
   if (!value) return [];
   const alternatives = meaningSearchAlternatives(value);
+  const exactMeaning = meaning.trim().normalize("NFC");
+  const exactMeaningPattern = `%${exactMeaning}%`;
+  const exactNormalizedPattern = `% ${value} %`;
   const matchClause = alternatives
     .map(() => "(' ' || v.search_text || ' ') LIKE ?")
     .join(" OR ");
@@ -851,15 +1070,208 @@ export async function findMeaningCandidates(
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     WHERE (${matchClause}${tokenClause ? ` OR (${tokenClause})` : ""})
       AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
-    ORDER BY CASE ${ranking} ELSE 99 END,
+    ORDER BY CASE
+        WHEN v.primary_meaning_vi = ? THEN 0
+        WHEN v.primary_meaning_vi LIKE ? THEN 1
+        WHEN v.meanings_vi LIKE ? THEN 2
+        WHEN (' ' || v.search_text || ' ') LIKE ? THEN 3
+        ELSE 4
+      END,
+      CASE ${ranking} ELSE 99 END,
       CASE WHEN CAST(v.hsk_band AS TEXT) IN ('1','2') THEN 0 ELSE 1 END,
       COALESCE(v.frequency_rank,999999),v.pinyin_numeric LIMIT ?`,
     ...alternatives.map((item) => `% ${item} %`),
     ...tokenTerms.map((item) => `% ${item} %`),
+    exactMeaning,
+    exactMeaningPattern,
+    exactMeaningPattern,
+    exactNormalizedPattern,
     ...alternatives.map((item) => `% ${item} %`),
-    limit,
+    Math.max(1, Math.min(256, Math.trunc(limit))),
   );
-  return attachSingleExamples(db, rows.map(mapWord));
+  const words = rows.map(mapWord);
+  return includeExamples ? attachSingleExamples(db, words) : words;
+}
+
+function bulkIndexHskPriority(hskBand: string): number {
+  const band = Number(hskBand);
+  if (band === 1) return 500;
+  if (band === 2) return 420;
+  if (band === 3) return 330;
+  if (band === 4) return 280;
+  if (band === 5) return 60;
+  if (band === 6) return 30;
+  return 0;
+}
+
+function bulkIndexFrequencyBonus(frequencyRank: number | null): number {
+  return Math.max(0, 160 - (frequencyRank ?? 80_000) / 500);
+}
+
+function createBulkLookupQueryContext(query: BulkLookupQuery): BulkLookupQueryContext {
+  const raw = query.value.trim();
+  const normalized = normalizeSearch(raw);
+  return {
+    ...query,
+    raw,
+    normalized,
+    alternatives: meaningSearchAlternatives(normalized),
+    tokens: normalized.split(" ").filter((token) => token.length >= 2),
+    pinyinQuery: normalizePinyinInput(raw),
+    hasHanzi: /[\u3400-\u9fff]/u.test(raw),
+  };
+}
+
+function bulkIndexMatchScore(query: BulkLookupQueryContext, row: BulkLookupIndexRow): number {
+  if (!query.normalized) return 0;
+  const levelAndFrequency = bulkIndexHskPriority(row.hsk_band) + bulkIndexFrequencyBonus(row.frequency_rank);
+
+  if (query.hasHanzi) {
+    if (query.raw === row.simplified || query.raw === row.traditional) return 16_000 + levelAndFrequency;
+    return row.simplified.includes(query.raw) || row.traditional.includes(query.raw)
+      ? 10_000 + levelAndFrequency
+      : 0;
+  }
+
+  const searchText = row.searchTextPadded;
+  let score = 0;
+  query.alternatives.forEach((alternative, index) => {
+    if (searchText.includes(` ${alternative} `)) {
+      score = Math.max(score, 8_000 - index * 120);
+    }
+  });
+
+  const tokens = query.tokens;
+  if (tokens.length) {
+    const matchedTokens = tokens.filter((token) => searchText.includes(` ${token} `)).length;
+    const coverage = matchedTokens / tokens.length;
+    if (coverage === 1) score = Math.max(score, 7_400 + tokens.length * 80);
+    else if (coverage >= 0.67) score = Math.max(score, 5_000 + matchedTokens * 80);
+    else if (matchedTokens === 1) score = Math.max(score, 3_200);
+  }
+
+  if (query.allowPinyin) {
+    if (query.pinyinQuery && row.pinyinCompact === query.pinyinQuery) score = Math.max(score, 7_000);
+    else if (query.pinyinQuery.length >= 2 && row.pinyinCompact.startsWith(query.pinyinQuery)) score = Math.max(score, 4_200);
+  }
+
+  return score ? score + levelAndFrequency : 0;
+}
+
+async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndexRow[]> {
+  const cached = bulkLookupIndexCache.get(db);
+  if (cached) return cached;
+
+  const promise = (async (): Promise<BulkLookupIndexRow[]> => {
+    if (!bulkOfflineVocabularyCache) bulkOfflineVocabularyCache = getOfflineVocabulary();
+
+    const bundledRows = bulkOfflineVocabularyCache.map((word) => {
+      const meaningsVi = cleanLearnerMeanings([word.primaryMeaningVi, ...word.meaningsVi]);
+      const searchText = normalizeSearch([
+        word.simplified,
+        word.traditional,
+        word.pinyin,
+        word.pinyinNumeric,
+        ...meaningsVi,
+        ...word.meaningsEn,
+        ...vocabularySearchAliases(word.simplified),
+      ].join(" "));
+      return {
+        id: word.id,
+        simplified: word.simplified,
+        traditional: word.traditional,
+        pinyin_numeric: word.pinyinNumeric,
+        search_text: searchText,
+        searchTextPadded: ` ${searchText} `,
+        pinyinCompact: normalizePinyinInput(word.pinyinNumeric),
+        hsk_band: String(word.hskBand),
+        frequency_rank: word.frequencyRank,
+        deck_id: null,
+        word,
+      } satisfies BulkLookupIndexRow;
+    });
+
+    // Custom/deck copies are not part of the immutable bundle. They are
+    // usually only a handful of rows, so keep this query small and preserve
+    // support for meanings edited by the learner.
+    const customRows = await db.getAllAsync<BulkLookupIndexDbRow>(`SELECT id,simplified,traditional,pinyin_numeric,
+      search_text,hsk_band,frequency_rank,deck_id FROM vocabulary WHERE is_custom=1`);
+    return [
+      ...bundledRows,
+      ...customRows.map((row) => ({
+        ...row,
+        searchTextPadded: ` ${row.search_text} `,
+        pinyinCompact: normalizePinyinInput(row.pinyin_numeric),
+      })),
+    ];
+  })();
+  bulkLookupIndexCache.set(db, promise);
+  promise.catch(() => bulkLookupIndexCache.delete(db));
+  return promise;
+}
+
+export function invalidateBulkLookupIndex(db: SQLiteDatabase): void {
+  bulkLookupIndexCache.delete(db);
+}
+
+async function fetchBulkCandidatesById(
+  db: SQLiteDatabase,
+  ids: string[],
+): Promise<Vocabulary[]> {
+  const words = new Map<string, Vocabulary>();
+  for (let offset = 0; offset < ids.length; offset += BULK_FETCH_ID_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + BULK_FETCH_ID_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await db.getAllAsync<DbWord>(
+      `SELECT v.* FROM vocabulary v
+       WHERE v.id IN (${placeholders})
+         AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))`,
+      ...chunk,
+    );
+    for (const row of rows) words.set(row.id, mapWord(row));
+  }
+  return Array.from(words.values());
+}
+
+/**
+ * Uses a lightweight in-memory search index and fetches full vocabulary rows
+ * only for the best candidates. The old implementation returned every row
+ * matching any input line, which made common meanings transfer thousands of
+ * full JSON rows across the SQLite bridge before JS ranking even started.
+ */
+export async function findBulkLookupCandidates(
+  db: SQLiteDatabase,
+  queries: BulkLookupQuery[],
+): Promise<Vocabulary[]> {
+  const uniqueQueries = Array.from(
+    new Map(
+      queries
+        .map((query) => ({ value: query.value.trim(), allowPinyin: query.allowPinyin }))
+        .filter((query) => query.value)
+        .map((query) => [normalizeSearch(query.value), query] as const),
+    ).values(),
+  );
+  if (!uniqueQueries.length) return [];
+
+  const index = await getBulkLookupIndex(db);
+  const selectedIds = new Set<string>();
+  for (const query of uniqueQueries.map(createBulkLookupQueryContext)) {
+    index
+      .map((row) => ({ row, score: bulkIndexMatchScore(query, row) }))
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score)
+      .slice(0, BULK_INDEX_CANDIDATES_PER_QUERY)
+      .forEach((item) => selectedIds.add(item.row.id));
+  }
+
+  const bundledWords = new Map(
+    index
+      .filter((row): row is BulkLookupIndexRow & { word: Vocabulary } => Boolean(row.word && selectedIds.has(row.id)))
+      .map((row) => [row.id, row.word]),
+  );
+  const customIds = Array.from(selectedIds).filter((id) => !bundledWords.has(id));
+  const customWords = customIds.length ? await fetchBulkCandidatesById(db, customIds) : [];
+  return [...bundledWords.values(), ...customWords];
 }
 
 export async function saveCustomVocabulary(
@@ -887,7 +1299,15 @@ export async function saveCustomVocabulary(
   const imageLicense = input.imageUri ? null : illustration?.license ?? null;
   const imageAttribution = input.imageUri ? null : illustration?.attribution ?? null;
   const searchText = normalizeSearch(
-    [input.simplified, input.traditional, input.pinyin, pinyinNumeric, ...meanings, ...meaningsEn]
+    [
+      input.simplified,
+      input.traditional,
+      input.pinyin,
+      pinyinNumeric,
+      ...meanings,
+      ...meaningsEn,
+      ...vocabularySearchAliases(input.simplified.trim()),
+    ]
       .filter(Boolean)
       .join(" "),
   );
@@ -954,6 +1374,7 @@ export async function saveCustomVocabulary(
       input.deckId,
     );
   });
+  invalidateBulkLookupIndex(db);
   return id;
 }
 
@@ -997,7 +1418,15 @@ export async function copyVocabularyBatchToDeck(
       const imageLicense = illustration?.license ?? null;
       const imageAttribution = illustration?.attribution ?? null;
       const searchText = normalizeSearch(
-        [word.simplified, word.traditional, word.pinyin, word.pinyinNumeric, ...meanings, ...word.meaningsEn].join(" "),
+        [
+          word.simplified,
+          word.traditional,
+          word.pinyin,
+          word.pinyinNumeric,
+          ...meanings,
+          ...word.meaningsEn,
+          ...vocabularySearchAliases(word.simplified),
+        ].join(" "),
       );
       await db.runAsync(
         `INSERT INTO vocabulary(id,simplified,traditional,pinyin,pinyin_numeric,primary_meaning_vi,
@@ -1054,6 +1483,7 @@ export async function copyVocabularyBatchToDeck(
       );
     }
   });
+  invalidateBulkLookupIndex(db);
   return { saved: unique.length, skipped: words.length - unique.length };
 }
 
@@ -1101,6 +1531,7 @@ export async function updateVocabularyContent(
     searchText,
     id,
   );
+  invalidateBulkLookupIndex(db);
 }
 
 export async function setKnown(

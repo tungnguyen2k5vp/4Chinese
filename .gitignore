@@ -47,6 +47,7 @@ example
 artifacts/
 *.apk
 *.aab
+supabase/.temp/
 modules/**/android/build/
 modules/**/android/.gradle/
 modules/**/.cxx/

@@ -214,7 +214,7 @@ export default function DeckDetail() {
       "Xóa từ này?",
       `Bạn có chắc chắn muốn xóa “${word.simplified}” khỏi bộ từ không?`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: "Hủy", style: "cancel" },
         {
           text: "OK",
           style: "destructive",
@@ -278,26 +278,52 @@ export default function DeckDetail() {
       ) : null}
       <PrimaryButton
         icon="＋"
-        label="Thêm từ mới"
+        label="Thêm từ"
+        style={styles.addWordButton}
         onPress={() =>
           router.push({
             pathname: "/decks/bulk-add",
             params: { deckId: id },
-              } as unknown as Href)
+          } as unknown as Href)
         }
       />
-      <PrimaryButton
-        variant="secondary"
-        icon="↗"
-        label="Chia sẻ bộ từ"
-        loading={sharing}
-        onPress={() => void shareDeck()}
-      />
+      <View style={styles.actionGrid}>
+        <PrimaryButton
+          variant="secondary"
+          icon="↗"
+          label="Chia sẻ"
+          loading={sharing}
+          style={styles.compactAction}
+          onPress={() => void shareDeck()}
+        />
+        <PrimaryButton
+          variant="secondary"
+          icon="🎧"
+          label="Luyện nghe"
+          disabled={words.length < 2}
+          style={styles.compactAction}
+          onPress={() => router.push({ pathname: "/decks/listening", params: { deckId: id } } as Href)}
+        />
+        <PrimaryButton
+          variant="secondary"
+          icon="✎"
+          label="Quiz"
+          disabled={words.length < 2}
+          style={styles.compactAction}
+          onPress={() => router.push({ pathname: "/decks/quiz", params: { deckId: id } } as Href)}
+        />
+        <PrimaryButton
+          variant="secondary"
+          icon="🎙"
+          label="Phát âm AI"
+          disabled={!words.length}
+          style={styles.compactAction}
+          onPress={() => router.push({ pathname: "/decks/pronunciation", params: { deckId: id } } as Href)}
+        />
+      </View>
       <View style={[card, styles.searchCard]}>
-        <Text style={styles.searchTitle}>TÌM TỪ TRONG BỘ</Text>
-        <Text style={styles.searchHint}>
-          Nhập pinyin có hoặc không dấu. Chọn Hán tự gợi ý để tìm các từ chứa chữ đó, hoặc bấm Tìm để lọc theo pinyin.
-        </Text>
+        <Text style={styles.searchTitle}>TÌM TRONG BỘ</Text>
+        <Text style={styles.searchHint}>Tìm theo pinyin hoặc Hán tự.</Text>
         <View style={styles.searchInputRow}>
           <TextInput
             accessibilityLabel="Nhập pinyin để tìm trong bộ từ"
@@ -326,7 +352,7 @@ export default function DeckDetail() {
         </View>
         {pinyinSearchInput.trim() && hanziCandidates.length ? (
           <View style={styles.candidateArea}>
-            <Text style={styles.candidateLabel}>CHỌN HÁN TỰ PHÙ HỢP</Text>
+            <Text style={styles.candidateLabel}>GỢI Ý</Text>
             <View style={styles.candidateList}>
               {hanziCandidates.map((candidate) => {
                 const hanzi = candidate.word.simplified;
@@ -349,12 +375,12 @@ export default function DeckDetail() {
         {appliedSearch ? (
           <View style={styles.searchResultRow}>
             <Text style={styles.searchResultText}>
-              {appliedSearch.hanzi
-                ? `Đang tìm các từ chứa “${appliedSearch.hanzi}” · ${visibleWords.length} kết quả`
-                : `Đang tìm pinyin “${appliedSearch.pinyin}” · ${visibleWords.length} kết quả`}
+                {appliedSearch.hanzi
+                 ? `${appliedSearch.hanzi} · ${visibleWords.length} kết quả`
+                 : `${appliedSearch.pinyin} · ${visibleWords.length} kết quả`}
             </Text>
             <Pressable accessibilityRole="button" onPress={clearWordSearch}>
-              <Text style={styles.clearSearch}>Xóa lọc</Text>
+              <Text style={styles.clearSearch}>Xóa</Text>
             </Pressable>
           </View>
         ) : null}
@@ -362,7 +388,7 @@ export default function DeckDetail() {
       <View style={[card, styles.progressCard]}>
         <View style={styles.progressHeader}>
           <View>
-            <Text style={styles.progressEyebrow}>TIẾN ĐỘ BỘ TỪ</Text>
+            <Text style={styles.progressEyebrow}>TIẾN ĐỘ</Text>
             <Text style={styles.progressTitle}>
               Đã học {learnedCount}/{words.length}
             </Text>
@@ -382,7 +408,7 @@ export default function DeckDetail() {
         <Text style={styles.progressMeta}>
           {knownCount} đã biết · {skippedCount} bỏ qua · {dueWords.length} đến hạn
         </Text>
-        <Text style={styles.chartTitle}>Cấp độ nhớ</Text>
+        <Text style={styles.chartTitle}>Mức nhớ</Text>
         <View style={styles.levelChart}>
           {levelCounts.map((count, index) => (
             <Pressable key={index + 1} onPress={() => setSelectedLevel((level) => level === index + 1 ? null : index + 1)} style={[styles.levelColumn, selectedLevel === index + 1 && styles.levelColumnActive]}>
@@ -405,19 +431,16 @@ export default function DeckDetail() {
             </Pressable>
           ))}
         </View>
-        <Text style={styles.chartHint}>{selectedLevel ? `Đang hiện các từ ở ${selectedLevel === 6 ? "Nhớ sâu" : `Cấp ${selectedLevel}`}. Chạm lại để bỏ lọc.` : "Chạm một cột để xem các từ ở cấp đó."}</Text>
+        <Text style={styles.chartHint}>{selectedLevel ? `Đang lọc: ${selectedLevel === 6 ? "Nhớ sâu" : `Cấp ${selectedLevel}`}` : "Chạm mức để lọc"}</Text>
       </View>
       <View style={[card, styles.learnCard]}>
-        <Text style={styles.learnEyebrow}>HỌC NGAY TRONG BỘ</Text>
+        <Text style={styles.learnEyebrow}>HỌC NGAY</Text>
         <Text style={styles.learnTitle}>
           {unlearnedCount
             ? `${unlearnedCount} từ mới sẵn sàng`
             : "Đã học hết từ mới trong bộ"}
         </Text>
-        <Text style={styles.learnHint}>
-          Chọn tối đa 10 từ mới. Lần đầu đáp án hiển thị để bạn chép một lần;
-          từ được lưu ở Cấp 1 và chỉ xuất hiện lại khi đến hạn ôn.
-        </Text>
+        <Text style={styles.learnHint}>Chọn tối đa 10 từ mới cho lượt này.</Text>
         <PrimaryButton
           label={unlearnedCount ? `Chọn từ để học (0/${Math.min(10, unlearnedCount)})` : "Chưa có từ mới"}
           disabled={!unlearnedCount}
@@ -428,11 +451,11 @@ export default function DeckDetail() {
       <View style={[card, styles.reviewCard]}>
         <View style={styles.reviewHeader}>
           <View style={styles.reviewCopy}>
-            <Text style={styles.reviewTitle}>Ôn tập theo cấp nhớ</Text>
+            <Text style={styles.reviewTitle}>Ôn tập</Text>
             <Text style={styles.reviewSubtitle}>
               {dueWords.length
-                ? `${dueWords.length} từ đã đến hạn nhắc lại`
-                : "Chưa có từ đến hạn nhắc lại"}
+                ? `${dueWords.length} từ đến hạn`
+                : "Chưa có từ đến hạn"}
             </Text>
           </View>
           <Text style={styles.reviewIcon}>复</Text>
@@ -455,10 +478,7 @@ export default function DeckDetail() {
                 );
               })}
             </View>
-            <Text style={styles.reviewHint}>
-              App ưu tiên từ khó và quá hạn trước; mỗi cấp nhớ sẽ được nhắc
-              lại theo lịch SRS riêng của từ đó.
-            </Text>
+            <Text style={styles.reviewHint}>Ôn theo lịch SRS của từng từ.</Text>
             <PrimaryButton
               label={`Ôn tập ngay (${dueWords.length})`}
               loading={reviewLoading}
@@ -467,8 +487,7 @@ export default function DeckDetail() {
           </>
         ) : (
           <Text style={styles.reviewEmptyText}>
-            Sau khi bạn học từ trong bộ, hệ thống sẽ tự đưa từ đến hạn vào đây
-            theo các cấp nhớ 1–5 và Nhớ sâu.
+            Chưa có từ đến hạn.
           </Text>
         )}
       </View>
@@ -508,9 +527,12 @@ const styles = StyleSheet.create({
   renameInput: { minHeight: 50, borderWidth: 1.5, borderColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text, backgroundColor: colors.background, fontSize: 17, fontWeight: "700" },
   renameActions: { flexDirection: "row", gap: spacing.sm },
   renameButton: { flex: 1 },
+  addWordButton: { minHeight: 52 },
+  actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  compactAction: { width: "48%", minHeight: 44, paddingHorizontal: spacing.sm },
   searchCard: { gap: spacing.sm },
   searchTitle: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
-  searchHint: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
+  searchHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   searchInputRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   searchInput: { flex: 1, minHeight: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: 16, paddingHorizontal: spacing.md },
   searchButton: { minWidth: 72, minHeight: 50, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primary },
@@ -537,11 +559,11 @@ const styles = StyleSheet.create({
   progressTrack: { height: 8, borderRadius: 99, overflow: "hidden", backgroundColor: colors.border },
   progressFill: { height: "100%", borderRadius: 99, backgroundColor: colors.primary },
   progressMeta: { color: colors.textMuted, fontSize: 12 },
-  chartTitle: { color: colors.text, fontSize: 18, fontWeight: "900", marginTop: spacing.xs },
-  levelChart: { height: 86, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-around", gap: spacing.sm, paddingTop: spacing.sm },
+  chartTitle: { color: colors.text, fontSize: 16, fontWeight: "900", marginTop: spacing.xs },
+  levelChart: { height: 76, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-around", gap: spacing.sm, paddingTop: spacing.xs },
   levelColumn: { flex: 1, height: "100%", alignItems: "center", justifyContent: "flex-end", gap: 2 },
   levelColumnActive: { backgroundColor: colors.primarySoft, borderRadius: radius.sm },
-  levelBarTrack: { width: "100%", height: 58, justifyContent: "flex-end", backgroundColor: `${colors.primarySoft}66`, borderRadius: 7, overflow: "hidden" },
+  levelBarTrack: { width: "100%", height: 48, justifyContent: "flex-end", backgroundColor: `${colors.primarySoft}66`, borderRadius: 7, overflow: "hidden" },
   levelBar: { width: "100%", backgroundColor: colors.primary, borderRadius: 7, minHeight: 0 },
   levelLabel: { color: colors.textMuted, fontSize: 10, fontWeight: "800" },
   levelCount: { color: colors.text, fontSize: 10, fontWeight: "800" },

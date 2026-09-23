@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 7;
+export const DATABASE_VERSION = 9;
 
 export const migrationSql = `
 PRAGMA journal_mode = WAL;

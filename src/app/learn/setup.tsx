@@ -99,7 +99,7 @@ export default function LearnSetup() {
 
   const example = word?.examples[0];
   return (
-    <Screen title={`Chọn từ để bắt đầu học (${selected.length}/${goal || 0})`} subtitle={deckId ? "Các từ dưới đây chỉ thuộc bộ từ bạn vừa mở." : "Chọn đủ số từ cho buổi học hôm nay."}>
+    <Screen title={`Chọn từ để bắt đầu học (${selected.length}/${goal || 0})`} subtitle={deckId ? "Từ trong bộ này" : "Từ mới hôm nay"}>
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${goal ? selected.length / goal * 100 : 0}%` }]} />
       </View>
@@ -122,13 +122,14 @@ export default function LearnSetup() {
         </View>
       ) : null}
       <View style={styles.skipRow}>
-        <Text style={styles.skipLabel}>Không học từ này?</Text>
         <Pressable disabled={saving} onPress={() => void skip()} style={styles.skipButton}>
           <Text style={styles.skipText}>Bỏ qua</Text>
         </Pressable>
       </View>
-      <PrimaryButton variant="secondary" label="Đã biết" loading={saving} onPress={() => void markKnown()} />
-      <PrimaryButton label="Học từ này" disabled={!word} onPress={choose} />
+      <View style={styles.actionButtons}>
+        <PrimaryButton variant="secondary" label="Đã biết" loading={saving} onPress={() => void markKnown()} style={styles.actionButton} />
+        <PrimaryButton label="Học từ này" disabled={!word} onPress={choose} style={styles.actionButton} />
+      </View>
     </Screen>
   );
 }
@@ -136,11 +137,12 @@ export default function LearnSetup() {
 const styles = StyleSheet.create({
   progressTrack: { height: 9, borderRadius: 99, backgroundColor: colors.border, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 99, backgroundColor: colors.primary },
-  wordCard: { minHeight: 420, gap: spacing.md, alignItems: "flex-start" },
+  wordCard: { gap: spacing.sm, alignItems: "flex-start", paddingVertical: spacing.lg },
   hanzi: { color: colors.primary, fontSize: 50, fontWeight: "900" },
   audioRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   pinyin: { fontSize: 22 }, meaning: { color: colors.text, fontSize: 22, fontWeight: "800" },
   meta: { color: colors.textMuted, fontSize: 13 }, image: { width: "100%", height: 160, borderRadius: radius.md },
-  example: { marginTop: "auto", gap: spacing.xs }, exampleChinese: { color: colors.text, fontSize: 17, fontWeight: "700" }, exampleVi: { color: colors.textMuted, lineHeight: 20 },
-  skipRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: spacing.md }, skipLabel: { color: colors.textMuted }, skipButton: { paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, skipText: { color: colors.text, fontWeight: "800" },
+  example: { marginTop: spacing.xs, gap: spacing.xs }, exampleChinese: { color: colors.text, fontSize: 17, fontWeight: "700" }, exampleVi: { color: colors.textMuted, lineHeight: 20 },
+  skipRow: { alignItems: "flex-end" }, skipButton: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, skipText: { color: colors.text, fontWeight: "800" },
+  actionButtons: { flexDirection: "row", gap: spacing.sm }, actionButton: { flex: 1, minHeight: 46, paddingHorizontal: spacing.sm },
 });

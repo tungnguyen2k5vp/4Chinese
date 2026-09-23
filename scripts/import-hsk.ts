@@ -65,7 +65,15 @@ export function parseCvdict(text: string): Map<string,CvEntry> {
 export function parseHskDataset(source: HskSource[], dictionary: Map<string,CvEntry>) {
   const imported: Record<string,unknown>[] = []; const missing: string[] = [];
   for (const item of source) {
-    const level = item.level.map((value) => value.match(/^new-(\d)$/)?.[1]).find(Boolean);
+    // `newest-*` is the latest HSK 3.0 syllabus in the bundled source
+    // (scheduled for the 2026 rollout). Keep the established `new-*` list as
+    // a compatibility superset so learners can still find words from the
+    // currently deployed syllabus. When a word exists in both, retain the
+    // established HSK 3.0 band for backwards-compatible filters; newest-only
+    // additions still receive their latest syllabus band.
+    const newestLevel = item.level.map((value) => value.match(/^newest-(\d)$/)?.[1]).find(Boolean);
+    const compatibleLevel = item.level.map((value) => value.match(/^new-(\d)$/)?.[1]).find(Boolean);
+    const level = compatibleLevel ?? newestLevel;
     if (!level) continue;
     const band = Number(level) >= 7 ? '7-9' : Number(level);
     const dictionaryHint = dictionary.get(`${item.simplified}|*`);
@@ -82,7 +90,7 @@ export function parseHskDataset(source: HskSource[], dictionary: Map<string,CvEn
       primaryMeaningVi:meaningsVi[0], meaningsVi, meaningsEn:form.meanings, pos:(item.pos??[]).map((code)=>posNames[code]??code),
       hskBand:band, frequencyRank:item.frequency??null, classifiers:form.classifiers??[], radical:item.radical??null,
       strokeCount:null, visualType:'illustration', imageUri:null, imageSource:null, imageLicense:null, imageAttribution:null,
-      audioUri:null, source:'complete-hsk-vocabulary + CVDICT', sourceVersion:'complete-hsk 2026-09 / CVDICT 1.0.1 / sense-selection 2',
+      audioUri:null, source:'complete-hsk-vocabulary + CVDICT', sourceVersion:'complete-hsk 2026-09 / HSK 3.0 newest + new compatibility / CVDICT 1.0.1 / sense-selection 2',
       sourceUrl:'https://github.com/drkameleon/complete-hsk-vocabulary', translationStatus:vi||override?'machine':'missing', examples:[] });
   }
   return { imported, missing };

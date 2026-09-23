@@ -7,6 +7,7 @@ interface CommonSurname {
   pinyin: string;
   pinyinNumeric: string;
   vietnamese: string;
+  aliases?: string[];
   english: string;
   radical: string;
   strokeCount: number;
@@ -14,6 +15,7 @@ interface CommonSurname {
 
 function makeSurnameVocabulary(item: CommonSurname): Vocabulary {
   const vocabularyId = `supplement-name-${item.id}`;
+  const aliases = item.aliases ?? [];
   return {
     id: vocabularyId,
     simplified: item.simplified,
@@ -21,7 +23,13 @@ function makeSurnameVocabulary(item: CommonSurname): Vocabulary {
     pinyin: item.pinyin,
     pinyinNumeric: item.pinyinNumeric,
     primaryMeaningVi: `${item.vietnamese}; họ ${item.vietnamese}`,
-    meaningsVi: [item.vietnamese, `họ ${item.vietnamese}`, "họ người Trung Quốc"],
+    meaningsVi: [
+      item.vietnamese,
+      ...aliases,
+      `họ ${item.vietnamese}`,
+      ...aliases.map((alias) => `họ ${alias}`),
+      "họ người Trung Quốc",
+    ],
     meaningsEn: [item.english, "Chinese surname"],
     pos: ["họ", "danh từ riêng"],
     hskBand: 4,
@@ -115,6 +123,20 @@ export const supplementalVocabulary: Vocabulary[] = [
     { id: "zhao", simplified: "赵", traditional: "趙", pinyin: "zhào", pinyinNumeric: "zhao4", vietnamese: "Triệu", english: "Zhao", radical: "走", strokeCount: 9 },
     { id: "zhou", simplified: "周", traditional: "周", pinyin: "zhōu", pinyinNumeric: "zhou1", vietnamese: "Châu", english: "Zhou", radical: "口", strokeCount: 8 },
     { id: "lin", simplified: "林", traditional: "林", pinyin: "lín", pinyinNumeric: "lin2", vietnamese: "Lâm", english: "Lin", radical: "木", strokeCount: 8 },
+    { id: "xie", simplified: "谢", traditional: "謝", pinyin: "xiè", pinyinNumeric: "xie4", vietnamese: "Tạ", english: "Xie", radical: "讠", strokeCount: 12 },
+    { id: "he", simplified: "何", traditional: "何", pinyin: "hé", pinyinNumeric: "he2", vietnamese: "Hà", english: "He", radical: "亻", strokeCount: 7 },
+    { id: "deng", simplified: "邓", traditional: "鄧", pinyin: "dèng", pinyinNumeric: "deng4", vietnamese: "Đặng", english: "Deng", radical: "阝", strokeCount: 4 },
+    { id: "fan", simplified: "范", traditional: "范", pinyin: "fàn", pinyinNumeric: "fan4", vietnamese: "Phạm", english: "Fan", radical: "艹", strokeCount: 8 },
+    { id: "du", simplified: "杜", traditional: "杜", pinyin: "dù", pinyinNumeric: "du4", vietnamese: "Đỗ", english: "Du", radical: "木", strokeCount: 7 },
+    { id: "wu-vietnamese", simplified: "武", traditional: "武", pinyin: "wǔ", pinyinNumeric: "wu3", vietnamese: "Vũ", aliases: ["Võ"], english: "Wu", radical: "止", strokeCount: 8 },
+    { id: "pei", simplified: "裴", traditional: "裴", pinyin: "péi", pinyinNumeric: "pei2", vietnamese: "Bùi", english: "Pei", radical: "衣", strokeCount: 14 },
+    { id: "gao", simplified: "高", traditional: "高", pinyin: "gāo", pinyinNumeric: "gao1", vietnamese: "Cao", english: "Gao", radical: "高", strokeCount: 10 },
+    { id: "sun", simplified: "孙", traditional: "孫", pinyin: "sūn", pinyinNumeric: "sun1", vietnamese: "Tôn", english: "Sun", radical: "子", strokeCount: 6 },
+    { id: "song", simplified: "宋", traditional: "宋", pinyin: "sòng", pinyinNumeric: "song4", vietnamese: "Tống", english: "Song", radical: "宀", strokeCount: 7 },
+    { id: "luo", simplified: "罗", traditional: "羅", pinyin: "luó", pinyinNumeric: "luo2", vietnamese: "La", english: "Luo", radical: "罒", strokeCount: 8 },
+    { id: "phung", simplified: "冯", traditional: "馮", pinyin: "féng", pinyinNumeric: "feng2", vietnamese: "Phùng", english: "Feng", radical: "冫", strokeCount: 5 },
+    { id: "ngo-vietnamese", simplified: "伍", traditional: "伍", pinyin: "wǔ", pinyinNumeric: "wu3", vietnamese: "Ngũ", english: "Wu", radical: "亻", strokeCount: 6 },
+    { id: "dam", simplified: "谭", traditional: "譚", pinyin: "tán", pinyinNumeric: "tan2", vietnamese: "Đàm", english: "Tan", radical: "讠", strokeCount: 14 },
   ].map(makeSurnameVocabulary),
   ...[
     { id: "vietnam", simplified: "越南", traditional: "越南", pinyin: "Yuènán", pinyinNumeric: "Yue4nan2", vietnamese: "Việt Nam" },

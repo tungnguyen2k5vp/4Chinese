@@ -55,7 +55,7 @@ export default function BulkAddWords() {
   };
 
   return (
-    <Screen title="Thêm từ hàng loạt" subtitle="Mỗi dòng một từ, tối đa 100 dòng. Có thể nhập chữ Hán, pinyin hoặc nghĩa tiếng Việt.">
+    <Screen title="Thêm từ hàng loạt" subtitle="Mỗi dòng một mục · tối đa 100">
       <View style={[card, styles.deckCard]}>
         <Text style={styles.label}>BỘ TỪ ĐANG THÊM</Text>
         <Text style={styles.deckName}>{deckName}</Text>
@@ -65,11 +65,11 @@ export default function BulkAddWords() {
           <Text style={styles.title}>Danh sách từ</Text>
           <Text style={styles.counter}>{terms.length}/100</Text>
         </View>
-        <Text style={styles.help}>App tự nhận dạng từng dòng và lấy chữ Hán, phồn thể, pinyin, cặp nghĩa Việt–Anh tương ứng, từ loại, HSK và một ví dụ phù hợp từ kho ngoại tuyến.</Text>
+        <Text style={styles.help}>Nhận Hanzi, pinyin hoặc nghĩa từ kho offline.</Text>
         <TextInput
           value={input}
           onChangeText={(value) => { setInput(value); setResults([]); }}
-          placeholder={"Ví dụ:\nhọc tập\nLý\nQuân\n谢谢"}
+          placeholder={"Ví dụ:\nhọc tập\nLý\n谢谢"}
           placeholderTextColor={colors.textMuted}
           multiline
           textAlignVertical="top"
@@ -81,8 +81,8 @@ export default function BulkAddWords() {
 
       {results.length ? (
         <View style={[card, styles.results]}>
-          <Text style={styles.title}>Kiểm tra trước khi tạo</Text>
-          <Text style={styles.help}>{resolved.length}/{results.length} từ đã nhận diện. Chạm lựa chọn khác nếu từ có nhiều nghĩa.</Text>
+          <Text style={styles.title}>Kiểm tra · {resolved.length}/{results.length}</Text>
+          <Text style={styles.help}>Chạm lựa chọn khác nếu cần đổi nghĩa.</Text>
           {results.map((result, resultIndex) => (
             <View key={`${result.input}-${resultIndex}`} style={styles.resultRow}>
               <Text style={styles.query}>{result.input}</Text>
@@ -115,19 +115,19 @@ export default function BulkAddWords() {
               ) : <Text style={styles.unresolved}>Chưa tìm thấy — hãy thêm riêng để nhập thủ công.</Text>}
             </View>
           ))}
-          <PrimaryButton label={`Tạo ${resolved.length} từ trong bộ`} disabled={!resolved.length} loading={saving} onPress={() => void save()} />
+          <PrimaryButton label={`Thêm ${resolved.length} từ`} disabled={!resolved.length} loading={saving} onPress={() => void save()} />
         </View>
       ) : null}
 
-      <PrimaryButton variant="secondary" label="Thêm hoặc sửa từng từ" onPress={() => router.push({ pathname: "/decks/word", params: { deckId } } as Href)} />
+      <PrimaryButton variant="secondary" label="Thêm/sửa thủ công" onPress={() => router.push({ pathname: "/decks/word", params: { deckId } } as Href)} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   deckCard: { gap: spacing.xs }, label: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 }, deckName: { color: colors.text, fontSize: 22, fontWeight: "900" },
-  form: { gap: spacing.md }, headingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, title: { color: colors.text, fontSize: 18, fontWeight: "900" }, counter: { color: colors.primary, fontWeight: "900" }, help: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
-  input: { minHeight: 250, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md, color: colors.text, fontSize: 17, lineHeight: 27 },
-  results: { gap: spacing.md }, resultRow: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, gap: 3 }, query: { color: colors.textMuted, fontSize: 11, fontWeight: "800", textTransform: "uppercase" }, resolvedWord: { color: colors.primary, fontSize: 20, fontWeight: "900" }, unresolved: { color: colors.danger, fontSize: 13 },
+  form: { gap: spacing.md }, headingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, title: { color: colors.text, fontSize: 18, fontWeight: "900" }, counter: { color: colors.primary, fontWeight: "900" }, help: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
+  input: { minHeight: 200, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md, color: colors.text, fontSize: 17, lineHeight: 25 },
+  results: { gap: spacing.sm }, resultRow: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: 3 }, query: { color: colors.textMuted, fontSize: 11, fontWeight: "800", textTransform: "uppercase" }, resolvedWord: { color: colors.primary, fontSize: 20, fontWeight: "900" }, unresolved: { color: colors.danger, fontSize: 13 },
   alternatives: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.xs }, alternative: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }, alternativeActive: { backgroundColor: colors.primary, borderColor: colors.primary }, alternativeText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" }, alternativeTextActive: { color: "#fff", fontSize: 11, fontWeight: "800" },
 });

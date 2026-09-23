@@ -66,7 +66,7 @@ export default function VocabularyScreen() {
             <Ionicons name="library" size={24} color="#FFFFFF" />
           </View>
         </View>
-        <Text style={styles.subtitle}>Học ít – Nhớ lâu với Spaced Repetition</Text>
+        <Text style={styles.subtitle}>Học theo lịch SRS</Text>
         <SearchBar value={query} onChangeText={setQuery} />
       </View>
       <View style={styles.filterSection}>
