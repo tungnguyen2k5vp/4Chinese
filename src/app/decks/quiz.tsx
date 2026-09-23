@@ -10,6 +10,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
 import { getDeckVocabulary, getSettings, listPersonalDecks } from "@/db/repository";
+import { useStudySession } from "@/hooks/use-study-session";
 import { buildDeckClozeQuiz, type DeckClozeQuestion } from "@/services/decks/cloze-quiz";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
@@ -18,6 +19,7 @@ const QUIZ_SIZE = 10;
 export default function DeckQuizScreen() {
   const { deckId = "" } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
+  useStudySession(db);
   const [deckName, setDeckName] = useState("Bộ từ riêng");
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [questions, setQuestions] = useState<DeckClozeQuestion[]>([]);

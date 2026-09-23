@@ -62,17 +62,23 @@ export default function Home() {
     1,
     (stats?.newToday ?? 0) / (settings?.dailyNewWordGoal ?? 10),
   );
+  const studyGoalMinutes = settings?.dailyStudyMinutes ?? 30;
+  const studyProgress = Math.min(
+    1,
+    (stats?.studySeconds ?? 0) / (studyGoalMinutes * 60),
+  );
+  const studyMinutes = Math.floor((stats?.studySeconds ?? 0) / 60);
   return (
     <Screen>
       <View style={styles.top}>
-        <View>
+        <View style={styles.topLine}>
           <Text style={styles.hello}>Xin chào 👋</Text>
-          <Text style={styles.question}>Hôm nay bạn muốn học gì?</Text>
+          <View style={styles.streak}>
+            <Text>🔥</Text>
+            <Text style={styles.streakText}>{stats?.streak ?? 0} ngày</Text>
+          </View>
         </View>
-        <View style={styles.streak}>
-          <Text>🔥</Text>
-          <Text style={styles.streakText}>{stats?.streak ?? 0} ngày</Text>
-        </View>
+        <Text style={styles.question}>Hôm nay bạn muốn học gì?</Text>
       </View>
       <View style={[card, styles.focus]}>
         <View style={styles.focusTop}>
@@ -84,11 +90,17 @@ export default function Home() {
             <Text style={styles.softText}>
               {stats?.due ?? 0} từ đang chờ ôn
             </Text>
+            <Text style={styles.studyText}>
+              {studyMinutes} / {studyGoalMinutes} phút học hôm nay
+            </Text>
           </View>
           <Text style={styles.percent}>{Math.round(progress * 100)}%</Text>
         </View>
         <View style={styles.track}>
           <View style={[styles.fill, { width: `${progress * 100}%` }]} />
+        </View>
+        <View style={styles.studyTrack}>
+          <View style={[styles.studyFill, { width: `${studyProgress * 100}%` }]} />
         </View>
         <PrimaryButton
           label="Tiếp tục học"
@@ -142,29 +154,31 @@ export default function Home() {
 const styles = StyleSheet.create({
   top: {
     paddingTop: spacing.xl,
+    gap: spacing.xs,
+  },
+  topLine: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
   },
   hello: { color: colors.textMuted, fontSize: 15 },
   question: {
     color: colors.text,
     fontSize: 24,
     fontWeight: "900",
-    marginTop: 4,
   },
   streak: {
     flexDirection: "row",
     gap: 4,
     backgroundColor: "#FFF4DD",
-    paddingHorizontal: 11,
+    paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: radius.pill,
   },
-  streakText: { color: colors.warning, fontWeight: "800" },
+  streakText: { color: colors.warning, fontWeight: "800", flexShrink: 1 },
   focus: { backgroundColor: colors.primary, gap: spacing.lg },
   focusTop: { flexDirection: "row", justifyContent: "space-between" },
-  focusCopy: { gap: 5 },
+  focusCopy: { flex: 1, minWidth: 0, gap: 5 },
   eyebrow: {
     color: "#C9D5FF",
     fontSize: 11,
@@ -173,6 +187,7 @@ const styles = StyleSheet.create({
   },
   focusTitle: { color: "#fff", fontSize: 22, fontWeight: "900" },
   softText: { color: "#D5DEFF", fontSize: 14 },
+  studyText: { color: "#D5DEFF", fontSize: 13, fontWeight: "700" },
   percent: { color: "#fff", fontSize: 21, fontWeight: "900" },
   track: {
     height: 8,
@@ -181,6 +196,13 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   fill: { height: "100%", backgroundColor: colors.accent, borderRadius: 4 },
+  studyTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#FFFFFF24",
+    overflow: "hidden",
+  },
+  studyFill: { height: "100%", backgroundColor: "#FFFFFF", borderRadius: 3 },
   section: {
     color: colors.text,
     fontSize: typography.subtitle,

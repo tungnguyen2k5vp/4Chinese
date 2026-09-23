@@ -9,6 +9,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
 import { getDeckVocabulary, getSettings, listPersonalDecks } from "@/db/repository";
+import { useStudySession } from "@/hooks/use-study-session";
 import { speakChinese, stopChineseSpeech } from "@/services/audio/chinese-speech";
 import { buildDeckListeningSession, type DeckListeningQuestion } from "@/services/listening/deck-listening";
 import type { UserSettings, Vocabulary } from "@/types/models";
@@ -18,6 +19,7 @@ const LISTENING_BATCH_SIZE = 10;
 export default function DeckListeningScreen() {
   const { deckId = "" } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
+  useStudySession(db);
   const [deckName, setDeckName] = useState("Bộ từ riêng");
   const [deckWords, setDeckWords] = useState<Vocabulary[]>([]);
   const [questions, setQuestions] = useState<DeckListeningQuestion[]>([]);

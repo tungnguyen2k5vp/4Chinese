@@ -20,6 +20,7 @@ import {
   setSkipped,
   saveSettings,
 } from "@/db/repository";
+import { useStudySession } from "@/hooks/use-study-session";
 import {
   speakChinese,
   stopChineseSpeech,
@@ -41,6 +42,7 @@ function hidePinyinHints(value: string): string {
  */
 export default function LearnSession() {
   const db = useSQLiteContext();
+  useStudySession(db);
   const queue = useAppStore((state) => state.learnQueue);
   const clear = useAppStore((state) => state.clearSession);
   const setGlobalSettings = useAppStore((state) => state.setSettings);

@@ -20,6 +20,7 @@ import {
   reviewWord,
   saveSettings,
 } from "@/db/repository";
+import { useStudySession } from "@/hooks/use-study-session";
 import {
   speakChinese,
   stopChineseSpeech,
@@ -73,6 +74,7 @@ function getThreePassReviewMode(): ReviewMode {
 
 export default function ReviewSession() {
   const db = useSQLiteContext();
+  useStudySession(db);
   const source = useAppStore((state) => state.reviewQueue);
   const clear = useAppStore((state) => state.clearSession);
   const setLastReviewedWord = useAppStore((state) => state.setLastReviewedWord);

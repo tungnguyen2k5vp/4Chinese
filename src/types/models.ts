@@ -144,6 +144,7 @@ export interface DashboardStats {
 
 export interface UserSettings {
   dailyNewWordGoal: number;
+  dailyStudyMinutes: number;
   dailyReviewGoal: number;
   desiredRetention: number;
   selectedHskBands: HskBand[];

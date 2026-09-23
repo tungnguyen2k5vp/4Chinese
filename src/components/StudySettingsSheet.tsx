@@ -43,6 +43,20 @@ export function StudySettingsSheet({
               </Pressable>
             ))}
           </View>
+          <Text style={styles.label}>THỜI LƯỢNG HỌC MỖI NGÀY</Text>
+          <View style={styles.choices}>
+            {[15, 30, 45, 60].map((value) => (
+              <Pressable
+                key={value}
+                onPress={() => onChange({ dailyStudyMinutes: value })}
+                style={[styles.choice, settings.dailyStudyMinutes === value && styles.choiceActive]}
+              >
+                <Text style={[styles.choiceText, settings.dailyStudyMinutes === value && styles.choiceTextActive]}>
+                  {value}p
+                </Text>
+              </Pressable>
+            ))}
+          </View>
           <Setting label="Tự phát âm từ mới" value={settings.autoPlayAudio} onChange={(autoPlayAudio) => onChange({ autoPlayAudio })} />
           <Setting label="Rung khi đúng/sai" value={settings.hapticEnabled} onChange={(hapticEnabled) => onChange({ hapticEnabled })} />
           {mode === "review" ? <Setting label="Tự chấm 4 mức" value={settings.reviewStyle === "self-rating"} onChange={(selfRating) => onChange({ reviewStyle: selfRating ? "self-rating" : "automatic" })} /> : null}

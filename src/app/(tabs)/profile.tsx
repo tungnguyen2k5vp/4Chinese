@@ -69,6 +69,28 @@ export default function ProfileScreen() {
             </Pressable>
           ))}
         </View>
+        <Text style={styles.label}>Thời lượng học mỗi ngày</Text>
+        <View style={styles.choiceRow}>
+          {[15, 30, 45, 60].map((value) => (
+            <Pressable
+              key={value}
+              onPress={() => void update({ dailyStudyMinutes: value })}
+              style={[
+                styles.choice,
+                settings.dailyStudyMinutes === value && styles.choiceActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.choiceText,
+                  settings.dailyStudyMinutes === value && styles.choiceTextActive,
+                ]}
+              >
+                {value} phút
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <Text style={styles.label}>Cách tự đánh giá khi ôn</Text>
         <View style={styles.choiceRow}>
           <Pressable

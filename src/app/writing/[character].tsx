@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
+import { useSQLiteContext } from "expo-sqlite";
 import { StyleSheet, Text, View } from "react-native";
 
 import { Screen } from "@/components/Screen";
@@ -7,8 +8,11 @@ import { StrokeWriter } from "@/components/StrokeWriter";
 import { WritingCanvas } from "@/components/WritingCanvas";
 import { card, colors, radius, spacing } from "@/constants/design";
 import { findCommonRadical } from "@/data/common-radicals";
+import { useStudySession } from "@/hooks/use-study-session";
 
 export default function WritingScreen() {
+  const db = useSQLiteContext();
+  useStudySession(db);
   const { character: rawCharacter = "学" } = useLocalSearchParams<{ character: string }>();
   const character = Array.from(rawCharacter)[0] ?? "学";
   const radical = findCommonRadical(character);

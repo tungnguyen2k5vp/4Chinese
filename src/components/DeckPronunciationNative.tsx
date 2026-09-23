@@ -11,6 +11,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
 import { getDeckVocabulary, getSettings, listPersonalDecks } from "@/db/repository";
+import { useStudySession } from "@/hooks/use-study-session";
 import { PronunciationScoreError, scorePronunciationAudio, type PronunciationScore } from "@/services/pronunciation/ai-pronunciation";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
@@ -19,6 +20,7 @@ const PRACTICE_BATCH_SIZE = 10;
 export default function DeckPronunciationNative() {
   const { deckId = "" } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
+  useStudySession(db);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [deckName, setDeckName] = useState("Bộ từ riêng");
   const [words, setWords] = useState<Vocabulary[]>([]);

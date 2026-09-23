@@ -21,6 +21,7 @@ import {
   type ReviewInput,
   type ReviewTransition,
 } from "@/services/srs/scheduler";
+import { calculateStreak, toLocalDateKey } from "@/services/stats/calendar";
 import {
   createContextualExample,
   withSingleContextualExample,
@@ -119,7 +120,6 @@ const BULK_INDEX_BUCKET_LIMIT = 256;
 const BULK_FETCH_ID_CHUNK_SIZE = 500;
 const BULK_CUSTOM_LOOKUP_TIMEOUT_MS = 350;
 const BULK_SQL_LOOKUP_LIMIT = 48;
-const BULK_SQL_LOOKUP_TIMEOUT_MS = 900;
 const bulkLookupIndexCache = new WeakMap<SQLiteDatabase, Promise<BulkLookupIndex>>();
 let bulkOfflineVocabularyCache: Vocabulary[] | null = null;
 let bulkFastOfflineVocabularyCache: Vocabulary[] | null = null;
@@ -176,6 +176,7 @@ const LEGACY_STATE = { New: 0, Learning: 1, Review: 2, Relearning: 3 } as const;
 
 export const defaultSettings: UserSettings = {
   dailyNewWordGoal: 10,
+  dailyStudyMinutes: 30,
   dailyReviewGoal: 100,
   desiredRetention: 0.9,
   selectedHskBands: [1],
@@ -419,14 +420,14 @@ export async function reviewWord(
         input.selectedHanzi ?? null,
         input.candidateRank ?? null,
       );
-      const today = toDateKey(now);
+      const today = toLocalDateKey(now);
       await db.runAsync(
         `INSERT INTO daily_stats (date,reviewed,correct,new_words,study_seconds)
         VALUES (?,1,?,0,?) ON CONFLICT(date) DO UPDATE SET reviewed=reviewed+1,
         correct=correct+excluded.correct,study_seconds=study_seconds+excluded.study_seconds`,
         today,
         answeredCorrect ? 1 : 0,
-        Math.max(1, Math.round(input.responseTimeMs / 1000)),
+        0,
       );
     });
     return result;
@@ -645,7 +646,7 @@ export async function getDashboardStats(
   bands?: HskBand[],
 ): Promise<DashboardStats> {
   const now = new Date();
-  const today = toDateKey(now);
+  const today = toLocalDateKey(now);
   const dueBandClause = bands?.length
     ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
     : "";
@@ -709,6 +710,22 @@ export async function getDashboardStats(
     ),
     mastery,
   };
+}
+
+/** Adds foreground learning time to today's local calendar bucket. */
+export async function recordStudyTime(
+  db: SQLiteDatabase,
+  seconds: number,
+): Promise<void> {
+  const amount = Math.max(0, Math.floor(seconds));
+  if (!amount) return;
+  await db.runAsync(
+    `INSERT INTO daily_stats (date,reviewed,correct,new_words,study_seconds)
+     VALUES (?,0,0,0,?)
+     ON CONFLICT(date) DO UPDATE SET study_seconds=study_seconds+excluded.study_seconds`,
+    toLocalDateKey(new Date()),
+    amount,
+  );
 }
 
 export async function getHskProgress(db: SQLiteDatabase) {
@@ -1367,9 +1384,9 @@ function bulkSqlLookupParts(query: BulkLookupQueryContext): {
 }
 
 /**
- * Uses SQLite for the normal bulk path. Native filtering keeps the large
- * dictionary scan off the React Native JS thread; the in-memory HSK fallback
- * below only handles rows missing from an older installed database.
+ * Looks up only user-created rows through SQLite. The bundled HSK 1-4
+ * dictionary is already indexed in memory, so bulk import never scans the
+ * full SQLite table for every input line.
  */
 async function findBulkSqlCandidates(
   db: SQLiteDatabase,
@@ -1382,18 +1399,18 @@ async function findBulkSqlCandidates(
       return withFallbackTimeout(
         () => db.getAllAsync<DbWord>(
           `SELECT v.* FROM vocabulary v
-           WHERE (${parts.clause})
+           WHERE v.is_custom=1 AND (${parts.clause})
              AND (v.deck_id IS NULL OR EXISTS (
                SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
              ))
-           ORDER BY CASE WHEN v.hsk_band IN ('1','2') THEN 0 ELSE 1 END,
+           ORDER BY
              COALESCE(v.frequency_rank,999999), LENGTH(v.simplified), v.pinyin_numeric
            LIMIT ?`,
           ...parts.params,
           BULK_SQL_LOOKUP_LIMIT,
         ),
         [],
-        BULK_SQL_LOOKUP_TIMEOUT_MS,
+        BULK_CUSTOM_LOOKUP_TIMEOUT_MS,
       );
     }),
   );
@@ -1407,10 +1424,9 @@ async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndex> 
   if (cached) return cached;
 
   const promise = (async (): Promise<BulkLookupIndex> => {
-    // The native SQL lookup is the normal path. This compact fallback index
-    // only needs beginner bands, so a first bulk import never has to build a
-    // JS index for the entire 11k+ word dictionary on the UI thread.
-    if (!bulkFastOfflineVocabularyCache) bulkFastOfflineVocabularyCache = getOfflineVocabulary([1, 2]);
+    // The compact in-memory index is the fast path. It covers HSK 1-4,
+    // without building an index for the 7-9 dictionary on the UI thread.
+    if (!bulkFastOfflineVocabularyCache) bulkFastOfflineVocabularyCache = getOfflineVocabulary([1, 2, 3, 4]);
 
     const bundledRows = bulkFastOfflineVocabularyCache.map((word) => {
       const meaningsVi = cleanLearnerMeanings([word.primaryMeaningVi, ...word.meaningsVi]);
@@ -2033,7 +2049,7 @@ async function upsertProgress(
     await db.runAsync(
       `INSERT INTO daily_stats(date,reviewed,correct,new_words,study_seconds) VALUES(?,0,0,1,0)
     ON CONFLICT(date) DO UPDATE SET new_words=new_words+1`,
-      toDateKey(now),
+      toLocalDateKey(now),
     );
 }
 
@@ -2208,19 +2224,4 @@ function parseArray(value: string): string[] {
   } catch {
     return [];
   }
-}
-function toDateKey(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-function calculateStreak(dates: string[], now: Date): number {
-  const set = new Set(dates);
-  let streak = 0;
-  const cursor = new Date(now);
-  cursor.setHours(0, 0, 0, 0);
-  if (!set.has(toDateKey(cursor))) cursor.setDate(cursor.getDate() - 1);
-  while (set.has(toDateKey(cursor))) {
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return streak;
 }
