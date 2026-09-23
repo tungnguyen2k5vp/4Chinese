@@ -7,7 +7,12 @@ import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
-import { getDueVocabulary, getSettings, saveSettings } from "@/db/repository";
+import {
+  getDueCount,
+  getDueVocabulary,
+  getSettings,
+  saveSettings,
+} from "@/db/repository";
 import { useAppStore } from "@/stores/app-store";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
@@ -15,16 +20,27 @@ const sizes = [10, 20, 30, 50] as const;
 export default function ReviewIndex() {
   const db = useSQLiteContext();
   const [words, setWords] = useState<Vocabulary[]>([]);
+  const [dueCount, setDueCount] = useState(0);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const setQueue = useAppStore((s) => s.setReviewQueue);
   useEffect(() => {
+    let live = true;
     getSettings(db).then(async (next) => {
+      const [dueWords, totalDue] = await Promise.all([
+        getDueVocabulary(db, 50, next.selectedHskBands),
+        getDueCount(db, next.selectedHskBands),
+      ]);
+      if (!live) return;
       setSettings(next);
-      setWords(await getDueVocabulary(db, 50, next.selectedHskBands));
+      setWords(dueWords);
+      setDueCount(totalDue);
     });
+    return () => {
+      live = false;
+    };
   }, [db]);
   const selected = settings?.reviewSessionSize ?? 20;
-  const count = words.length;
+  const count = dueCount;
   const choose = async (size: (typeof sizes)[number]) => {
     if (!settings) return;
     const next = { ...settings, reviewSessionSize: size };

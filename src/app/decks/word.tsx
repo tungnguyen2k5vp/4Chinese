@@ -425,10 +425,24 @@ export default function WordEditor() {
                 ))}
               </View>
             ) : (
-              <Text style={styles.warningText}>
-                Chưa có mục ghép này trong kho. Bạn có thể nhập nghĩa/pinyin thủ
-                công, hoặc viết lại để chọn một từ gần đúng trong kho.
-              </Text>
+              <View style={styles.manualEntry}>
+                <Text style={styles.warningText}>
+                  Chưa có mục ghép này trong kho. Hán tự đã được giữ lại; nhập
+                  pinyin và nghĩa bên dưới để thêm từ thủ công.
+                </Text>
+                <Field
+                  label="PINYIN *"
+                  value={pinyin}
+                  onChangeText={setPinyin}
+                  placeholder="Ví dụ: bié bái xī"
+                />
+                <Field
+                  label="PHỒN THỂ (nếu khác)"
+                  value={traditional}
+                  onChangeText={setTraditional}
+                  placeholder={hanzi || "Giống Hán tự nếu không có biến thể"}
+                />
+              </View>
             )}
           </View>
         ) : null}
@@ -602,6 +616,7 @@ const styles = StyleSheet.create({
   helperText: { fontSize: 12, color: colors.textMuted, textAlign: "center" },
   warningText: { fontSize: 12, color: colors.primary, marginTop: spacing.sm },
   suggestions: { gap: spacing.sm, marginTop: spacing.sm },
+  manualEntry: { gap: spacing.md, marginTop: spacing.sm },
   suggestion: {
     borderWidth: 1,
     borderColor: colors.border,

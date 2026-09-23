@@ -188,12 +188,21 @@ export function HanziHandwritingPad({
       const candidates = (resolveWordCandidates && dictionaryLookupSucceeded
         ? dictionaryCandidates
         : rawCandidates).slice(0, 16);
-      setWordCandidates(candidates);
-      setManualCandidate(
-        resolveWordCandidates && dictionaryLookupSucceeded && !dictionaryCandidates.length
-          ? rawCandidates[0] ?? ""
-          : "",
+      const fallbackCandidate = rawCandidates[0] ?? "";
+      const useManualCandidate = Boolean(
+        resolveWordCandidates &&
+          dictionaryLookupSucceeded &&
+          !dictionaryCandidates.length &&
+          fallbackCandidate &&
+          Array.from(fallbackCandidate).length === pageCount,
       );
+      setWordCandidates(candidates);
+      setManualCandidate(useManualCandidate ? fallbackCandidate : "");
+      if (useManualCandidate) {
+        const next = Array.from(fallbackCandidate);
+        setSelectedCharacters(next);
+        emitSelection(next);
+      }
       setMessage(
         dictionaryCandidates.length
           ? "Đã lọc các từ có trong kho. Chọn từ đúng bên dưới."
@@ -345,7 +354,9 @@ export function HanziHandwritingPad({
           style={styles.manualCandidate}
         >
           <Text style={styles.manualCandidateTitle}>Không có trong kho từ</Text>
-          <Text style={styles.manualCandidateText}>Dùng “{manualCandidate}” để thêm thủ công</Text>
+          <Text style={styles.manualCandidateText}>
+            Đã điền “{manualCandidate}”. Nhập pinyin và nghĩa để thêm thủ công
+          </Text>
         </Pressable>
       ) : null}
 

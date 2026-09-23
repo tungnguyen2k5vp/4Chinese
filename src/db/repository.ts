@@ -97,6 +97,14 @@ type BulkLookupIndexRow = {
 
 type BulkLookupIndexDbRow = Omit<BulkLookupIndexRow, "searchTextPadded" | "pinyinCompact">;
 
+type BulkLookupIndex = {
+  rows: BulkLookupIndexRow[];
+  tokenRows: Map<string, BulkLookupIndexRow[]>;
+  hanziRows: Map<string, BulkLookupIndexRow[]>;
+  exactHanziRows: Map<string, BulkLookupIndexRow[]>;
+  pinyinRows: Map<string, BulkLookupIndexRow[]>;
+};
+
 type BulkLookupQueryContext = BulkLookupQuery & {
   raw: string;
   normalized: string;
@@ -107,9 +115,14 @@ type BulkLookupQueryContext = BulkLookupQuery & {
 };
 
 const BULK_INDEX_CANDIDATES_PER_QUERY = 128;
+const BULK_INDEX_BUCKET_LIMIT = 256;
 const BULK_FETCH_ID_CHUNK_SIZE = 500;
-const bulkLookupIndexCache = new WeakMap<SQLiteDatabase, Promise<BulkLookupIndexRow[]>>();
+const BULK_CUSTOM_LOOKUP_TIMEOUT_MS = 350;
+const BULK_SQL_LOOKUP_LIMIT = 48;
+const BULK_SQL_LOOKUP_TIMEOUT_MS = 900;
+const bulkLookupIndexCache = new WeakMap<SQLiteDatabase, Promise<BulkLookupIndex>>();
 let bulkOfflineVocabularyCache: Vocabulary[] | null = null;
+let bulkFastOfflineVocabularyCache: Vocabulary[] | null = null;
 
 type DbProgress = {
   vocabulary_id: string;
@@ -482,6 +495,59 @@ export async function getDueVocabulary(
   return attachSingleExamples(db, rows.map(mapWord));
 }
 
+/** Returns the exact number of cards that the review screen can actually use. */
+export async function getDueCount(
+  db: SQLiteDatabase,
+  bands?: HskBand[],
+  deckId?: string,
+): Promise<number> {
+  const bandClause = bands?.length
+    ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
+    : "";
+  const deckClause = deckId?.trim()
+    ? "AND v.deck_id=? AND EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL)"
+    : "AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))";
+  const row = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(*) count
+     FROM vocabulary v
+     JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+     WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
+       AND p.next_review_at <= ? ${bandClause} ${deckClause}`,
+    new Date().toISOString(),
+    ...(bands?.map(String) ?? []),
+    ...(deckId?.trim() ? [deckId.trim()] : []),
+  );
+  return row?.count ?? 0;
+}
+
+/** Cards learned by the user but scheduled for a future review. */
+export async function getUpcomingReviewVocabulary(
+  db: SQLiteDatabase,
+  limit = 12,
+  bands?: HskBand[],
+): Promise<Vocabulary[]> {
+  const bandClause = bands?.length
+    ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
+    : "";
+  const rows = await db.getAllAsync<DbWord>(
+    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
+      p.is_known,p.next_review_at,p.review_count
+     FROM vocabulary v
+     JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+     WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
+       AND p.next_review_at > ? ${bandClause}
+       AND (v.deck_id IS NULL OR EXISTS (
+         SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+       ))
+     ORDER BY p.next_review_at ASC
+     LIMIT ?`,
+    new Date().toISOString(),
+    ...(bands?.map(String) ?? []),
+    Math.max(1, Math.min(50, Math.trunc(limit))),
+  );
+  return rows.map(mapWord);
+}
+
 /**
  * A read-only “mistake book”. It reuses the same persisted signals that the
  * scheduler already uses to prioritize due reviews, without creating a second
@@ -576,9 +642,13 @@ export async function getUnlearnedVocabulary(
 
 export async function getDashboardStats(
   db: SQLiteDatabase,
+  bands?: HskBand[],
 ): Promise<DashboardStats> {
   const now = new Date();
   const today = toDateKey(now);
+  const dueBandClause = bands?.length
+    ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
+    : "";
   const progress = await db.getFirstAsync<{
     learned: number;
     known: number;
@@ -591,13 +661,14 @@ export async function getDashboardStats(
     SUM(CASE WHEN p.status='KNOWN' THEN 1 ELSE 0 END) known,
     SUM(CASE WHEN p.status='SKIPPED' THEN 1 ELSE 0 END) skipped,
     SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.memory_level>=6 THEN 1 ELSE 0 END) mastered,
-    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.next_review_at<=? AND p.is_suspended=0 THEN 1 ELSE 0 END) due
+    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.next_review_at<=? AND p.is_suspended=0 ${dueBandClause} THEN 1 ELSE 0 END) due
     FROM user_vocabulary_progress p
     JOIN vocabulary v ON p.vocabulary_id=v.id
     WHERE (v.deck_id IS NULL OR EXISTS (
       SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
     ))`,
     now.toISOString(),
+    ...(bands?.map(String) ?? []),
   );
   const daily = await db.getFirstAsync<{
     reviewed: number;
@@ -1108,6 +1179,117 @@ function bulkIndexFrequencyBonus(frequencyRank: number | null): number {
   return Math.max(0, 160 - (frequencyRank ?? 80_000) / 500);
 }
 
+function compareBulkIndexRows(left: BulkLookupIndexRow, right: BulkLookupIndexRow): number {
+  const level = bulkIndexHskPriority(right.hsk_band) - bulkIndexHskPriority(left.hsk_band);
+  if (level !== 0) return level;
+  return (left.frequency_rank ?? 999_999) - (right.frequency_rank ?? 999_999);
+}
+
+function withFallbackTimeout<T>(
+  operation: () => Promise<T>,
+  fallback: T,
+  timeoutMs: number,
+): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    timer = setTimeout(() => finish(fallback), timeoutMs);
+    Promise.resolve()
+      .then(operation)
+      .then(finish)
+      .catch(() => finish(fallback));
+  });
+}
+
+function addBulkIndexRow(
+  index: Map<string, BulkLookupIndexRow[]>,
+  key: string,
+  row: BulkLookupIndexRow,
+): void {
+  if (!key) return;
+  const bucket = index.get(key);
+  if (bucket) bucket.push(row);
+  else index.set(key, [row]);
+}
+
+function buildBulkLookupIndex(rows: BulkLookupIndexRow[]): BulkLookupIndex {
+  const index: BulkLookupIndex = {
+    rows,
+    tokenRows: new Map(),
+    hanziRows: new Map(),
+    exactHanziRows: new Map(),
+    pinyinRows: new Map(),
+  };
+  rows.forEach((row) => {
+    for (const token of row.search_text.split(/\s+/u)) {
+      if (token.length >= 2) addBulkIndexRow(index.tokenRows, token, row);
+    }
+    for (const value of [row.simplified, row.traditional]) {
+      if (!value) continue;
+      addBulkIndexRow(index.exactHanziRows, value, row);
+      for (const character of Array.from(value)) {
+        if (/^[\u3400-\u9fff]$/u.test(character)) {
+          addBulkIndexRow(index.hanziRows, character, row);
+        }
+      }
+    }
+    if (row.pinyinCompact.length >= 2) {
+      for (let length = 2; length <= Math.min(4, row.pinyinCompact.length); length += 1) {
+        addBulkIndexRow(index.pinyinRows, row.pinyinCompact.slice(0, length), row);
+      }
+    }
+  });
+  return index;
+}
+
+function getBulkCandidateRows(
+  query: BulkLookupQueryContext,
+  index: BulkLookupIndex,
+): BulkLookupIndexRow[] {
+  const rows = new Map<string, BulkLookupIndexRow>();
+  const addRows = (bucket: BulkLookupIndexRow[] | undefined) => {
+    if (!bucket) return;
+    const preferred = bucket.length > BULK_INDEX_BUCKET_LIMIT
+      ? [...bucket].sort(compareBulkIndexRows).slice(0, BULK_INDEX_BUCKET_LIMIT)
+      : bucket;
+    preferred.forEach((row) => rows.set(row.id, row));
+  };
+
+  if (query.hasHanzi) {
+    addRows(index.exactHanziRows.get(query.raw));
+    for (const character of Array.from(query.raw)) {
+      if (/^[\u3400-\u9fff]$/u.test(character)) addRows(index.hanziRows.get(character));
+    }
+  } else {
+    for (const alternative of query.alternatives) {
+      const buckets = alternative
+        .split(/\s+/u)
+        .filter((token) => token.length >= 2)
+        .map((token) => index.tokenRows.get(token))
+        .filter((bucket): bucket is BulkLookupIndexRow[] => Boolean(bucket));
+      if (buckets.length > 1) {
+        const bucketSets = buckets.map((bucket) => new Set(bucket.map((row) => row.id)));
+        const smallest = [...buckets].sort((left, right) => left.length - right.length)[0] ?? [];
+        const intersection = smallest.filter((row) => bucketSets.every((set) => set.has(row.id)));
+        if (intersection.length) intersection.forEach((row) => rows.set(row.id, row));
+        else buckets.forEach((bucket) => addRows(bucket));
+      } else {
+        addRows(buckets[0]);
+      }
+    }
+    if (query.allowPinyin && query.pinyinQuery.length >= 2) {
+      addRows(index.pinyinRows.get(query.pinyinQuery.slice(0, 4)));
+    }
+  }
+  return Array.from(rows.values());
+}
+
 function createBulkLookupQueryContext(query: BulkLookupQuery): BulkLookupQueryContext {
   const raw = query.value.trim();
   const normalized = normalizeSearch(raw);
@@ -1158,14 +1340,79 @@ function bulkIndexMatchScore(query: BulkLookupQueryContext, row: BulkLookupIndex
   return score ? score + levelAndFrequency : 0;
 }
 
-async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndexRow[]> {
+function bulkSqlLookupParts(query: BulkLookupQueryContext): {
+  clause: string;
+  params: string[];
+} | null {
+  if (query.hasHanzi) {
+    return {
+      clause: "(v.simplified LIKE ? OR v.traditional LIKE ?)",
+      params: [`%${query.raw}%`, `%${query.raw}%`],
+    };
+  }
+
+  const clauses = query.alternatives.slice(0, 8).map(() => "v.search_text LIKE ?");
+  const params = query.alternatives.slice(0, 8).map((value) => `%${value}%`);
+  const tokens = query.tokens.slice(0, 8);
+  if (tokens.length > 1) {
+    clauses.push(`(${tokens.map(() => "v.search_text LIKE ?").join(" AND ")})`);
+    params.push(...tokens.map((token) => `%${token}%`));
+  }
+  if (query.allowPinyin && query.pinyinQuery.length >= 2) {
+    const compactPinyin = "LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(v.pinyin_numeric,'1',''),'2',''),'3',''),'4',''),'5',''),' ',''),'ü','v'))";
+    clauses.push(`${compactPinyin} LIKE ?`);
+    params.push(`${query.pinyinQuery}%`);
+  }
+  return clauses.length ? { clause: clauses.join(" OR "), params } : null;
+}
+
+/**
+ * Uses SQLite for the normal bulk path. Native filtering keeps the large
+ * dictionary scan off the React Native JS thread; the in-memory HSK fallback
+ * below only handles rows missing from an older installed database.
+ */
+async function findBulkSqlCandidates(
+  db: SQLiteDatabase,
+  queries: BulkLookupQueryContext[],
+): Promise<Vocabulary[]> {
+  const rowsByQuery = await Promise.all(
+    queries.map(async (query) => {
+      const parts = bulkSqlLookupParts(query);
+      if (!parts) return [] as DbWord[];
+      return withFallbackTimeout(
+        () => db.getAllAsync<DbWord>(
+          `SELECT v.* FROM vocabulary v
+           WHERE (${parts.clause})
+             AND (v.deck_id IS NULL OR EXISTS (
+               SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+             ))
+           ORDER BY CASE WHEN v.hsk_band IN ('1','2') THEN 0 ELSE 1 END,
+             COALESCE(v.frequency_rank,999999), LENGTH(v.simplified), v.pinyin_numeric
+           LIMIT ?`,
+          ...parts.params,
+          BULK_SQL_LOOKUP_LIMIT,
+        ),
+        [],
+        BULK_SQL_LOOKUP_TIMEOUT_MS,
+      );
+    }),
+  );
+  const words = new Map<string, Vocabulary>();
+  rowsByQuery.flat().forEach((row) => words.set(row.id, mapWord(row)));
+  return Array.from(words.values());
+}
+
+async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndex> {
   const cached = bulkLookupIndexCache.get(db);
   if (cached) return cached;
 
-  const promise = (async (): Promise<BulkLookupIndexRow[]> => {
-    if (!bulkOfflineVocabularyCache) bulkOfflineVocabularyCache = getOfflineVocabulary();
+  const promise = (async (): Promise<BulkLookupIndex> => {
+    // The native SQL lookup is the normal path. This compact fallback index
+    // only needs beginner bands, so a first bulk import never has to build a
+    // JS index for the entire 11k+ word dictionary on the UI thread.
+    if (!bulkFastOfflineVocabularyCache) bulkFastOfflineVocabularyCache = getOfflineVocabulary([1, 2]);
 
-    const bundledRows = bulkOfflineVocabularyCache.map((word) => {
+    const bundledRows = bulkFastOfflineVocabularyCache.map((word) => {
       const meaningsVi = cleanLearnerMeanings([word.primaryMeaningVi, ...word.meaningsVi]);
       const searchText = normalizeSearch([
         word.simplified,
@@ -1194,16 +1441,23 @@ async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndexRo
     // Custom/deck copies are not part of the immutable bundle. They are
     // usually only a handful of rows, so keep this query small and preserve
     // support for meanings edited by the learner.
-    const customRows = await db.getAllAsync<BulkLookupIndexDbRow>(`SELECT id,simplified,traditional,pinyin_numeric,
-      search_text,hsk_band,frequency_rank,deck_id FROM vocabulary WHERE is_custom=1`);
-    return [
+    // The immutable bundled dictionary is enough to resolve the normal bulk
+    // path. User-created rows are optional; never let a locked SQLite bridge
+    // hold the whole analysis screen hostage.
+    const customRows = await withFallbackTimeout(
+      () => db.getAllAsync<BulkLookupIndexDbRow>(`SELECT id,simplified,traditional,pinyin_numeric,
+        search_text,hsk_band,frequency_rank,deck_id FROM vocabulary WHERE is_custom=1`),
+      [],
+      BULK_CUSTOM_LOOKUP_TIMEOUT_MS,
+    );
+    return buildBulkLookupIndex([
       ...bundledRows,
       ...customRows.map((row) => ({
         ...row,
         searchTextPadded: ` ${row.search_text} `,
         pinyinCompact: normalizePinyinInput(row.pinyin_numeric),
       })),
-    ];
+    ]);
   })();
   bulkLookupIndexCache.set(db, promise);
   promise.catch(() => bulkLookupIndexCache.delete(db));
@@ -1222,11 +1476,15 @@ async function fetchBulkCandidatesById(
   for (let offset = 0; offset < ids.length; offset += BULK_FETCH_ID_CHUNK_SIZE) {
     const chunk = ids.slice(offset, offset + BULK_FETCH_ID_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    const rows = await db.getAllAsync<DbWord>(
-      `SELECT v.* FROM vocabulary v
-       WHERE v.id IN (${placeholders})
-         AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))`,
-      ...chunk,
+    const rows = await withFallbackTimeout(
+      () => db.getAllAsync<DbWord>(
+        `SELECT v.* FROM vocabulary v
+         WHERE v.id IN (${placeholders})
+           AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))`,
+        ...chunk,
+      ),
+      [],
+      BULK_CUSTOM_LOOKUP_TIMEOUT_MS,
     );
     for (const row of rows) words.set(row.id, mapWord(row));
   }
@@ -1249,14 +1507,16 @@ export async function findBulkLookupCandidates(
         .map((query) => ({ value: query.value.trim(), allowPinyin: query.allowPinyin }))
         .filter((query) => query.value)
         .map((query) => [normalizeSearch(query.value), query] as const),
-    ).values(),
+  ).values(),
   );
   if (!uniqueQueries.length) return [];
 
+  const contexts = uniqueQueries.map(createBulkLookupQueryContext);
+  const sqlCandidates = await findBulkSqlCandidates(db, contexts);
   const index = await getBulkLookupIndex(db);
   const selectedIds = new Set<string>();
-  for (const query of uniqueQueries.map(createBulkLookupQueryContext)) {
-    index
+  for (const query of contexts) {
+    getBulkCandidateRows(query, index)
       .map((row) => ({ row, score: bulkIndexMatchScore(query, row) }))
       .filter((item) => item.score > 0)
       .sort((left, right) => right.score - left.score)
@@ -1265,13 +1525,16 @@ export async function findBulkLookupCandidates(
   }
 
   const bundledWords = new Map(
-    index
+    index.rows
       .filter((row): row is BulkLookupIndexRow & { word: Vocabulary } => Boolean(row.word && selectedIds.has(row.id)))
       .map((row) => [row.id, row.word]),
   );
   const customIds = Array.from(selectedIds).filter((id) => !bundledWords.has(id));
   const customWords = customIds.length ? await fetchBulkCandidatesById(db, customIds) : [];
-  return [...bundledWords.values(), ...customWords];
+  const candidates = new Map(sqlCandidates.map((word) => [word.id, word]));
+  bundledWords.forEach((word, id) => candidates.set(id, word));
+  customWords.forEach((word) => candidates.set(word.id, word));
+  return Array.from(candidates.values());
 }
 
 export async function saveCustomVocabulary(

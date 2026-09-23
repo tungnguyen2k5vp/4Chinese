@@ -19,7 +19,7 @@ import {
   cleanLearnerMeanings,
   vocabularySearchAliases,
 } from '@/services/vocabulary/quality';
-import type { Vocabulary } from '@/types/models';
+import type { HskBand, Vocabulary } from '@/types/models';
 
 export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   const current = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
@@ -180,14 +180,25 @@ async function insertVocabulary(
  * SQLite bridge. The database remains the source of truth for progress and
  * user-created words; this function is only the immutable offline dictionary.
  */
-export function getOfflineVocabulary(): Vocabulary[] {
-  const words = [...getSeedVocabulary(), ...supplementalVocabulary];
+export function getOfflineVocabulary(bands?: HskBand[]): Vocabulary[] {
+  const allowedBands = bands?.length ? new Set(bands) : null;
+  const words = [
+    ...getSeedVocabulary(bands),
+    ...supplementalVocabulary.filter((word) => !allowedBands || allowedBands.has(word.hskBand)),
+  ];
   return Array.from(new Map(words.map((word) => [word.id, word])).values());
 }
 
-function getSeedVocabulary(): Vocabulary[] {
-  const curated = new Map(starterVocabulary.map((word) => [word.simplified, word]));
-  const generated = generatedVocabulary as typeof starterVocabulary;
+function getSeedVocabulary(bands?: HskBand[]): Vocabulary[] {
+  const allowedBands = bands?.length ? new Set(bands) : null;
+  const curated = new Map(
+    starterVocabulary
+      .filter((word) => !allowedBands || allowedBands.has(word.hskBand))
+      .map((word) => [word.simplified, word]),
+  );
+  const generated = (generatedVocabulary as typeof starterVocabulary).filter(
+    (word) => !allowedBands || allowedBands.has(word.hskBand),
+  );
   const merged = generated.map((rawWord) => {
     const word = applyVocabularyQualityOverride(rawWord);
     const correction = curated.get(word.simplified);

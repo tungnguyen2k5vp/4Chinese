@@ -24,7 +24,7 @@ const quick = [
   ["Ôn tập", "repeat", "/review"],
   ["Từ cần củng cố", "alert-circle", "/review/weak"],
   ["HSK", "layers", "/(tabs)/hsk"],
-  ["Từ đã lưu", "bookmark", "/(tabs)/vocabulary?filter=favorite"],
+  ["Lịch ôn sắp tới", "time-outline", "/review/upcoming"],
   ["Luyện viết", "brush", "/writing"],
   ["Luyện nghe", "headset", "/review?mode=audio"],
 ] as const;
@@ -37,17 +37,21 @@ export default function Home() {
   useFocusEffect(
     useCallback(() => {
       let live = true;
-      Promise.all([
-        getDashboardStats(db),
-        listVocabulary(db, { limit: 1 }),
-        getSettings(db),
-      ]).then(([next, words, settings]) => {
+
+      const refresh = async () => {
+        const settings = await getSettings(db);
+        const [next, words] = await Promise.all([
+          getDashboardStats(db, settings.selectedHskBands),
+          listVocabulary(db, { limit: 1 }),
+        ]);
         if (live) {
           setStats(next);
           setDaily(words[0] ?? null);
           setSettings(settings);
         }
-      });
+      };
+
+      void refresh();
       return () => {
         live = false;
       };

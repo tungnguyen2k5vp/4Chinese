@@ -17,9 +17,19 @@ export default function BulkAddWords() {
   const [input, setInput] = useState("");
   const [results, setResults] = useState<BulkResolvedWord[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisSeconds, setAnalysisSeconds] = useState(0);
   const [saving, setSaving] = useState(false);
   const terms = useMemo(() => parseBulkVocabularyInput(input), [input]);
   const resolved = results.filter((item) => item.word);
+
+  useEffect(() => {
+    if (!analyzing) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setAnalysisSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [analyzing]);
 
   useEffect(() => {
     void listPersonalDecks(db).then((decks) => {
@@ -29,6 +39,7 @@ export default function BulkAddWords() {
 
   const analyze = async () => {
     if (!terms.length || analyzing) return;
+    setAnalysisSeconds(0);
     setAnalyzing(true);
     try {
       setResults(await resolveBulkVocabulary(db, input));
@@ -76,6 +87,11 @@ export default function BulkAddWords() {
           autoCorrect={false}
           style={styles.input}
         />
+        {analyzing ? (
+          <Text style={styles.analyzingText}>
+            Đang tra kho offline… {analysisSeconds}s
+          </Text>
+        ) : null}
         <PrimaryButton label={`Nhận diện ${terms.length || ""} từ`.trim()} disabled={!terms.length} loading={analyzing} onPress={() => void analyze()} />
       </View>
 
@@ -128,6 +144,6 @@ const styles = StyleSheet.create({
   deckCard: { gap: spacing.xs }, label: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 }, deckName: { color: colors.text, fontSize: 22, fontWeight: "900" },
   form: { gap: spacing.md }, headingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }, title: { color: colors.text, fontSize: 18, fontWeight: "900" }, counter: { color: colors.primary, fontWeight: "900" }, help: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   input: { minHeight: 200, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, padding: spacing.md, color: colors.text, fontSize: 17, lineHeight: 25 },
-  results: { gap: spacing.sm }, resultRow: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: 3 }, query: { color: colors.textMuted, fontSize: 11, fontWeight: "800", textTransform: "uppercase" }, resolvedWord: { color: colors.primary, fontSize: 20, fontWeight: "900" }, unresolved: { color: colors.danger, fontSize: 13 },
+  results: { gap: spacing.sm }, analyzingText: { color: colors.primary, fontSize: 12, fontWeight: "800", textAlign: "center" }, resultRow: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: 3 }, query: { color: colors.textMuted, fontSize: 11, fontWeight: "800", textTransform: "uppercase" }, resolvedWord: { color: colors.primary, fontSize: 20, fontWeight: "900" }, unresolved: { color: colors.danger, fontSize: 13 },
   alternatives: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.xs }, alternative: { paddingHorizontal: 9, paddingVertical: 7, borderRadius: radius.pill, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border }, alternativeActive: { backgroundColor: colors.primary, borderColor: colors.primary }, alternativeText: { color: colors.textMuted, fontSize: 11, fontWeight: "700" }, alternativeTextActive: { color: "#fff", fontSize: 11, fontWeight: "800" },
 });

@@ -17,6 +17,7 @@ export default function RootLayout() {
       <Stack.Screen name="learn/setup" options={{ title: 'Học từ mới' }} />
       <Stack.Screen name="learn/session" options={{ title: 'Buổi học', gestureEnabled: false }} />
       <Stack.Screen name="review/index" options={{ title: 'Ôn tập' }} />
+      <Stack.Screen name="review/upcoming" options={{ title: 'Lịch ôn sắp tới' }} />
       <Stack.Screen name="review/session" options={{ title: 'Ôn tập', gestureEnabled: false }} />
       <Stack.Screen name="review/result" options={{ title: 'Kết quả', gestureEnabled: false }} />
       <Stack.Screen name="writing/index" options={{ title: 'Luyện viết' }} />

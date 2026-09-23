@@ -1,7 +1,11 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 import { describe, expect, it, vi } from "vitest";
 
-import { parseBulkVocabularyInput, rankBulkCandidates } from "./bulk-import";
+import {
+  parseBulkVocabularyInput,
+  rankBulkCandidates,
+  resolveBulkVocabulary,
+} from "./bulk-import";
 
 import { findBulkLookupCandidates, findHanziWordCandidates } from "@/db/repository";
 import { normalizeSearch } from "@/services/search/normalize";
@@ -169,7 +173,8 @@ describe("parseBulkVocabularyInput", () => {
     const db = {
       getAllAsync: vi.fn(async (sql: string, ...values: unknown[]) => {
         calls.push(sql);
-        if (sql.includes("SELECT id,simplified")) return rows;
+        if (sql.includes("SELECT id,simplified")) return [];
+        if (sql.includes("v.search_text LIKE")) return [country];
         return rows.filter((row) => values.includes(row.id));
       }),
     } as unknown as SQLiteDatabase;
@@ -181,6 +186,17 @@ describe("parseBulkVocabularyInput", () => {
     expect(calls.some((sql) => sql.includes("search_text ||"))).toBe(false);
     expect(calls.filter((sql) => sql.includes("SELECT v.*")).length).toBe(1);
   });
+
+  it("does not wait forever when the SQLite bridge is locked", async () => {
+    const db = {
+      getAllAsync: () => new Promise<never>(() => undefined),
+    } as unknown as SQLiteDatabase;
+
+    const result = await resolveBulkVocabulary(db, "Hôm qua\nXin lỗi");
+
+    expect(result).toHaveLength(2);
+    expect(result.every((item) => item.word)).toBe(true);
+  }, 5000);
 
   it("filters handwriting combinations through the offline dictionary", async () => {
     const db = {
