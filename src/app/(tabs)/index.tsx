@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
@@ -15,6 +15,7 @@ import {
   getSettings,
   listVocabulary,
 } from "@/db/repository";
+import { toLocalDateKey } from "@/services/stats/calendar";
 import { useAppStore } from "@/stores/app-store";
 import type { DashboardStats, Vocabulary } from "@/types/models";
 
@@ -34,9 +35,20 @@ export default function Home() {
   const setSettings = useAppStore((s) => s.setSettings);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [daily, setDaily] = useState<Vocabulary | null>(null);
+  const [todayKey, setTodayKey] = useState(() => toLocalDateKey(new Date()));
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const nextKey = toLocalDateKey(new Date());
+      setTodayKey((currentKey) => (currentKey === nextKey ? currentKey : nextKey));
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       let live = true;
+      const refreshDateKey = todayKey;
 
       const refresh = async () => {
         const settings = await getSettings(db);
@@ -44,7 +56,7 @@ export default function Home() {
           getDashboardStats(db, settings.selectedHskBands),
           listVocabulary(db, { limit: 1 }),
         ]);
-        if (live) {
+        if (live && refreshDateKey === toLocalDateKey(new Date())) {
           setStats(next);
           setDaily(words[0] ?? null);
           setSettings(settings);
@@ -55,7 +67,7 @@ export default function Home() {
       return () => {
         live = false;
       };
-    }, [db, setSettings]),
+    }, [db, setSettings, todayKey]),
   );
   const settings = useAppStore((s) => s.settings);
   const progress = Math.min(
