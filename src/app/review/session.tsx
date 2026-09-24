@@ -669,6 +669,9 @@ export default function ReviewSession() {
               <Text style={styles.recognizedHanzi}>
                 {showAnswer ? expectedScript : submittedHanzi}
               </Text>
+              {entry.pass === 1 && hanziCorrect && !showAnswer ? (
+                <PinyinText value={word.pinyin} style={styles.answerPinyin} />
+              ) : null}
               <Text
                 style={
                   hanziCorrect && !showAnswer
@@ -1033,6 +1036,7 @@ const styles = StyleSheet.create({
   },
   padCard: { alignItems: "center", gap: spacing.sm },
   answerCheck: { alignItems: "center", gap: spacing.sm },
+  answerPinyin: { fontSize: 24 },
   recognizedHanzi: {
     color: colors.text,
     fontSize: 48,
