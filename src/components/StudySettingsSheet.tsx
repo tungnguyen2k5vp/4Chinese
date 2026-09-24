@@ -57,7 +57,7 @@ export function StudySettingsSheet({
               </Pressable>
             ))}
           </View>
-          <Setting label="Tự phát âm từ mới" value={settings.autoPlayAudio} onChange={(autoPlayAudio) => onChange({ autoPlayAudio })} />
+          <Setting label="Tự phát âm khi ôn" value={settings.autoPlayAudio} onChange={(autoPlayAudio) => onChange({ autoPlayAudio })} />
           <Setting label="Rung khi đúng/sai" value={settings.hapticEnabled} onChange={(hapticEnabled) => onChange({ hapticEnabled })} />
           {mode === "review" ? <Setting label="Tự chấm 4 mức" value={settings.reviewStyle === "self-rating"} onChange={(selfRating) => onChange({ reviewStyle: selfRating ? "self-rating" : "automatic" })} /> : null}
           <Text style={styles.note}>Lần đầu chép một lần để lưu Cấp 1. Mỗi lượt ôn được chấm ngay; trả lời sai sẽ hạ cấp theo quy tắc và nhắc lại sớm hơn.</Text>

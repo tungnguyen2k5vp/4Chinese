@@ -69,7 +69,11 @@ export default function WordDetail() {
     // normal NEW-word encoding screen so the answer is shown and the learner
     // must copy it once before Level 1 is persisted.
     setLearnQueue([word]);
-    router.push("/learn/session");
+    router.push(
+      word.deckId
+        ? ({ pathname: "/learn/session", params: { deckId: word.deckId } } as Href)
+        : "/learn/session",
+    );
   };
   const favorite = async () => {
     const next = await toggleFavorite(db, word.id);

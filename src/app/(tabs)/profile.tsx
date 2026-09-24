@@ -145,7 +145,7 @@ export default function ProfileScreen() {
           onChange={(value) => void update({ soundEnabled: value })}
         />
         <Setting
-          label="Tự phát âm"
+          label="Tự phát âm khi ôn"
           value={settings.autoPlayAudio}
           onChange={(value) => void update({ autoPlayAudio: value })}
         />

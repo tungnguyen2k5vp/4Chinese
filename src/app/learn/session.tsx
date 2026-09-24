@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
-import { router } from "expo-router";
+import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -43,6 +43,7 @@ function hidePinyinHints(value: string): string {
 export default function LearnSession() {
   const db = useSQLiteContext();
   useStudySession(db);
+  const { deckId } = useLocalSearchParams<{ deckId?: string }>();
   const queue = useAppStore((state) => state.learnQueue);
   const clear = useAppStore((state) => state.clearSession);
   const setGlobalSettings = useAppStore((state) => state.setSettings);
@@ -72,12 +73,12 @@ export default function LearnSession() {
   }, [queue.length, word]);
 
   useEffect(() => {
-    if (!word || !settings?.autoPlayAudio) return;
+    if (!word || !settings) return;
     void speakChinese(word.simplified, { rate: settings.speechRate });
     return () => {
       void stopChineseSpeech();
     };
-  }, [settings?.autoPlayAudio, settings?.speechRate, word]);
+  }, [settings, word]);
 
   const resetWord = () => {
     setRecognizedHanzi("");
@@ -93,6 +94,10 @@ export default function LearnSession() {
     nextSkipped: number,
   ) => {
     clear();
+    if (deckId) {
+      router.replace({ pathname: "/decks/[id]", params: { id: deckId } } as Href);
+      return;
+    }
     router.replace(
       `/review/result?mode=learn&total=${queue.length}&correct=${nextCompleted}&known=${nextKnown}&skipped=${nextSkipped}`,
     );
@@ -265,16 +270,18 @@ export default function LearnSession() {
         {pass === 1 ? (
           <>
             <Text style={styles.hanzi}>{word.simplified}</Text>
-            <AudioButton text={word.simplified} size={27} />
-            <Text style={styles.meta}>
-              {word.pos.join(" · ")} · HSK {word.hskBand}
-            </Text>
           </>
         ) : (
           <Text style={styles.hiddenAnswer}>
             Viết chữ Hán tương ứng với nghĩa trên
           </Text>
         )}
+        <AudioButton text={word.simplified} size={27} />
+        {pass === 1 ? (
+          <Text style={styles.meta}>
+            {word.pos.join(" · ")} · HSK {word.hskBand}
+          </Text>
+        ) : null}
         {word.imageUri ? (
           <Image
             source={word.imageUri}

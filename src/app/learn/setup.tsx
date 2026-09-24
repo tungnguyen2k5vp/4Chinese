@@ -1,5 +1,5 @@
 import { Image } from "expo-image";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
@@ -11,6 +11,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
 import { getSettings, getUnlearnedVocabulary, setKnown, setSkipped } from "@/db/repository";
+import { speakChinese, stopChineseSpeech } from "@/services/audio/chinese-speech";
 import { useAppStore } from "@/stores/app-store";
 import type { Vocabulary } from "@/types/models";
 
@@ -22,6 +23,7 @@ export default function LearnSetup() {
   const [selected, setSelected] = useState<Vocabulary[]>([]);
   const [index, setIndex] = useState(0);
   const [goal, setGoal] = useState(10);
+  const [speechRate, setSpeechRate] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const word = available[index];
@@ -33,6 +35,7 @@ export default function LearnSetup() {
       .then(async (settings) => {
         const words = await getUnlearnedVocabulary(db, settings.selectedHskBands, 100, deckId);
         if (!live) return;
+        setSpeechRate(settings.speechRate);
         setAvailable(words);
         setGoal(Math.min(Math.max(1, Math.min(10, settings.dailyNewWordGoal)), words.length));
       })
@@ -40,10 +43,22 @@ export default function LearnSetup() {
     return () => { live = false; };
   }, [db, deckId]);
 
+  useEffect(() => {
+    if (!word || speechRate === null) return;
+    void speakChinese(word.simplified, { rate: speechRate });
+    return () => {
+      void stopChineseSpeech();
+    };
+  }, [speechRate, word]);
+
   const begin = (queue: Vocabulary[]) => {
     if (!queue.length) return;
     setQueue(queue);
-    router.push("/learn/session");
+    router.push(
+      deckId
+        ? ({ pathname: "/learn/session", params: { deckId } } as Href)
+        : "/learn/session",
+    );
   };
 
   const advance = (queue = selected) => {
