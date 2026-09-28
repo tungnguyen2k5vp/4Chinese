@@ -3,7 +3,6 @@ import { PanResponder, Pressable, StyleSheet, Text, TextInput, View } from "reac
 import Svg, { G, Line, Path, Polyline } from "react-native-svg";
 
 import { colors, radius, spacing } from "@/constants/design";
-import hsk12StrokeData from "@/data/hsk12-strokes.json";
 import {
   isChineseInkRecognitionAvailable,
   recognizeChineseInk,
@@ -11,10 +10,10 @@ import {
   type InkStroke,
 } from "@/services/handwriting/recognizer";
 import { combineCharacterCandidates } from "@/services/handwriting/segmentation";
+import { getStrokePaths } from "@/services/handwriting/stroke-data";
 
 const size = 286;
 const eraserRadius = 18;
-const strokeData = hsk12StrokeData as Record<string, string[]>;
 
 function touchesPoint(stroke: InkStroke, point: InkPoint): boolean {
   return stroke.points.some(
@@ -66,7 +65,7 @@ export function HanziHandwritingPad({
   const strokes = strokesByPage[currentPage] ?? [];
   const targetCharacters = Array.from(targetWord).slice(0, pageCount);
   const currentTarget = targetCharacters[currentPage] ?? "";
-  const currentHintPaths = strokeData[currentTarget] ?? [];
+  const currentHintPaths = getStrokePaths(currentTarget);
   const currentHintCount = Math.min(hintCounts[currentPage] ?? 0, currentHintPaths.length);
   const selectedWord = selectedCharacters.join("");
   const allPagesReady = recognitionAvailable

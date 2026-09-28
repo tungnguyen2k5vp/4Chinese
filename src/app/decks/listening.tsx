@@ -60,7 +60,7 @@ export default function DeckListeningScreen() {
   }, [question, settings?.speechRate]);
 
   useEffect(() => {
-    if (!question || finished) return undefined;
+    if (!question || finished || !settings?.soundEnabled || !settings.autoPlayAudio) return undefined;
     const task = InteractionManager.runAfterInteractions(() => {
       playQuestion();
     });
@@ -68,7 +68,7 @@ export default function DeckListeningScreen() {
       task.cancel();
       void stopChineseSpeech();
     };
-  }, [finished, playQuestion, question]);
+  }, [finished, playQuestion, question, settings?.autoPlayAudio, settings?.soundEnabled]);
 
   const choose = (choiceId: string) => {
     if (!question || selectedId) return;

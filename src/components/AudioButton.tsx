@@ -13,15 +13,21 @@ export function AudioButton({
   text,
   rate = 0.82,
   size = 26,
+  allowWhenSoundDisabled = false,
 }: {
   text: string;
   rate?: number;
   size?: number;
+  /** Listening practice can opt in because the learner explicitly requested audio. */
+  allowWhenSoundDisabled?: boolean;
 }) {
   const [speaking, setSpeaking] = useState(false);
-  const speechRate = useAppStore((state) => state.settings?.speechRate ?? rate);
+  const settings = useAppStore((state) => state.settings);
+  const speechRate = settings?.speechRate ?? rate;
+  const playbackAllowed = (settings?.soundEnabled ?? true) || allowWhenSoundDisabled;
 
   const speak = async () => {
+    if (!playbackAllowed) return;
     if (speaking) {
       await stopChineseSpeech();
       setSpeaking(false);
@@ -57,12 +63,14 @@ export function AudioButton({
     <Pressable
       accessibilityLabel={`Nghe phát âm ${text}`}
       accessibilityRole="button"
+      accessibilityState={{ disabled: !playbackAllowed }}
+      disabled={!playbackAllowed}
       hitSlop={8}
       onPress={(event) => {
         event.stopPropagation();
         void speak();
       }}
-      style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.button, !playbackAllowed && styles.disabled, pressed && styles.pressed]}
     >
       <Ionicons
         name={speaking ? "stop" : "volume-high"}
@@ -83,4 +91,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
   },
   pressed: { opacity: 0.7 },
+  disabled: { opacity: 0.42 },
 });

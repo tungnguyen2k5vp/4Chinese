@@ -18,7 +18,7 @@ export function StudySettingsSheet({
   onChange: (patch: Partial<UserSettings>) => void;
 }) {
   if (!settings) return null;
-  const count = mode === "learn" ? settings.dailyNewWordGoal : settings.reviewSessionSize;
+  const count = mode === "learn" ? settings.learnSessionSize : settings.reviewSessionSize;
   const counts = mode === "learn" ? [5, 10, 15, 20] : [10, 20, 30, 50];
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -31,12 +31,12 @@ export function StudySettingsSheet({
             </View>
             <Pressable onPress={onClose} hitSlop={10}><Text style={styles.close}>×</Text></Pressable>
           </View>
-          <Text style={styles.label}>SỐ TỪ TỐI ĐA MỖI LẦN</Text>
+          <Text style={styles.label}>SỐ TỪ TỐI ĐA MỖI PHIÊN</Text>
           <View style={styles.choices}>
             {counts.map((value) => (
               <Pressable
                 key={value}
-                onPress={() => onChange(mode === "learn" ? { dailyNewWordGoal: value } : { reviewSessionSize: value as UserSettings["reviewSessionSize"] })}
+                onPress={() => onChange(mode === "learn" ? { learnSessionSize: value as UserSettings["learnSessionSize"] } : { reviewSessionSize: value as UserSettings["reviewSessionSize"] })}
                 style={[styles.choice, count === value && styles.choiceActive]}
               >
                 <Text style={[styles.choiceText, count === value && styles.choiceTextActive]}>{value}</Text>

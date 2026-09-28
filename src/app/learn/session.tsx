@@ -73,7 +73,7 @@ export default function LearnSession() {
   }, [queue.length, word]);
 
   useEffect(() => {
-    if (!word || !settings) return;
+    if (!word || !settings?.soundEnabled || !settings.autoPlayAudio) return;
     void speakChinese(word.simplified, { rate: settings.speechRate });
     return () => {
       void stopChineseSpeech();

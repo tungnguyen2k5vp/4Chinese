@@ -2,7 +2,7 @@
   "expo": {
     "name": "4Chinese",
     "slug": "4chinese",
-    "version": "0.1.12",
+    "version": "0.1.16",
     "orientation": "portrait",
     "icon": "./assets/images/hanzi-icon.png",
     "scheme": "4chinese",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.tungnguyen2k5vp.fourchinese",
-      "versionCode": 14,
+      "versionCode": 18,
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ],
@@ -63,7 +63,9 @@
           "microphonePermission": "Cho phép 4Chinese dùng micro để ghi âm và AI chấm phát âm tiếng Trung.",
           "enableBackgroundPlayback": false
         }
-      ]
+      ],
+      "expo-sharing",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

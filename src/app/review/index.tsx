@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -13,11 +13,14 @@ import {
   getSettings,
   saveSettings,
 } from "@/db/repository";
+import { exerciseForReviewMode, standardReviewModes } from "@/services/review/exercise";
+import { resolveReviewMode } from "@/services/review/review-mode";
 import { useAppStore } from "@/stores/app-store";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
 const sizes = [10, 20, 30, 50] as const;
 export default function ReviewIndex() {
+  const { mode: requestedMode } = useLocalSearchParams<{ mode?: string }>();
   const db = useSQLiteContext();
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [dueCount, setDueCount] = useState(0);
@@ -41,6 +44,8 @@ export default function ReviewIndex() {
   }, [db]);
   const selected = settings?.reviewSessionSize ?? 20;
   const count = dueCount;
+  const [mode, setMode] = useState(() => resolveReviewMode(requestedMode));
+  const isListening = exerciseForReviewMode(mode).playsAudio;
   const choose = async (size: (typeof sizes)[number]) => {
     if (!settings) return;
     const next = { ...settings, reviewSessionSize: size };
@@ -49,12 +54,12 @@ export default function ReviewIndex() {
   };
   const start = () => {
     setQueue(words.slice(0, selected));
-    router.push("/review/session");
+    router.push({ pathname: "/review/session", params: { mode } } as Href);
   };
   return (
     <Screen
-      title="Ôn tập theo cấp nhớ"
-      subtitle="Lịch ôn rõ ràng từ Cấp 1 đến Trí nhớ sâu, dựa trên kết quả thật của bạn."
+      title={isListening ? "Luyện nghe" : "Ôn tập theo cấp nhớ"}
+      subtitle={isListening ? "Nghe từ tiếng Trung rồi chọn nghĩa đúng trong lịch ôn hiện có." : "Lịch ôn rõ ràng từ Cấp 1 đến Trí nhớ sâu, dựa trên kết quả thật của bạn."}
     >
       <View style={[card, styles.hero]}>
         <Text style={styles.icon}>复</Text>
@@ -74,6 +79,24 @@ export default function ReviewIndex() {
       ) : (
         <>
           <View style={card}>
+            <Text style={styles.section}>Kiểu bài ôn</Text>
+            <View style={styles.modeOptions}>
+              {standardReviewModes.map((candidateMode) => {
+                const selectedMode = candidateMode === mode;
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    key={candidateMode}
+                    onPress={() => setMode(candidateMode)}
+                    style={[styles.modeChoice, selectedMode && styles.modeChoiceActive]}
+                  >
+                    <Text style={[styles.modeChoiceText, selectedMode && styles.modeChoiceTextActive]}>
+                      {exerciseForReviewMode(candidateMode).label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <Text style={styles.section}>Số từ trong phiên</Text>
             <View style={styles.sizes}>
               {sizes.map((size) => (
@@ -94,8 +117,9 @@ export default function ReviewIndex() {
               ))}
             </View>
             <Text style={styles.note}>
-              Phiên này sẽ hiện nghĩa tiếng Việt để bạn viết Hanzi, chọn Pinyin
-              và chọn nghĩa đúng trước khi chấm mức nhớ.
+              {isListening
+                ? "Phiên này phát âm từ tiếng Trung; bạn chọn nghĩa tiếng Việt đúng trước khi chấm mức nhớ."
+                : "Phiên này sẽ hiện nghĩa tiếng Việt để bạn viết Hanzi, chọn Pinyin và chọn nghĩa đúng trước khi chấm mức nhớ."}
             </Text>
           </View>
           <PrimaryButton
@@ -124,6 +148,11 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     marginBottom: spacing.md,
   },
+  modeOptions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginBottom: spacing.md },
+  modeChoice: { borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, minHeight: 40, justifyContent: "center", paddingHorizontal: spacing.sm },
+  modeChoiceActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  modeChoiceText: { color: colors.textMuted, fontSize: 11, fontWeight: "800" },
+  modeChoiceTextActive: { color: "#FFFFFF" },
   sizes: { flexDirection: "row", gap: spacing.sm },
   size: {
     flex: 1,

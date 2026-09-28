@@ -1,0 +1,13 @@
+{
+  "source": "hanzi-writer-data",
+  "supported": 4196,
+  "total": 4202,
+  "missing": [
+    "搾",
+    "獃",
+    "秊",
+    "薙",
+    "颿",
+    "骽"
+  ]
+}

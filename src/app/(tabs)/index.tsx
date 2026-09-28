@@ -12,8 +12,8 @@ import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing, typography } from "@/constants/design";
 import {
   getDashboardStats,
+  getDailyVocabulary,
   getSettings,
-  listVocabulary,
 } from "@/db/repository";
 import { toLocalDateKey } from "@/services/stats/calendar";
 import { useAppStore } from "@/stores/app-store";
@@ -25,9 +25,15 @@ const quick = [
   ["Ôn tập", "repeat", "/review"],
   ["Từ cần củng cố", "alert-circle", "/review/weak"],
   ["HSK", "layers", "/(tabs)/hsk"],
+  ["Lộ trình", "map-outline", "/path"],
+  ["Ngữ pháp", "book-outline", "/grammar"],
+  ["Truyện ngắn", "library-outline", "/stories"],
+  ["Sổ lỗi", "warning-outline", "/mistakes"],
   ["Lịch ôn sắp tới", "time-outline", "/review/upcoming"],
   ["Luyện viết", "brush", "/writing"],
-  ["Luyện nghe", "headset", "/review?mode=audio"],
+  ["Luyện nghe", "headset", "/review?mode=audio-meaning"],
+  ["Nghe & nói", "mic-outline", "/speaking"],
+  ["Đọc & tra từ", "book-outline", "/reader"],
 ] as const;
 
 export default function Home() {
@@ -52,13 +58,13 @@ export default function Home() {
 
       const refresh = async () => {
         const settings = await getSettings(db);
-        const [next, words] = await Promise.all([
+        const [next, dailyWord] = await Promise.all([
           getDashboardStats(db, settings.selectedHskBands),
-          listVocabulary(db, { limit: 1 }),
+          getDailyVocabulary(db, settings.selectedHskBands, refreshDateKey),
         ]);
         if (live && refreshDateKey === toLocalDateKey(new Date())) {
           setStats(next);
-          setDaily(words[0] ?? null);
+          setDaily(dailyWord);
           setSettings(settings);
         }
       };
@@ -115,8 +121,8 @@ export default function Home() {
           <View style={[styles.studyFill, { width: `${studyProgress * 100}%` }]} />
         </View>
         <PrimaryButton
-          label="Tiếp tục học"
-          onPress={() => router.push("/learn/setup")}
+          label="Học hôm nay"
+          onPress={() => router.push("/daily" as Href)}
         />
       </View>
       <DueReviewCard

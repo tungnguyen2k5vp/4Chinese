@@ -16,6 +16,7 @@ import { StrokeWriter } from "@/components/StrokeWriter";
 import { card, colors, radius, spacing } from "@/constants/design";
 import {
   getNotes,
+  getRelatedVocabulary,
   getVocabulary,
   saveNotes,
   toggleFavorite,
@@ -33,6 +34,7 @@ export default function WordDetail() {
   const [tab, setTab] = useState<Tab>("overview");
   const [character, setCharacter] = useState("");
   const [notes, setNotes] = useState("");
+  const [related, setRelated] = useState<Vocabulary[]>([]);
   const setLearnQueue = useAppStore((state) => state.setLearnQueue);
   useEffect(() => {
     if (!id) return;
@@ -41,6 +43,7 @@ export default function WordDetail() {
         setWord(value);
         setCharacter(value?.simplified[0] ?? "");
         setNotes(note);
+        if (value) void getRelatedVocabulary(db, value).then(setRelated).catch(() => setRelated([]));
       },
     );
   }, [db, id]);
@@ -178,6 +181,13 @@ export default function WordDetail() {
             </Text>
           </View>
           {word.examples[0] ? <Example item={word.examples[0]} /> : null}
+          {related.length ? <View style={[card, styles.related]}>
+            <Text style={styles.section}>Từ liên quan</Text>
+            <Text style={styles.relatedHint}>Cùng Hán tự, ưu tiên cấp HSK phù hợp và từ bạn đang học.</Text>
+            <View style={styles.relatedList}>{related.map((item) => <Pressable key={item.id} onPress={() => router.push(`/word/${item.id}` as Href)} style={styles.relatedItem}>
+              <Text style={styles.relatedHanzi}>{item.simplified}</Text><View style={styles.relatedCopy}><PinyinText value={item.pinyin} /><Text numberOfLines={1} style={styles.relatedMeaning}>{item.primaryMeaningVi}</Text></View>
+            </Pressable>)}</View>
+          </View> : null}
           <PrimaryButton
             label={word.status === "LEARNING" ? "Mở ôn tập" : word.status === "KNOWN" ? "Đã biết" : "Học từ này"}
             onPress={() => void learn()}
@@ -225,7 +235,7 @@ export default function WordDetail() {
           ) : (
             <EmptyState
               title="Chưa có ví dụ"
-              message="Pipeline dữ liệu hỗ trợ thêm câu ví dụ đã kiểm chứng."
+              message="Chưa có câu song ngữ phù hợp đã kiểm tra cho từ này."
             />
           )}
         </View>
@@ -382,6 +392,13 @@ const styles = StyleSheet.create({
   characterTextActive: { color: "#fff" },
   meta: { color: colors.textMuted, fontSize: 12 },
   exampleList: { gap: spacing.md },
+  related: { gap: spacing.sm },
+  relatedHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: -spacing.sm },
+  relatedList: { gap: spacing.xs },
+  relatedItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
+  relatedHanzi: { minWidth: 48, color: colors.primary, fontSize: 25, fontWeight: "900" },
+  relatedCopy: { flex: 1, gap: 2 },
+  relatedMeaning: { color: colors.textMuted, fontSize: 12 },
   analysisCard: { gap: spacing.md, backgroundColor: colors.primarySoft },
   analysisHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   analysisCopy: { flex: 1 },

@@ -3,15 +3,11 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import generatedVocabulary from '@/data/hsk-vocabulary.json';
 import { starterVocabulary } from '@/data/starter-vocabulary';
 import { supplementalVocabulary } from '@/data/supplemental-vocabulary';
-import {
-  migrationSql,
-  migrationV2Sql,
-  migrationV3Sql,
-  migrationV4Sql,
-  migrationV5Sql,
-  latestIndexSql,
-  DATABASE_VERSION,
-} from '@/db/schema';
+import { seedGrammarContent } from '@/db/grammar';
+import { seedLearningPath } from '@/db/learning-path';
+import { migrateDatabaseSchema } from '@/db/migrations';
+import { DATABASE_VERSION } from '@/db/schema';
+import { seedStories } from '@/db/stories';
 import { illustrationForVocabulary, isDeviceSelectedImage } from '@/services/media/illustration';
 import { normalizeSearch } from '@/services/search/normalize';
 import {
@@ -22,44 +18,7 @@ import {
 import type { HskBand, Vocabulary } from '@/types/models';
 
 export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
-  const current = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  const currentVersion = current?.user_version ?? 0;
-  await db.execAsync(migrationSql);
-  const progressColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(user_vocabulary_progress)');
-  if (currentVersion < 2 && !progressColumns.some((column) => column.name === 'memory_level')) {
-    await db.execAsync(migrationV2Sql);
-  }
-  const deckColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(personal_deck)');
-  if (currentVersion < 3 && !deckColumns.some((column) => column.name === 'deleted_at')) {
-    await db.execAsync(migrationV3Sql);
-  }
-  const refreshedProgressColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(user_vocabulary_progress)');
-  const hasStatus = refreshedProgressColumns.some((column) => column.name === 'status');
-  const hasStudied = refreshedProgressColumns.some((column) => column.name === 'studied');
-  if (currentVersion < 4 || !hasStatus || !hasStudied) {
-    // Run the two ALTER statements independently so a partially migrated
-    // database can be repaired without failing on a duplicate column.
-    if (!hasStatus) await db.execAsync("ALTER TABLE user_vocabulary_progress ADD COLUMN status TEXT NOT NULL DEFAULT 'NEW';");
-    if (!hasStudied) await db.execAsync("ALTER TABLE user_vocabulary_progress ADD COLUMN studied INTEGER NOT NULL DEFAULT 0;");
-    const backfillSql = migrationV4Sql.slice(migrationV4Sql.indexOf('UPDATE'));
-    await db.execAsync(backfillSql);
-  }
-  const reviewColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(review_log)');
-  const reviewColumnNames = new Set(reviewColumns.map((column) => column.name));
-  const missingReviewColumns = ['typed_pinyin', 'selected_hanzi', 'candidate_rank']
-    .filter((column) => !reviewColumnNames.has(column));
-  if (missingReviewColumns.length > 0) {
-    // Keep each ALTER independent so a partially upgraded database can be
-    // repaired safely when the app is opened again.
-    if (currentVersion < 5 && missingReviewColumns.length === 3) {
-      await db.execAsync(migrationV5Sql);
-    } else {
-      if (!reviewColumnNames.has('typed_pinyin')) await db.execAsync('ALTER TABLE review_log ADD COLUMN typed_pinyin TEXT;');
-      if (!reviewColumnNames.has('selected_hanzi')) await db.execAsync('ALTER TABLE review_log ADD COLUMN selected_hanzi TEXT;');
-      if (!reviewColumnNames.has('candidate_rank')) await db.execAsync('ALTER TABLE review_log ADD COLUMN candidate_rank INTEGER;');
-    }
-  }
-  await db.execAsync(latestIndexSql);
+  const currentVersion = await migrateDatabaseSchema(db);
   const count = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM vocabulary');
   const seededNow = (count?.count ?? 0) === 0;
   if (seededNow) await seedDatabase(db);
@@ -68,10 +27,38 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   if (currentVersion < 7) await repairAutomaticIllustrations(db);
   // A freshly seeded database already uses the canonical data above; the
   // migration is only needed for an existing install with an older index.
-  if (currentVersion < DATABASE_VERSION && !seededNow) await refreshVocabularyQuality(db);
+  // Dictionary rewrite belongs to the v9 data migration, not every later
+  // schema release. Repeating it on v10+ adds seconds of startup work and can
+  // overwrite learner-visible base-word corrections unnecessarily.
+  if (currentVersion < 9 && !seededNow) await refreshVocabularyQuality(db);
+  if (currentVersion < 11 || seededNow) await rebuildVocabularyCharacterIndex(db);
+  if (currentVersion < 14) await seedLearningPath(db);
+  if (currentVersion < 14) await seedGrammarContent(db, getOfflineVocabulary());
+  if (currentVersion < 16) await seedStories(db);
   if (currentVersion < DATABASE_VERSION) {
     await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
   }
+}
+
+async function rebuildVocabularyCharacterIndex(db: SQLiteDatabase): Promise<void> {
+  const words = await db.getAllAsync<{ id: string; simplified: string; traditional: string }>(
+    'SELECT id,simplified,traditional FROM vocabulary',
+  );
+  await db.withTransactionAsync(async () => {
+    await db.execAsync('DELETE FROM vocabulary_character_index');
+    const statement = await db.prepareAsync(
+      'INSERT OR IGNORE INTO vocabulary_character_index(character,vocabulary_id) VALUES(?,?)',
+    );
+    try {
+      for (const word of words) {
+        const characters = new Set([...word.simplified, ...word.traditional]
+          .filter((character) => /[\u3400-\u9fff]/u.test(character)));
+        for (const character of characters) await statement.executeAsync(character, word.id);
+      }
+    } finally {
+      await statement.finalizeAsync();
+    }
+  });
 }
 
 /**

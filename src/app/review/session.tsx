@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -27,6 +27,8 @@ import {
 } from "@/services/audio/chinese-speech";
 import type { PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
 import { evaluateComposeAnswer } from "@/services/pinyin-ime/composeAnswer";
+import { exerciseForReviewMode } from "@/services/review/exercise";
+import { normalizeReviewAttempt } from "@/services/review/exercise-attempt";
 import {
   buildInterleavedReviewQueue,
   emptyWordReviewState,
@@ -34,6 +36,7 @@ import {
   recordReviewAttempt,
   type WordReviewState,
 } from "@/services/review/interleaved-session";
+import { resolveReviewMode } from "@/services/review/review-mode";
 import { applyReview, formatDueInterval } from "@/services/srs/scheduler";
 import { useAppStore } from "@/stores/app-store";
 import type {
@@ -50,30 +53,17 @@ const ratingMeta: [ReviewRating, string, string][] = [
   ["easy", "Dễ", colors.primary],
 ];
 
-const modeLabels: Record<ReviewMode, string> = {
-  "hanzi-meaning": "HÁN TỰ → NGHĨA",
-  "meaning-hanzi": "NGHĨA → VIẾT HÁN TỰ",
-  "pinyin-hanzi": "PINYIN → VIẾT HÁN TỰ",
-  "hanzi-pinyin": "HÁN TỰ → PINYIN",
-  "hanzi-recall-pinyin-compose": "HÁN TỰ → NHỚ PINYIN → CHỌN HÁN TỰ",
-  "audio-meaning": "NGHE → NGHĨA",
-  writing: "LUYỆN VIẾT HÁN TỰ",
-  cloze: "ĐIỀN TỪ VÀO CÂU",
-};
-
 const writingModes = new Set<ReviewMode>([
   "meaning-hanzi",
   "pinyin-hanzi",
+  "audio-hanzi",
   "writing",
   "cloze",
 ]);
 
-function getThreePassReviewMode(): ReviewMode {
-  return "meaning-hanzi";
-}
-
 export default function ReviewSession() {
   const db = useSQLiteContext();
+  const { mode: requestedMode } = useLocalSearchParams<{ mode?: string }>();
   useStudySession(db);
   const source = useAppStore((state) => state.reviewQueue);
   const clear = useAppStore((state) => state.clearSession);
@@ -135,16 +125,19 @@ export default function ReviewSession() {
     );
   }, [db, index, setGlobalSettings, word]);
 
-  // The review requested by the product is consistently Vietnamese meaning
-  // to Hanzi; the learner chooses handwriting or pinyin composition.
-  const mode = getThreePassReviewMode();
+  const requested = resolveReviewMode(requestedMode);
+  // Cloze requires a real sentence containing the target. Never grade a
+  // meaning prompt as if it were a contextual fill-in-the-blank.
+  const mode = requested === "cloze" && !word?.examples.some((item) => item.chinese.includes(word.simplified))
+    ? "meaning-hanzi" : requested;
+  const exercise = exerciseForReviewMode(mode);
   const needsWriting = writingModes.has(mode);
 
   useEffect(() => {
     if (!word || !settings) return;
     if (
       mode !== "hanzi-recall-pinyin-compose" &&
-      (settings.autoPlayAudio || mode === "audio-meaning")
+      settings.soundEnabled && (exercise.playsAudio || settings.autoPlayAudio)
     ) {
       // Audio is intentionally played only when the card changes, not on each
       // render, so the session remains responsive and quiet while choosing.
@@ -153,7 +146,7 @@ export default function ReviewSession() {
         void stopChineseSpeech();
       };
     }
-  }, [mode, settings, word]);
+  }, [exercise.playsAudio, mode, settings, word]);
 
   const pinyinOptions = useMemo(() => {
     if (!word) return [];
@@ -233,8 +226,8 @@ export default function ReviewSession() {
             ? Boolean(practicePinyin)
             : mode === "meaning-hanzi"
               ? Boolean(hanziComplete)
-              : mode === "pinyin-hanzi"
-                ? Boolean(hanziComplete && practiceMeaning)
+              : mode === "pinyin-hanzi" || mode === "audio-hanzi"
+                ? Boolean(hanziComplete)
                 : Boolean(hanziComplete));
   const answerCorrect =
     mode === "hanzi-recall-pinyin-compose"
@@ -250,7 +243,8 @@ export default function ReviewSession() {
             case "meaning-hanzi":
               return hanziCorrect;
             case "pinyin-hanzi":
-              return hanziCorrect && meaningCorrect;
+            case "audio-hanzi":
+              return hanziCorrect;
             case "writing":
             case "cloze":
               return hanziCorrect;
@@ -295,14 +289,21 @@ export default function ReviewSession() {
     let nextStats = stats;
     if (nextWordState.attempts >= 3) {
       const passedWord = hasPassedWord(nextWordState);
+      const normalizedAttempt = normalizeReviewAttempt({
+        correct: passedWord,
+        hintUsed: false,
+        responseTimeMs: nextWordState.responseTimeMs / 3,
+        attemptCount: nextWordState.attempts,
+        exerciseType: exercise.type,
+      });
       const result = await reviewWord(
         db,
         word.id,
         {
-          correct: passedWord,
+          correct: normalizedAttempt.correct,
           rating: passedWord ? (rating === "easy" ? "easy" : "good") : "again",
-          hintUsed: false,
-          responseTimeMs: Math.round(nextWordState.responseTimeMs / 3),
+          hintUsed: normalizedAttempt.hintUsed,
+          responseTimeMs: normalizedAttempt.responseTimeMs,
           typedPinyin: answerMethod === "pinyin" ? pinyinQuery : undefined,
           selectedHanzi: submittedHanzi || undefined,
           candidateRank:
@@ -488,19 +489,19 @@ export default function ReviewSession() {
 
       <View style={[card, styles.challengeHeader]}>
         <Text style={styles.challengeLabel}>
-          ÔN TẬP · LƯỢT {entry.pass}/3 · {modeLabels[mode]}
+          ÔN TẬP · LƯỢT {entry.pass}/3 · {exercise.label}
         </Text>
         {mode === "hanzi-meaning" ? (
           <Text style={styles.sourceHanzi}>{word.simplified}</Text>
         ) : mode === "pinyin-hanzi" ? (
-          <PinyinText value={word.pinyin} style={styles.sourcePinyin} />
+          <PinyinText value={word.pinyin} visible style={styles.sourcePinyin} />
         ) : mode === "hanzi-recall-pinyin-compose" ? (
           <>
             <Text style={styles.sourceHanzi}>{expectedScript}</Text>
             <Text style={styles.challengePrompt}>{word.primaryMeaningVi}</Text>
           </>
-        ) : mode === "audio-meaning" ? (
-          <AudioButton text={word.simplified} size={34} />
+        ) : mode === "audio-meaning" || mode === "audio-hanzi" ? (
+          <AudioButton text={word.simplified} size={34} allowWhenSoundDisabled />
         ) : mode === "hanzi-pinyin" ? (
           <Text style={styles.sourceHanzi}>{word.simplified}</Text>
         ) : mode === "cloze" ? (
@@ -512,21 +513,11 @@ export default function ReviewSession() {
           <>
             <Text style={styles.challengePrompt}>{word.primaryMeaningVi}</Text>
             {mode === "writing" ? (
-              <PinyinText value={word.pinyin} style={styles.sourcePinyin} />
+              <PinyinText value={word.pinyin} visible style={styles.sourcePinyin} />
             ) : null}
           </>
         )}
-        <Text style={styles.challengeHint}>
-          {mode === "hanzi-meaning"
-            ? "Chọn nghĩa tiếng Việt sát nhất với Hán tự."
-            : mode === "hanzi-pinyin"
-              ? "Chọn cách đọc đúng của Hán tự."
-              : mode === "hanzi-recall-pinyin-compose"
-                ? "Tự nhớ cách đọc, gõ pinyin rồi chọn đúng từ Hán."
-                : mode === "audio-meaning"
-                  ? "Nghe âm thanh rồi chọn nghĩa đúng."
-                  : "Tự nhớ trước. Đáp án mục tiêu đang được ẩn."}
-        </Text>
+        <Text style={styles.challengeHint}>{exercise.prompt}</Text>
       </View>
 
       {mode === "hanzi-recall-pinyin-compose" ? (
@@ -537,7 +528,7 @@ export default function ReviewSession() {
             </Text>
             {composeHintVisible || composeSubmitted ? (
               <View style={styles.revealedPinyin}>
-                <PinyinText value={word.pinyin} style={styles.sourcePinyin} />
+                <PinyinText value={word.pinyin} visible style={styles.sourcePinyin} />
                 <AudioButton text={word.simplified} size={30} />
               </View>
             ) : null}
@@ -578,7 +569,7 @@ export default function ReviewSession() {
                   : "✗ Chưa đúng"}
               </Text>
               <Text style={styles.resultHanzi}>{expectedScript}</Text>
-              <PinyinText value={word.pinyin} style={styles.resultPinyin} />
+              <PinyinText value={word.pinyin} visible style={styles.resultPinyin} />
               <Text style={styles.resultMeaning}>{word.primaryMeaningVi}</Text>
               {!answerCorrect ? (
                 <Text style={styles.feedbackBad}>
@@ -670,7 +661,7 @@ export default function ReviewSession() {
                 {showAnswer ? expectedScript : submittedHanzi}
               </Text>
               {entry.pass === 1 && hanziCorrect && !showAnswer ? (
-                <PinyinText value={word.pinyin} style={styles.answerPinyin} />
+                <PinyinText value={word.pinyin} visible style={styles.answerPinyin} />
               ) : null}
               <Text
                 style={
@@ -729,19 +720,6 @@ export default function ReviewSession() {
         </View>
       ) : null}
 
-      {mode === "pinyin-hanzi" && answerVisible && !showAnswer ? (
-        <OptionCard
-          label="CHỌN NGHĨA ĐÚNG"
-          options={meaningOptions}
-          selected={practiceMeaning}
-          onSelect={(value) => {
-            setPracticeMeaning(value);
-            setFeedback(null);
-          }}
-          correctValue={word.primaryMeaningVi}
-          correct={meaningCorrect}
-        />
-      ) : null}
       {(mode === "hanzi-meaning" || mode === "audio-meaning") && !showAnswer ? (
         <OptionCard
           label="CHỌN NGHĨA ĐÚNG"
@@ -929,7 +907,7 @@ function OptionCard({
             ]}
           >
             {pinyin ? (
-              <PinyinText value={option} numberOfLines={1} />
+              <PinyinText value={option} visible numberOfLines={1} />
             ) : (
               <Text style={styles.optionText}>{option}</Text>
             )}

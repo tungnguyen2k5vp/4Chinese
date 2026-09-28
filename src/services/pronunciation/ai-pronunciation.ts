@@ -29,20 +29,28 @@ function readMessage(payload: unknown, fallback: string): string {
 export async function scorePronunciationAudio(
   audioUri: string,
   word: Pick<Vocabulary, "simplified" | "traditional" | "pinyin" | "primaryMeaningVi">,
+  signal?: AbortSignal,
 ): Promise<PronunciationScore> {
   const connection = config();
   if (!connection) throw new PronunciationScoreError("Chưa cấu hình Supabase cho chấm phát âm AI.");
+  if (signal?.aborted) throw new PronunciationScoreError("Đã hủy gửi bản ghi âm.");
 
   const endpoint = `${connection.url}/functions/v1/${FUNCTION_NAME}`;
   let response: { status: number; body: string };
   const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
   const timeout = setTimeout(() => controller.abort(), 20_000);
   try {
     // Do not use fetch + a React-Native FormData file object here. On Android
     // that combination can reject before a HTTP response is returned. Expo's
     // native uploader streams the recording and creates a correct multipart
     // boundary on both Android and iOS.
-    response = await new File(audioUri).upload(endpoint, {
+    const audio = new File(audioUri);
+    if (!audio.exists || audio.size <= 0 || audio.size > 5 * 1024 * 1024)
+      throw new PronunciationScoreError("Bản ghi âm rỗng, không tồn tại hoặc vượt quá 5 MB.");
+    response = await audio.upload(endpoint, {
       httpMethod: "POST",
       uploadType: UploadType.MULTIPART,
       fieldName: "audio",
@@ -60,7 +68,7 @@ export async function scorePronunciationAudio(
       signal: controller.signal,
     });
   } catch (error) {
-    console.warn("[pronunciation-score] native upload failed", error);
+    if (error instanceof PronunciationScoreError) throw error;
     throw new PronunciationScoreError(
       error instanceof Error && error.name === "AbortError"
         ? "Máy chủ chấm phát âm phản hồi quá lâu. Hãy kiểm tra Internet/VPN rồi thử lại."
@@ -68,6 +76,7 @@ export async function scorePronunciationAudio(
     );
   } finally {
     clearTimeout(timeout);
+    signal?.removeEventListener("abort", cancel);
   }
 
   let payload: unknown = null;
@@ -92,11 +101,15 @@ export async function scorePronunciationAudio(
       "Máy chủ AI chưa được cấu hình khóa chấm phát âm hoặc đang tạm ngừng. Hãy thử lại sau.",
     );
   }
+  if (response.status === 429) {
+    throw new PronunciationScoreError("Máy chủ AI đang giới hạn lượt dùng hoặc đã hết hạn mức. Hãy thử lại sau.");
+  }
   if (response.status < 200 || response.status >= 300 || typeof payload !== "object" || payload === null) {
     throw new PronunciationScoreError(readMessage(payload, "Máy chủ chấm phát âm đang gặp lỗi."));
   }
   const result = payload as Record<string, unknown>;
-  if (typeof result.transcript !== "string" || typeof result.feedback !== "string") {
+  if (typeof result.transcript !== "string" || typeof result.feedback !== "string" ||
+      typeof result.score !== "number" || !Number.isFinite(result.score)) {
     throw new PronunciationScoreError("Máy chủ trả về kết quả chấm không hợp lệ.");
   }
   return { score: clampScore(result.score), transcript: result.transcript, feedback: result.feedback };

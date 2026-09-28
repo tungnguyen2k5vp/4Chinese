@@ -3,9 +3,8 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { G, Line, Path, Text as SvgText } from "react-native-svg";
 
 import { colors, radius, spacing } from "@/constants/design";
-import hsk12StrokeData from "@/data/hsk12-strokes.json";
+import { getStrokePaths } from "@/services/handwriting/stroke-data";
 
-const strokeMap = hsk12StrokeData as Record<string, string[]>;
 const radicalReference: Record<string, string> = {
   "亻": "人", "忄": "心", "扌": "手", "灬": "火", "讠": "言",
   "钅": "金", "衤": "衣", "饣": "食", "刂": "刀", "纟": "糸",
@@ -14,7 +13,10 @@ const radicalReference: Record<string, string> = {
 
 export function StrokeWriter({ character, size = 260 }: { character: string; size?: number }) {
   const reference = radicalReference[character] ?? character;
-  const strokes = useMemo(() => strokeMap[character] ?? strokeMap[reference] ?? [], [character, reference]);
+  const strokes = useMemo(() => {
+    const exact = getStrokePaths(character);
+    return exact.length ? exact : getStrokePaths(reference);
+  }, [character, reference]);
   const [visible, setVisible] = useState(strokes.length);
   const [playing, setPlaying] = useState(false);
 

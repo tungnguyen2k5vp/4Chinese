@@ -124,8 +124,36 @@ export type ReviewMode =
   | "hanzi-pinyin"
   | "hanzi-recall-pinyin-compose"
   | "audio-meaning"
+  | "audio-hanzi"
   | "writing"
   | "cloze";
+
+/** Stable learning-skill names stored with review history. */
+export type ReviewExerciseType =
+  | "meaning_to_hanzi"
+  | "hanzi_to_meaning"
+  | "hanzi_to_pinyin"
+  | "pinyin_to_hanzi"
+  | "audio_to_hanzi"
+  | "audio_to_meaning"
+  | "writing"
+  | "cloze";
+
+export type LearningSkill = "meaning" | "hanziRecall" | "pinyin" | "listening" | "writing" | "tone";
+
+export interface ReviewSkillAttempt {
+  reviewedAt: string;
+  correct: boolean;
+  exerciseType: ReviewExerciseType | null;
+  mode: ReviewMode;
+}
+
+export interface SkillMasteryMetric {
+  skill: LearningSkill;
+  attempts: number;
+  accuracy: number | null;
+  status: "no-data" | "weak" | "building" | "strong";
+}
 export type ReviewRating = "again" | "hard" | "good" | "easy";
 
 export interface DashboardStats {
@@ -144,6 +172,8 @@ export interface DashboardStats {
 
 export interface UserSettings {
   dailyNewWordGoal: number;
+  /** Maximum new cards in one learning session; the daily goal remains separate. */
+  learnSessionSize: 5 | 10 | 15 | 20;
   dailyStudyMinutes: number;
   dailyReviewGoal: number;
   desiredRetention: number;

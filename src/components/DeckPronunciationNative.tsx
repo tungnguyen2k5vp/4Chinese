@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from "expo-audio";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
 import { EmptyState } from "@/components/EmptyState";
@@ -12,24 +12,28 @@ import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
 import { getDeckVocabulary, getSettings, listPersonalDecks } from "@/db/repository";
 import { useStudySession } from "@/hooks/use-study-session";
-import { PronunciationScoreError, scorePronunciationAudio, type PronunciationScore } from "@/services/pronunciation/ai-pronunciation";
+import { cancelMandarinPronunciation, isNativePronunciationAvailable, NativePronunciationError, recognizeMandarinPronunciation } from "@/services/pronunciation/native-pronunciation";
+import type { PronunciationResult } from "@/services/pronunciation/provider";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
 const PRACTICE_BATCH_SIZE = 10;
+const hasExpoAudio = Boolean(requireOptionalNativeModule("ExpoAudio"));
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const AiPronunciationPanel = hasExpoAudio ? require("@/components/AiPronunciationPanel").AiPronunciationPanel : null;
 
 export default function DeckPronunciationNative() {
   const { deckId = "" } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
   useStudySession(db);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [deckName, setDeckName] = useState("Bộ từ riêng");
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
-  const [recording, setRecording] = useState(false);
-  const [scoring, setScoring] = useState(false);
-  const [result, setResult] = useState<PronunciationScore | null>(null);
+  const [listening, setListening] = useState(false);
+  const [result, setResult] = useState<PronunciationResult | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const requestId = useRef(0);
 
   const load = useCallback(() => {
     let active = true;
@@ -37,59 +41,95 @@ export default function DeckPronunciationNative() {
     void Promise.all([getDeckVocabulary(db, deckId), listPersonalDecks(db), getSettings(db)])
       .then(([deckWords, decks, nextSettings]) => {
         if (!active) return;
-        setWords(deckWords); setSettings(nextSettings);
+        setWords(deckWords);
+        setSettings(nextSettings);
         setDeckName(decks.find((deck) => deck.id === deckId)?.name ?? "Bộ từ riêng");
-        setIndex(0); setResult(null);
-      }).finally(() => active && setLoading(false));
-    return () => { active = false; };
+        setIndex(0);
+        setResult(null);
+        setNotice(null);
+      })
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+      requestId.current += 1;
+      cancelMandarinPronunciation();
+    };
   }, [db, deckId]);
   useFocusEffect(load);
 
   const word = words[index];
-  const startRecording = async () => {
-    if (recording || scoring) return;
-    const permission = await requestRecordingPermissionsAsync();
-    if (!permission.granted) { Alert.alert("Cần quyền micro", "Hãy cho phép 4Chinese sử dụng micro để AI chấm phát âm."); return; }
-    try {
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync(); recorder.record(); setResult(null); setRecording(true);
-    } catch {
-      Alert.alert("Không thể ghi âm", "Hãy đóng ứng dụng khác đang dùng micro và thử lại.");
-      await setAudioModeAsync({ allowsRecording: false });
-    }
-  };
-  const stopAndScore = async () => {
-    if (!recording || !word || scoring) return;
-    setRecording(false); setScoring(true);
-    try {
-      await recorder.stop();
-      if (!recorder.uri) throw new PronunciationScoreError("Chưa tạo được bản ghi âm. Hãy đọc lại từ một lần nữa.");
-      setResult(await scorePronunciationAudio(recorder.uri, word));
-    } catch (error) {
-      Alert.alert("Chưa thể chấm phát âm", error instanceof PronunciationScoreError ? error.message : "Hãy thử lại sau.");
-    } finally {
-      await setAudioModeAsync({ allowsRecording: false }); setScoring(false);
-    }
-  };
-  const next = () => { if (words.length) { setIndex((current) => (current + 1) % words.length); setResult(null); } };
+  const speechContext = useMemo(
+    () => words.slice(0, 60).flatMap((item) => [item.simplified, item.traditional, item.pinyin]),
+    [words],
+  );
+  const nativeAvailable = isNativePronunciationAvailable();
 
-  if (loading) return <Screen title="Luyện phát âm AI"><ActivityIndicator color={colors.primary} size="large" /></Screen>;
-  if (!word) return <Screen title="Luyện phát âm AI" subtitle={deckName}><EmptyState icon="🎙" title="Bộ từ đang trống" message="Hãy thêm từ vào bộ trước khi luyện phát âm." /><PrimaryButton label="Quay lại bộ từ" variant="secondary" onPress={() => router.back()} /></Screen>;
+  const startRecognition = async () => {
+    if (!word || listening) return;
+    const currentRequest = requestId.current + 1;
+    requestId.current = currentRequest;
+    setListening(true);
+    setResult(null);
+    setNotice("Đang nghe tiếng Trung…");
+    try {
+      const nextResult = await recognizeMandarinPronunciation(word, speechContext);
+      if (requestId.current !== currentRequest) return;
+      setResult(nextResult);
+      setNotice(null);
+    } catch (error) {
+      if (requestId.current !== currentRequest) return;
+      setNotice(error instanceof NativePronunciationError ? error.message : "Chưa thể nhận diện giọng nói. Hãy thử lại sau.");
+    } finally {
+      if (requestId.current === currentRequest) setListening(false);
+    }
+  };
+
+  const stopRecognition = () => {
+    requestId.current += 1;
+    cancelMandarinPronunciation();
+    setListening(false);
+    setNotice("Đã dừng nghe.");
+  };
+
+  const next = () => {
+    if (!words.length) return;
+    requestId.current += 1;
+    cancelMandarinPronunciation();
+    setListening(false);
+    setIndex((current) => (current + 1) % words.length);
+    setResult(null);
+    setNotice(null);
+  };
+
+  if (loading) return <Screen title="Luyện phát âm"><ActivityIndicator color={colors.primary} size="large" /></Screen>;
+  if (!word) return <Screen title="Luyện phát âm" subtitle={deckName}><EmptyState icon="🎙" title="Bộ từ đang trống" message="Hãy thêm từ vào bộ trước khi luyện phát âm." /><PrimaryButton label="Quay lại bộ từ" variant="secondary" onPress={() => router.back()} /></Screen>;
+
   const batch = Math.floor(index / PRACTICE_BATCH_SIZE) + 1;
   const batchTotal = Math.ceil(words.length / PRACTICE_BATCH_SIZE);
-  return <Screen title="Luyện phát âm AI" subtitle={`${deckName} · Lượt ${batch}/${batchTotal} · Từ ${index + 1}/${words.length}`}>
-    <View style={[card, styles.wordCard]}><Text style={styles.eyebrow}>NGHE MẪU, RỒI ĐỌC LẠI</Text><Text style={styles.hanzi}>{word.simplified}</Text><Text style={styles.pinyin}>{word.pinyin}</Text><Text style={styles.meaning}>{word.primaryMeaningVi}</Text><AudioButton text={word.simplified} size={29} rate={settings?.speechRate} /></View>
-    <View style={[card, styles.recordCard]}><Text style={styles.recordTitle}>{recording ? "Đang ghi âm…" : scoring ? "AI đang nghe và chấm…" : "Đọc từ tiếng Trung của bạn"}</Text><Text style={styles.recordHint}>Điểm 0–100 đánh giá mức AI nghe hiểu được từ mục tiêu. Audio chỉ được gửi để chấm và không lưu trong app.</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel={recording ? "Dừng và chấm phát âm" : "Bắt đầu ghi âm phát âm"} disabled={scoring} onPress={() => void (recording ? stopAndScore() : startRecording())} style={({ pressed }) => [styles.recordButton, recording && styles.recordingButton, scoring && styles.disabled, pressed && !scoring && styles.pressed]}>{scoring ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons color="#FFFFFF" name={recording ? "stop" : "mic"} size={33} />}<Text style={styles.recordButtonText}>{recording ? "Dừng & chấm điểm" : scoring ? "Đang chấm" : "Bắt đầu nói"}</Text></Pressable>
+  return <Screen title="Luyện phát âm" subtitle={`${deckName} · Lượt ${batch}/${batchTotal} · Từ ${index + 1}/${words.length}`}>
+    <View style={[card, styles.wordCard]}>
+      <Text style={styles.eyebrow}>NGHE MẪU, RỒI ĐỌC LẠI</Text><Text style={styles.hanzi}>{word.simplified}</Text><Text style={styles.pinyin}>{word.pinyin}</Text><Text style={styles.meaning}>{word.primaryMeaningVi}</Text><AudioButton text={word.simplified} size={29} rate={settings?.speechRate} />
     </View>
-    {result ? <View style={[card, styles.scoreCard, result.score >= 80 ? styles.scoreGood : styles.scoreRetry]}><Text style={styles.eyebrow}>KẾT QUẢ AI</Text><Text style={styles.score}>{result.score}</Text><Text style={styles.scoreLabel}>/100</Text><Text style={styles.transcriptLabel}>AI nghe được</Text><Text style={styles.transcript}>{result.transcript || "(không rõ)"}</Text><Text style={styles.feedback}>{result.feedback}</Text></View> : null}
-    <PrimaryButton label="Từ tiếp theo" disabled={recording || scoring} onPress={next} />
-    <Text style={styles.privacy}>Mẹo: đọc chậm, rõ từng âm tiết và nghe mẫu trước khi nói. Cần development build mới sau khi thêm mô-đun ghi âm.</Text>
+    <View style={[card, styles.practiceCard]}>
+      <Text style={styles.practiceTitle}>Nhận diện giọng nói trên thiết bị</Text>
+      <Text style={styles.practiceHint}>Miễn phí. Kết quả cho biết máy nhận được từ nào, không phải điểm phát âm hay chấm thanh điệu.</Text>
+      <Pressable accessibilityLabel={listening ? "Dừng nhận diện giọng nói" : "Bắt đầu nhận diện giọng nói"} accessibilityRole="button" disabled={!nativeAvailable} onPress={() => void (listening ? stopRecognition() : startRecognition())} style={({ pressed }) => [styles.recordButton, listening && styles.recordingButton, !nativeAvailable && styles.disabled, pressed && nativeAvailable && styles.pressed]}>
+        <Ionicons color="#FFFFFF" name={listening ? "stop" : "mic"} size={27} /><Text style={styles.recordButtonText}>{listening ? "Dừng nghe" : "Bắt đầu nói"}</Text>
+      </Pressable>
+      {!nativeAvailable ? <Text style={styles.notice}>Micro nhận diện cần bản development/release có mô-đun speech; Expo Go chỉ hỗ trợ các phần học khác.</Text> : null}
+      {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
+    </View>
+    {result ? <View style={[card, styles.resultCard, result.exactMatch ? styles.resultGood : styles.resultRetry]}>
+      <Text style={styles.eyebrow}>KẾT QUẢ NHẬN DIỆN</Text><Text style={styles.resultStatus}>{result.exactMatch ? "Nhận đúng từ" : result.partialMatch ? "Có chứa từ mục tiêu" : "Chưa khớp từ mục tiêu"}</Text><Text style={styles.transcriptLabel}>MÁY NHẬN ĐƯỢC</Text><Text style={styles.transcript}>{result.transcript || "(không rõ)"}</Text><Text style={styles.feedback}>{result.feedback}</Text>
+    </View> : null}
+    {AiPronunciationPanel ? <AiPronunciationPanel key={word.id} word={word} /> : null}
+    <PrimaryButton label="Từ tiếp theo" disabled={listening} onPress={next} />
+    <Text style={styles.privacy}>Mẹo: đọc chậm, rõ từng âm tiết và nghe mẫu trước khi nói. Phản hồi AI nâng cao là tùy chọn; buổi luyện cơ bản luôn dùng nhận diện trên thiết bị.</Text>
   </Screen>;
 }
 
 const styles = StyleSheet.create({
-  wordCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xl }, eyebrow: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: .7 }, hanzi: { color: colors.text, fontSize: 78, fontWeight: "900", marginTop: spacing.xs }, pinyin: { color: colors.primary, fontSize: 24, fontWeight: "900" }, meaning: { color: colors.textMuted, fontSize: 18, fontWeight: "700" },
-  recordCard: { alignItems: "center", gap: spacing.md }, recordTitle: { color: colors.text, fontSize: 20, fontWeight: "900", textAlign: "center" }, recordHint: { color: colors.textMuted, fontSize: 13, lineHeight: 20, textAlign: "center" }, recordButton: { alignItems: "center", backgroundColor: colors.primary, borderRadius: radius.lg, flexDirection: "row", gap: spacing.sm, justifyContent: "center", minHeight: 66, paddingHorizontal: spacing.xl, width: "100%" }, recordingButton: { backgroundColor: colors.danger }, recordButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" }, disabled: { opacity: .55 }, pressed: { opacity: .84, transform: [{ scale: .99 }] },
-  scoreCard: { alignItems: "center", gap: 4, paddingVertical: spacing.lg }, scoreGood: { backgroundColor: "#E9F9F0" }, scoreRetry: { backgroundColor: "#FFF6EA" }, score: { color: colors.primary, fontSize: 65, fontWeight: "900", lineHeight: 70 }, scoreLabel: { color: colors.textMuted, fontSize: 16, fontWeight: "800", marginTop: -6 }, transcriptLabel: { color: colors.textMuted, fontSize: 12, fontWeight: "800", marginTop: spacing.xs }, transcript: { color: colors.text, fontSize: 24, fontWeight: "900" }, feedback: { color: colors.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" }, privacy: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  wordCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xl }, eyebrow: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 }, hanzi: { color: colors.text, fontSize: 78, fontWeight: "900", marginTop: spacing.xs }, pinyin: { color: colors.primary, fontSize: 24, fontWeight: "900" }, meaning: { color: colors.textMuted, fontSize: 18, fontWeight: "700" },
+  practiceCard: { alignItems: "center", gap: spacing.md }, practiceTitle: { color: colors.text, fontSize: 20, fontWeight: "900", textAlign: "center" }, practiceHint: { color: colors.textMuted, fontSize: 13, lineHeight: 20, textAlign: "center" }, recordButton: { alignItems: "center", backgroundColor: colors.primary, borderRadius: radius.lg, flexDirection: "row", gap: spacing.sm, justifyContent: "center", minHeight: 66, paddingHorizontal: spacing.xl, width: "100%" }, recordingButton: { backgroundColor: colors.danger }, recordButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" }, disabled: { opacity: 0.5 }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, notice: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  resultCard: { alignItems: "center", gap: 5, paddingVertical: spacing.lg }, resultGood: { backgroundColor: "#E9F9F0" }, resultRetry: { backgroundColor: "#FFF6EA" }, resultStatus: { color: colors.text, fontSize: 24, fontWeight: "900", textAlign: "center" }, transcriptLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 0.7, marginTop: spacing.xs }, transcript: { color: colors.text, fontSize: 28, fontWeight: "900" }, feedback: { color: colors.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" }, privacy: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
 });

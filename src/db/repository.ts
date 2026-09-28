@@ -1,12 +1,15 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { getOfflineVocabulary } from "@/db/database";
+import { awardActivityXp } from '@/db/gamification';
+import { practiceSkillForExercise, recordPracticeResult } from '@/db/mistakes';
 import {
   sharedWordToVocabulary,
   type SharedDeckPayload,
 } from "@/services/decks/share-code";
 import { illustrationForVocabulary } from "@/services/media/illustration";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
+import { exerciseTypeForReviewMode } from "@/services/review/exercise";
 import {
   assessWeakness,
   isWeakWord,
@@ -24,9 +27,13 @@ import {
 import { calculateStreak, toLocalDateKey } from "@/services/stats/calendar";
 import {
   createContextualExample,
+  isGenericContextualExample,
+  withContextualExamples,
   withSingleContextualExample,
 } from "@/services/vocabulary/contextual-example";
+import { dailyWordOffset } from "@/services/vocabulary/daily-word";
 import { cleanLearnerMeanings, vocabularySearchAliases } from "@/services/vocabulary/quality";
+import { rankRelatedWords } from "@/services/vocabulary/related-words";
 import type {
   DashboardStats,
   EditableVocabulary,
@@ -34,6 +41,7 @@ import type {
   PersonalDeck,
   ProgressRow,
   ReviewMode,
+  ReviewSkillAttempt,
   UserSettings,
   Vocabulary,
   WordStatus,
@@ -176,6 +184,7 @@ const LEGACY_STATE = { New: 0, Learning: 1, Review: 2, Relearning: 3 } as const;
 
 export const defaultSettings: UserSettings = {
   dailyNewWordGoal: 10,
+  learnSessionSize: 10,
   dailyStudyMinutes: 30,
   dailyReviewGoal: 100,
   desiredRetention: 0.9,
@@ -266,7 +275,20 @@ export async function getVocabulary(
     id,
   );
   if (!row) return null;
-  const examples = await db.getAllAsync<{
+  const examples = await getExampleSentences(db, id, 5);
+  return withContextualExamples({
+    ...mapWord(row),
+    examples,
+  });
+}
+
+/** Detailed screens can request several curated examples without changing list APIs. */
+export async function getExampleSentences(
+  db: SQLiteDatabase,
+  vocabularyId: string,
+  limit = 5,
+): Promise<Vocabulary["examples"]> {
+  const rows = await db.getAllAsync<{
     id: string;
     vocabulary_id: string;
     chinese: string;
@@ -275,21 +297,21 @@ export async function getVocabulary(
     english: string | null;
     difficulty: number;
   }>(
-    "SELECT * FROM example_sentence WHERE vocabulary_id = ? ORDER BY difficulty, id LIMIT 1",
-    id,
+    "SELECT * FROM example_sentence WHERE vocabulary_id = ? AND chinese NOT GLOB ? ORDER BY difficulty, id LIMIT ?",
+    vocabularyId,
+    "我正在学习“*”这个词。",
+    20,
   );
-  return withSingleContextualExample({
-    ...mapWord(row),
-    examples: examples.map((item) => ({
-      id: item.id,
-      vocabularyId: item.vocabulary_id,
-      chinese: item.chinese,
-      pinyin: item.pinyin,
-      vietnamese: item.vietnamese,
-      english: item.english ?? undefined,
-      difficulty: item.difficulty,
-    })),
-  });
+  return rows.map((item) => ({
+    id: item.id,
+    vocabularyId: item.vocabulary_id,
+    chinese: item.chinese,
+    pinyin: item.pinyin,
+    vietnamese: item.vietnamese,
+    english: item.english ?? undefined,
+    difficulty: item.difficulty,
+  })).filter((example) => !isGenericContextualExample({ simplified: "" }, example))
+    .slice(0, Math.max(1, Math.min(20, Math.trunc(limit))));
 }
 
 export async function getProgress(
@@ -400,8 +422,8 @@ export async function reviewWord(
         `INSERT INTO review_log
         (vocabulary_id,reviewed_at,rating,previous_state,new_state,response_time_ms,mode,
         level_before,level_after,deep_stage_before,deep_stage_after,correct,hint_used,next_review_at,
-        typed_pinyin,selected_hanzi,candidate_rank)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        typed_pinyin,selected_hanzi,candidate_rank,exercise_type)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         vocabularyId,
         now.toISOString(),
         ratingNumber(input.rating, input.correct),
@@ -419,8 +441,14 @@ export async function reviewWord(
         input.typedPinyin ?? null,
         input.selectedHanzi ?? null,
         input.candidateRank ?? null,
+        exerciseTypeForReviewMode(mode),
       );
+      const exercise = exerciseTypeForReviewMode(mode);
+      await recordPracticeResult(db, { vocabularyId, skill: practiceSkillForExercise(exercise),
+        exerciseType: exercise, correct: answeredCorrect, hintUsed: !!(input.hintUsed ?? input.usedHint),
+        responseTimeMs: input.responseTimeMs });
       const today = toLocalDateKey(now);
+      if (answeredCorrect) await awardActivityXp(db, 'review', vocabularyId, now);
       await db.runAsync(
         `INSERT INTO daily_stats (date,reviewed,correct,new_words,study_seconds)
         VALUES (?,1,?,0,?) ON CONFLICT(date) DO UPDATE SET reviewed=reviewed+1,
@@ -641,13 +669,80 @@ export async function getUnlearnedVocabulary(
   return attachSingleExamples(db, rows.map(mapWord));
 }
 
+/**
+ * Selects one offline word deterministically for the local day. New and
+ * in-progress words are preferred; known/mastered words are only a fallback.
+ */
+export async function getDailyVocabulary(
+  db: SQLiteDatabase,
+  bands: HskBand[],
+  localDate = toLocalDateKey(new Date()),
+): Promise<Vocabulary | null> {
+  if (!bands.length) return null;
+  const bandClause = `v.hsk_band IN (${bands.map(() => "?").join(",")})`;
+  const commonClause = `
+    ${bandClause}
+    AND COALESCE(p.status, 'NEW') != 'SKIPPED'
+    AND (v.deck_id IS NULL OR EXISTS (
+      SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+    ))`;
+  const preferredClause = `${commonClause}
+    AND COALESCE(p.status, 'NEW') != 'KNOWN'
+    AND COALESCE(p.memory_level, 0) < 6`;
+  const find = async (clause: string) => {
+    const count = await db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) count FROM vocabulary v
+       LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+       WHERE ${clause}`,
+      ...bands.map(String),
+    );
+    const candidateCount = count?.count ?? 0;
+    if (!candidateCount) return null;
+    const row = await db.getFirstAsync<DbWord>(
+      `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
+        p.is_known,p.next_review_at,p.review_count FROM vocabulary v
+       LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+       WHERE ${clause}
+       ORDER BY CASE v.hsk_band WHEN '7-9' THEN 7 ELSE CAST(v.hsk_band AS INTEGER) END,
+         COALESCE(v.frequency_rank,999999),v.pinyin_numeric,v.id LIMIT 1 OFFSET ?`,
+      ...bands.map(String),
+      dailyWordOffset(localDate, bands, candidateCount),
+    );
+    if (!row) return null;
+    return (await attachSingleExamples(db, [mapWord(row)]))[0] ?? null;
+  };
+  return (await find(preferredClause)) ?? find(commonClause);
+}
+
+export type DailyActivity = {
+  date: string;
+  reviewed: number;
+  newWords: number;
+};
+
+/** Returns a bounded local-date activity range for the Statistics heatmap. */
+export async function getDailyActivity(
+  db: SQLiteDatabase,
+  days = 28,
+  now = new Date(),
+): Promise<DailyActivity[]> {
+  const amount = Math.max(1, Math.min(365, Math.trunc(days)));
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - amount + 1);
+  return db.getAllAsync<DailyActivity>(
+    `SELECT date,reviewed,new_words AS newWords FROM daily_stats
+     WHERE date BETWEEN ? AND ? ORDER BY date ASC`,
+    toLocalDateKey(start),
+    toLocalDateKey(now),
+  );
+}
+
 export async function getDashboardStats(
   db: SQLiteDatabase,
   bands?: HskBand[],
 ): Promise<DashboardStats> {
   const now = new Date();
   const today = toLocalDateKey(now);
-  const dueBandClause = bands?.length
+  const bandClause = bands?.length
     ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
     : "";
   const progress = await db.getFirstAsync<{
@@ -662,12 +757,12 @@ export async function getDashboardStats(
     SUM(CASE WHEN p.status='KNOWN' THEN 1 ELSE 0 END) known,
     SUM(CASE WHEN p.status='SKIPPED' THEN 1 ELSE 0 END) skipped,
     SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.memory_level>=6 THEN 1 ELSE 0 END) mastered,
-    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.next_review_at<=? AND p.is_suspended=0 ${dueBandClause} THEN 1 ELSE 0 END) due
+    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.next_review_at<=? AND p.is_suspended=0 THEN 1 ELSE 0 END) due
     FROM user_vocabulary_progress p
     JOIN vocabulary v ON p.vocabulary_id=v.id
     WHERE (v.deck_id IS NULL OR EXISTS (
       SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-    ))`,
+    )) ${bandClause}`,
     now.toISOString(),
     ...(bands?.map(String) ?? []),
   );
@@ -685,7 +780,8 @@ export async function getDashboardStats(
     FROM user_vocabulary_progress p JOIN vocabulary v ON p.vocabulary_id=v.id
     WHERE p.status='LEARNING' AND p.studied=1 AND p.memory_level BETWEEN 1 AND 6 AND (v.deck_id IS NULL OR EXISTS (
       SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-    )) GROUP BY p.memory_level`,
+    )) ${bandClause} GROUP BY p.memory_level`,
+    ...(bands?.map(String) ?? []),
   );
   const mastery = Array.from({ length: 7 }, () => 0);
   masteryRows.forEach((row) => {
@@ -712,18 +808,43 @@ export async function getDashboardStats(
   };
 }
 
+/** Recent answer history for derived per-skill metrics; it never changes SRS state. */
+export async function listRecentReviewSkillAttempts(
+  db: SQLiteDatabase,
+  limit = 120,
+): Promise<ReviewSkillAttempt[]> {
+  const rows = await db.getAllAsync<{
+    reviewed_at: string;
+    correct: number;
+    exercise_type: ReviewSkillAttempt["exerciseType"];
+    mode: ReviewMode;
+  }>(
+    `SELECT reviewed_at,correct,exercise_type,mode FROM review_log
+     WHERE correct IS NOT NULL ORDER BY reviewed_at DESC LIMIT ?`,
+    Math.max(1, Math.min(500, limit)),
+  );
+  return rows.map((row) => ({
+    reviewedAt: row.reviewed_at,
+    correct: row.correct === 1,
+    exerciseType: row.exercise_type,
+    mode: row.mode,
+  }));
+}
+
 /** Adds foreground learning time to today's local calendar bucket. */
 export async function recordStudyTime(
   db: SQLiteDatabase,
   seconds: number,
+  date = toLocalDateKey(new Date()),
 ): Promise<void> {
+  if (!Number.isFinite(seconds) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('INVALID_STUDY_TIME');
   const amount = Math.max(0, Math.floor(seconds));
   if (!amount) return;
   await db.runAsync(
     `INSERT INTO daily_stats (date,reviewed,correct,new_words,study_seconds)
      VALUES (?,0,0,0,?)
      ON CONFLICT(date) DO UPDATE SET study_seconds=study_seconds+excluded.study_seconds`,
-    toLocalDateKey(new Date()),
+    date,
     amount,
   );
 }
@@ -1019,6 +1140,82 @@ export async function findHanziCandidates(
     )
     .slice(0, Math.max(1, Math.min(100, Math.trunc(limit))));
   return includeExamples ? attachSingleExamples(db, offlineWords) : offlineWords;
+}
+
+/**
+ * Bounded detail-page lookup for compounds sharing a character with a word.
+ * The lookup runs only when the detail page opens; it does not hydrate the
+ * dictionary into React state or run during render.
+ */
+export async function getRelatedVocabulary(
+  db: SQLiteDatabase,
+  source: Vocabulary,
+  limit = 8,
+): Promise<Vocabulary[]> {
+  const characters = Array.from(new Set([...source.simplified, ...source.traditional]
+    .filter((character) => /[\u3400-\u9fff]/u.test(character))));
+  if (!characters.length) return [];
+  const placeholders = characters.map(() => "?").join(",");
+  const rows = await db.getAllAsync<DbWord>(
+    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
+      p.is_known,p.next_review_at,p.review_count FROM vocabulary v
+    JOIN vocabulary_character_index c ON c.vocabulary_id=v.id
+    LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+    WHERE v.id<>? AND c.character IN (${placeholders})
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+    GROUP BY v.id
+    ORDER BY CASE v.hsk_band WHEN ? THEN 0 ELSE 1 END,
+      COALESCE(v.frequency_rank,999999), LENGTH(v.simplified)
+    LIMIT 80`,
+    source.id,
+    ...characters,
+    String(source.hskBand),
+  );
+  return rankRelatedWords(source, rows.map(mapWord), limit);
+}
+
+async function replaceVocabularyCharacterIndex(
+  db: SQLiteDatabase,
+  vocabularyId: string,
+  simplified: string,
+  traditional: string,
+): Promise<void> {
+  await db.runAsync("DELETE FROM vocabulary_character_index WHERE vocabulary_id=?", vocabularyId);
+  const characters = new Set([...simplified, ...traditional]
+    .filter((character) => /[\u3400-\u9fff]/u.test(character)));
+  for (const character of characters) {
+    await db.runAsync(
+      "INSERT OR IGNORE INTO vocabulary_character_index(character,vocabulary_id) VALUES(?,?)",
+      character,
+      vocabularyId,
+    );
+  }
+}
+
+/** One set-based query used by Reader after its bounded term generation. */
+export async function findVocabularyByExactHanzi(
+  db: SQLiteDatabase,
+  terms: string[],
+): Promise<Vocabulary[]> {
+  const unique = Array.from(new Set(terms.map((term) => term.trim()).filter(Boolean)));
+  if (!unique.length) return [];
+  const matches = new Map<string, DbWord>();
+  for (let start = 0; start < unique.length; start += 280) {
+    const batch = unique.slice(start, start + 280);
+    const placeholders = batch.map(() => "?").join(",");
+    const rows = await db.getAllAsync<DbWord>(
+    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
+      p.is_known,p.next_review_at,p.review_count FROM vocabulary v
+    LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+    WHERE (v.simplified IN (${placeholders}) OR v.traditional IN (${placeholders}))
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+    ORDER BY COALESCE(v.frequency_rank,999999), LENGTH(v.simplified)`,
+      ...batch,
+      ...batch,
+    );
+    for (const row of rows) matches.set(row.id, row);
+  }
+  return Array.from(matches.values()).map(mapWord);
 }
 
 function firstRecognizedHanzi(value: string): string {
@@ -1553,6 +1750,22 @@ export async function findBulkLookupCandidates(
   return Array.from(candidates.values());
 }
 
+async function syncImageAssetMetadata(db: SQLiteDatabase, vocabularyId: string, uri: string | null, now: string): Promise<void> {
+  if (!uri || !/^(file|content):/i.test(uri)) {
+    await db.runAsync('DELETE FROM image_assets WHERE vocabulary_id=?', vocabularyId);
+    return;
+  }
+  const fileName = uri.split('/').pop()?.split('?')[0] ?? `${vocabularyId}.jpg`;
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' :
+    ext === 'gif' ? 'image/gif' : ext === 'heic' ? 'image/heic' : 'image/jpeg';
+  await db.runAsync(`INSERT INTO image_assets(id,vocabulary_id,local_uri,mime_type,file_name,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?) ON CONFLICT(vocabulary_id) DO UPDATE SET
+    local_uri=excluded.local_uri,mime_type=excluded.mime_type,file_name=excluded.file_name,
+    file_size=NULL,checksum=NULL,updated_at=excluded.updated_at`,
+    `image-${vocabularyId}`, vocabularyId, uri, mimeType, fileName, now, now);
+}
+
 export async function saveCustomVocabulary(
   db: SQLiteDatabase,
   input: EditableVocabulary,
@@ -1600,6 +1813,7 @@ export async function saveCustomVocabulary(
     id,
     simplified: input.simplified.trim(),
     pinyin: input.pinyin.trim(),
+    pinyinNumeric,
     primaryMeaningVi: meanings[0] ?? "từ này",
     pos: input.pos,
     hskBand: input.hskBand,
@@ -1637,8 +1851,9 @@ export async function saveCustomVocabulary(
       now,
       now,
     );
+    await syncImageAssetMetadata(db, id, imageUri, now);
     await db.runAsync("DELETE FROM example_sentence WHERE vocabulary_id=?", id);
-    await db.runAsync(
+    if (example) await db.runAsync(
       `INSERT INTO example_sentence(id,vocabulary_id,chinese,pinyin,vietnamese,difficulty)
       VALUES(?,?,?,?,?,1)`,
       `${id}-ex-1`,
@@ -1646,6 +1861,12 @@ export async function saveCustomVocabulary(
       example.chinese.trim(),
       example.pinyin.trim(),
       example.vietnamese.trim(),
+    );
+    await replaceVocabularyCharacterIndex(
+      db,
+      id,
+      input.simplified.trim(),
+      input.traditional?.trim() || input.simplified.trim(),
     );
     await db.runAsync(
       "UPDATE personal_deck SET updated_at=? WHERE id=?",
@@ -1686,7 +1907,7 @@ export async function copyVocabularyBatchToDeck(
   await db.withTransactionAsync(async () => {
     for (const [index, word] of unique.entries()) {
       const id = `custom-bulk-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
-      const example = word.examples[0] ?? createContextualExample({ ...word, id });
+      const example = withContextualExamples({ ...word, id }).examples[0];
       const meanings = word.meaningsVi.length ? word.meaningsVi : [word.primaryMeaningVi];
       // Bulk dictionaries and shared decks must never bring a generic or
       // unrelated remote image into a new card.  Keep only exact, curated
@@ -1742,7 +1963,7 @@ export async function copyVocabularyBatchToDeck(
         now,
         now,
       );
-      await db.runAsync(
+      if (example) await db.runAsync(
         `INSERT INTO example_sentence(id,vocabulary_id,chinese,pinyin,vietnamese,english,difficulty)
         VALUES(?,?,?,?,?,?,?)`,
         `${id}-ex-1`,
@@ -1753,6 +1974,7 @@ export async function copyVocabularyBatchToDeck(
         example.english ?? null,
         example.difficulty,
       );
+      await replaceVocabularyCharacterIndex(db, id, word.simplified, word.traditional || word.simplified);
     }
     if (unique.length) {
       await db.runAsync(
@@ -1795,7 +2017,9 @@ export async function updateVocabularyContent(
       .filter(Boolean)
       .join(" "),
   );
-  await db.runAsync(
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
     `UPDATE vocabulary SET pinyin=?,pinyin_numeric=?,primary_meaning_vi=?,meanings_vi=?,meanings_en=?,pos=?,
     image_uri=?,visual_type=?,translation_status='verified',updated_at=?,search_text=? WHERE id=?`,
     input.pinyin.trim(),
@@ -1806,10 +2030,12 @@ export async function updateVocabularyContent(
     JSON.stringify(input.pos),
     input.imageUri ?? null,
     input.imageUri ? "image" : "none",
-    new Date().toISOString(),
+    now,
     searchText,
     id,
-  );
+    );
+    await syncImageAssetMetadata(db, id, input.imageUri ?? null, now);
+  });
   invalidateBulkLookupIndex(db);
 }
 
@@ -2045,12 +2271,14 @@ async function upsertProgress(
       $updated: iso,
     },
   );
-  if (isNew && status === "LEARNING")
+  if (isNew && status === "LEARNING") {
     await db.runAsync(
       `INSERT INTO daily_stats(date,reviewed,correct,new_words,study_seconds) VALUES(?,0,0,1,0)
     ON CONFLICT(date) DO UPDATE SET new_words=new_words+1`,
       toLocalDateKey(now),
     );
+    await awardActivityXp(db, 'learn', id, now);
+  }
 }
 
 function mapWord(row: DbWord): Vocabulary {
@@ -2114,9 +2342,10 @@ async function attachSingleExamples(
     ...ids,
   );
   const examples = new Map<string, Vocabulary["examples"][number]>();
+  const simplifiedById = new Map(words.map((word) => [word.id, word.simplified]));
   for (const row of rows) {
     if (examples.has(row.vocabulary_id)) continue;
-    examples.set(row.vocabulary_id, {
+    const example = {
       id: row.id,
       vocabularyId: row.vocabulary_id,
       chinese: row.chinese,
@@ -2124,7 +2353,9 @@ async function attachSingleExamples(
       vietnamese: row.vietnamese,
       english: row.english ?? undefined,
       difficulty: row.difficulty,
-    });
+    };
+    if (isGenericContextualExample({ simplified: simplifiedById.get(row.vocabulary_id) ?? "" }, example)) continue;
+    examples.set(row.vocabulary_id, example);
   }
   return words.map((word) =>
     withSingleContextualExample({

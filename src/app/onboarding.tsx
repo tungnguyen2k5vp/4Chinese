@@ -10,17 +10,27 @@ import { defaultSettings, saveSettings } from '@/db/repository';
 import { useAppStore } from '@/stores/app-store';
 import type { HskBand } from '@/types/models';
 
-const levels: { label: string; band: HskBand }[] = [{ label: 'Mới bắt đầu', band: 1 }, { label: 'HSK 1', band: 1 }, { label: 'HSK 2', band: 2 }, { label: 'HSK 3', band: 3 }, { label: 'HSK 4+', band: 4 }];
+const levels: { id: string; label: string; band: HskBand }[] = [
+  { id: 'beginner', label: 'Mới bắt đầu', band: 1 },
+  { id: 'hsk1', label: 'HSK 1', band: 1 },
+  { id: 'hsk2', label: 'HSK 2', band: 2 },
+  { id: 'hsk3', label: 'HSK 3', band: 3 },
+  { id: 'hsk4', label: 'HSK 4', band: 4 },
+  { id: 'hsk5', label: 'HSK 5', band: 5 },
+  { id: 'hsk6', label: 'HSK 6', band: 6 },
+  { id: 'hsk79', label: 'HSK 7–9', band: '7-9' },
+];
 
 export default function Onboarding() {
   const db = useSQLiteContext();
   const setSettings = useAppStore((s) => s.setSettings);
-  const [step, setStep] = useState(0); const [band, setBand] = useState<HskBand>(1); const [goal, setGoal] = useState(10); const [saving, setSaving] = useState(false);
-  const finish = async () => { setSaving(true); const settings = { ...defaultSettings, onboardingCompleted: true, selectedHskBands: [band], dailyNewWordGoal: goal }; await saveSettings(db, settings); setSettings(settings); router.replace('/(tabs)'); };
+  const [step, setStep] = useState(0); const [levelId, setLevelId] = useState('beginner'); const [goal, setGoal] = useState(10); const [saving, setSaving] = useState(false);
+  const selectedLevel = levels.find((level) => level.id === levelId) ?? levels[0]!;
+  const finish = async () => { setSaving(true); const settings = { ...defaultSettings, onboardingCompleted: true, selectedHskBands: [selectedLevel.band], dailyNewWordGoal: goal }; await saveSettings(db, settings); setSettings(settings); router.replace('/(tabs)'); };
   return <SafeAreaView style={styles.safe}><View style={styles.content}>
     <View style={styles.brand}><View style={styles.mark}><Text style={styles.markText}>字</Text></View><Text style={styles.brandName}>4Chinese</Text></View>
     <View style={styles.hero}><Text style={styles.kicker}>{step === 0 ? 'CHÀO MỪNG BẠN' : 'MỤC TIÊU MỖI NGÀY'}</Text><Text style={styles.title}>{step === 0 ? 'Bạn đang học tiếng Trung ở mức nào?' : 'Bạn muốn học bao nhiêu từ mới?'}</Text><Text style={styles.subtitle}>Học ít, ôn đúng lúc và nhớ lâu với lịch học cá nhân hoá.</Text></View>
-    <View style={styles.options}>{step === 0 ? levels.map((level) => <Option key={level.label} label={level.label} selected={band === level.band} onPress={() => setBand(level.band)} />) : [5,10,15,20].map((value) => <Option key={value} label={`${value} từ / ngày`} selected={goal === value} onPress={() => setGoal(value)} />)}</View>
+    <View style={styles.options}>{step === 0 ? levels.map((level) => <Option key={level.id} label={level.label} selected={levelId === level.id} onPress={() => setLevelId(level.id)} />) : [5,10,15,20].map((value) => <Option key={value} label={`${value} từ / ngày`} selected={goal === value} onPress={() => setGoal(value)} />)}</View>
     <View style={styles.footer}><View style={styles.dots}><View style={[styles.dot, styles.dotActive]} /><View style={[styles.dot, step === 1 && styles.dotActive]} /></View><PrimaryButton label={step === 0 ? 'Tiếp tục' : 'Bắt đầu học'} loading={saving} onPress={() => step === 0 ? setStep(1) : void finish()} /></View>
   </View></SafeAreaView>;
 }

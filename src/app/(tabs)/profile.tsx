@@ -1,10 +1,18 @@
+import Constants from "expo-constants";
+import { router, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import { Screen } from "@/components/Screen";
 import { card, colors, radius, spacing } from "@/constants/design";
+import { exportLocalBackup, importLocalBackup } from "@/db/backup-repository";
 import { getSettings, saveSettings } from "@/db/repository";
+import { createDeviceBackupArchive, hasArchiveRestorePoint, materializeArchiveImages, pickBackup, readRestorePointArchive,
+  shareBackupArchive, validateLegacyImageUris, writeBackupArchiveFile, writeRestorePointArchive,
+  type PickedBackup } from "@/services/backup/device-archive";
+import { hasRestorePoint, readRestorePointText } from "@/services/backup/file";
+import { parseLocalBackup } from "@/services/backup/format";
 import { useAppStore } from "@/stores/app-store";
 import type { UserSettings } from "@/types/models";
 
@@ -13,6 +21,8 @@ export default function ProfileScreen() {
   const global = useAppStore((s) => s.settings);
   const setGlobal = useAppStore((s) => s.setSettings);
   const [settings, setSettings] = useState<UserSettings | null>(global);
+  const [backupAction, setBackupAction] = useState<"export" | "import" | null>(null);
+  const [restorePointAvailable, setRestorePointAvailable] = useState(() => hasArchiveRestorePoint() || hasRestorePoint());
   useEffect(() => {
     if (!settings)
       getSettings(db).then((value) => {
@@ -26,6 +36,71 @@ export default function ProfileScreen() {
     setSettings(next);
     setGlobal(next);
     await saveSettings(db, next);
+  };
+  const exportBackup = async () => {
+    setBackupAction("export");
+    try {
+      const backup = await exportLocalBackup(db, Constants.expoConfig?.version ?? "unknown");
+      const bytes = await createDeviceBackupArchive(backup);
+      const file = writeBackupArchiveFile(bytes);
+      await shareBackupArchive(file);
+    } catch (error) {
+      Alert.alert("Chưa thể sao lưu", error instanceof Error ? error.message : "Đã có lỗi khi tạo tệp sao lưu.");
+    } finally {
+      setBackupAction(null);
+    }
+  };
+  const restoreBackup = async (picked: PickedBackup) => {
+    setBackupAction("import");
+    try {
+      const currentState = await exportLocalBackup(db, Constants.expoConfig?.version ?? "unknown");
+      const pointBytes = await createDeviceBackupArchive(currentState);
+      await writeRestorePointArchive(pointBytes);
+      setRestorePointAvailable(true);
+      const backup = picked.kind === 'archive' ? await materializeArchiveImages(picked.value) : picked.value;
+      if (picked.kind === 'legacy') validateLegacyImageUris(backup);
+      await importLocalBackup(db, backup);
+      const restoredSettings = await getSettings(db);
+      setSettings(restoredSettings);
+      setGlobal(restoredSettings);
+      Alert.alert("Đã khôi phục", "Dữ liệu học đã được khôi phục toàn vẹn từ bản sao lưu.");
+    } catch (error) {
+      Alert.alert("Không thể khôi phục", error instanceof Error ? error.message : "Tệp sao lưu không hợp lệ.");
+    } finally {
+      setBackupAction(null);
+    }
+  };
+  const chooseBackup = async () => {
+    try {
+      const picked = await pickBackup();
+      if (!picked) return;
+      const backup = picked.kind === 'archive' ? picked.value.backup : picked.value;
+      Alert.alert(
+        "Khôi phục bản sao lưu?",
+        `Bản sao lưu tạo lúc ${new Date(backup.createdAt).toLocaleString("vi-VN")}. Dữ liệu học cục bộ hiện tại sẽ được thay thế.`,
+        [
+          { text: "Hủy", style: "cancel" },
+          { text: "Khôi phục", style: "destructive", onPress: () => void restoreBackup(picked) },
+        ],
+      );
+    } catch (error) {
+      Alert.alert("Không thể mở tệp", error instanceof Error ? error.message : "Tệp sao lưu không hợp lệ.");
+    }
+  };
+  const undoLastRestore = async () => {
+    try {
+      const archived = await readRestorePointArchive();
+      const legacyText = archived ? null : await readRestorePointText();
+      const picked: PickedBackup | null = archived ? { kind: 'archive', value: archived } :
+        legacyText ? { kind: 'legacy', value: parseLocalBackup(legacyText) } : null;
+      if (!picked) throw new Error('Không tìm thấy điểm khôi phục.');
+      Alert.alert('Hoàn tác lần khôi phục?', 'Dữ liệu hiện tại sẽ được lưu lại thành điểm khôi phục trước khi hoàn tác.', [
+        { text: 'Hủy', style: 'cancel' },
+        { text: 'Hoàn tác', onPress: () => void restoreBackup(picked) },
+      ]);
+    } catch (error) {
+      Alert.alert('Không thể hoàn tác', error instanceof Error ? error.message : 'Điểm khôi phục không hợp lệ.');
+    }
   };
   if (!settings) return <Screen title="Cài đặt" />;
   return (
@@ -145,28 +220,70 @@ export default function ProfileScreen() {
           onChange={(value) => void update({ soundEnabled: value })}
         />
         <Setting
-          label="Tự phát âm khi ôn"
+          label="Tự phát âm khi học/ôn"
           value={settings.autoPlayAudio}
           onChange={(value) => void update({ autoPlayAudio: value })}
         />
+        <Text style={styles.label}>Tốc độ phát âm</Text>
+        <View style={styles.choiceRow}>
+          {[0.6, 0.8, 1, 1.2].map((value) => (
+            <Pressable
+              key={value}
+              onPress={() => void update({ speechRate: value })}
+              style={[styles.choice, settings.speechRate === value && styles.choiceActive]}
+            >
+              <Text style={[styles.choiceText, settings.speechRate === value && styles.choiceTextActive]}>
+                {value.toFixed(1)}×
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <Setting
           label="Rung phản hồi"
           value={settings.hapticEnabled}
           onChange={(value) => void update({ hapticEnabled: value })}
         />
-        <Setting
-          label="Luyện viết sớm (trước Cấp 4)"
-          value={settings.practiceWritingEarly}
-          onChange={(value) => void update({ practiceWritingEarly: value })}
-        />
       </View>
       <View style={card}>
         <Text style={styles.section}>Dữ liệu & nguồn</Text>
         <Text style={styles.copy}>
-          SQLite lưu từ vựng, lịch cấp nhớ, ghi chú và thống kê. App không gửi
-          dữ liệu học tập lên máy chủ.
+          SQLite lưu từ vựng, lịch cấp nhớ, ghi chú và thống kê. Chỉ tải bản sao
+          lưu lên máy chủ khi bạn chủ động chọn.
         </Text>
         <Text style={styles.version}>4Chinese · MVP 0.1.0</Text>
+      </View>
+      <View style={[card, styles.backupCard]}>
+        <Text style={styles.section}>Sao lưu dữ liệu</Text>
+        <Text style={styles.copy}>
+          Xuất bộ từ riêng, ảnh, tiến độ, lịch ôn, ghi chú và thống kê vào một tệp ZIP.
+        </Text>
+        <View style={styles.backupActions}>
+          <Pressable
+            accessibilityRole="button"
+            disabled={backupAction !== null}
+            onPress={() => void exportBackup()}
+            style={[styles.backupButton, backupAction !== null && styles.backupButtonDisabled]}
+          >
+            <Text style={styles.backupButtonText}>{backupAction === "export" ? "Đang tạo…" : "Xuất sao lưu"}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={backupAction !== null}
+            onPress={() => void chooseBackup()}
+            style={[styles.restoreButton, backupAction !== null && styles.backupButtonDisabled]}
+          >
+            <Text style={styles.restoreButtonText}>{backupAction === "import" ? "Đang khôi phục…" : "Khôi phục"}</Text>
+          </Pressable>
+        </View>
+        {restorePointAvailable ? <Pressable accessibilityRole="button" disabled={backupAction !== null}
+          onPress={() => void undoLastRestore()} style={[styles.restoreButton, backupAction !== null && styles.backupButtonDisabled]}>
+          <Text style={styles.restoreButtonText}>Hoàn tác lần khôi phục gần nhất</Text>
+        </Pressable> : null}
+        <Pressable accessibilityRole="button" onPress={() => router.push('/cloud' as Href)}
+          style={styles.restoreButton}>
+          <Text style={styles.restoreButtonText}>Sao lưu đám mây (tự chọn)</Text>
+        </Pressable>
+        <Text style={styles.backupHint}>App lưu điểm khôi phục ZIP trước khi nhập. Nếu nhập lỗi, dữ liệu cũ được giữ nguyên.</Text>
       </View>
     </Screen>
   );
@@ -249,4 +366,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: spacing.md,
   },
+  backupCard: { gap: spacing.sm },
+  backupActions: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs },
+  backupButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  restoreButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  backupButtonDisabled: { opacity: 0.55 },
+  backupButtonText: { color: "#fff", fontWeight: "800" },
+  restoreButtonText: { color: colors.primary, fontWeight: "800" },
+  backupHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: spacing.xs },
 });

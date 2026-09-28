@@ -14,4 +14,5 @@ android {
 
 dependencies {
   implementation 'com.google.mlkit:digital-ink-recognition:19.0.0'
+  implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
 }

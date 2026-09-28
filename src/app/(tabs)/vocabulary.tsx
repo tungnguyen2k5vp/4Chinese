@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { StatusBar } from "expo-status-bar";
 import { useCallback, useEffect, useState } from "react";
@@ -18,7 +18,7 @@ const labels = { all: "Tất cả", unlearned: "Chưa học", learned: "Đã h�
 
 export default function VocabularyScreen() {
   const db = useSQLiteContext();
-  const params = useLocalSearchParams<{ band?: string; filter?: string }>();
+  const params = useLocalSearchParams<{ band?: string; filter?: string; returnTo?: string }>();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number]>((filters.includes(params.filter as never) ? params.filter : "all") as (typeof filters)[number]);
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
@@ -26,12 +26,13 @@ export default function VocabularyScreen() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const band = (params.band ? (params.band === "7-9" ? "7-9" : Number(params.band)) : "all") as HskBand | "all";
+  const returnTo = params.returnTo?.startsWith("/path/lesson/") ? params.returnTo : null;
 
   useFocusEffect(useCallback(() => {
     let live = true;
-    void getDashboardStats(db).then((value) => live && setStats(value));
+    void getDashboardStats(db, band === "all" ? undefined : [band]).then((value) => live && setStats(value));
     return () => { live = false; };
-  }, [db]));
+  }, [band, db]));
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -68,6 +69,16 @@ export default function VocabularyScreen() {
         </View>
         <Text style={styles.subtitle}>Học theo lịch SRS</Text>
         <SearchBar value={query} onChangeText={setQuery} />
+        {returnTo ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.replace(returnTo as Href)}
+            style={styles.returnButton}
+          >
+            <Ionicons name="arrow-back" size={18} color="#FFFFFF" />
+            <Text style={styles.returnText}>Quay lại bài học</Text>
+          </Pressable>
+        ) : null}
       </View>
       <View style={styles.filterSection}>
         <FlatList
@@ -153,6 +164,8 @@ const styles = StyleSheet.create({
   brand: { color: "#CFDAFF", fontWeight: "900", fontSize: 11, letterSpacing: 1.5 },
   title: { color: "#fff", fontSize: 28, lineHeight: 34, fontWeight: "900" },
   subtitle: { color: "#DCE4FF", fontSize: 13, marginBottom: spacing.xs },
+  returnButton: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.16)" },
+  returnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
   filterSection: { height: 66, justifyContent: "center", borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background },
   filters: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.sm, alignItems: "center" },
   chip: { minHeight: 38, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },

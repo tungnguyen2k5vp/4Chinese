@@ -1,13 +1,17 @@
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, Text, View } from "react-native";
 
 import { MasteryChart } from "@/components/MasteryChart";
+import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from "@/components/Screen";
 import { card, colors, spacing } from "@/constants/design";
-import { getDashboardStats, getHskProgress, getSettings } from "@/db/repository";
-import type { DashboardStats } from "@/types/models";
+import { getKnowledgeMap, type KnowledgeSkill } from '@/db/knowledge-map';
+import { getDailyActivity, getDashboardStats, getHskProgress, getSettings, listRecentReviewSkillAttempts } from "@/db/repository";
+import { buildSkillMastery, skillLabel } from "@/services/review/skill-mastery";
+import { buildStudyHeatmap } from "@/services/stats/heatmap";
+import type { DashboardStats, SkillMasteryMetric } from "@/types/models";
 
 type HskProgress = { band: string; total: number; learned: number; mastered: number };
 
@@ -16,16 +20,25 @@ export default function StatsScreen() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [hsk, setHsk] = useState<HskProgress[]>([]);
   const [studyGoal, setStudyGoal] = useState(30);
+  const [heatmap, setHeatmap] = useState<ReturnType<typeof buildStudyHeatmap>>([]);
+  const [skillMastery, setSkillMastery] = useState<SkillMasteryMetric[]>([]);
+  const [knowledgeMap, setKnowledgeMap] = useState<KnowledgeSkill[]>([]);
 
   useFocusEffect(
     useCallback(() => {
-      Promise.all([getDashboardStats(db), getHskProgress(db), getSettings(db)]).then(
-        ([nextStats, nextHsk, settings]) => {
+      let active = true;
+      void Promise.all([getDashboardStats(db), getHskProgress(db), getSettings(db), getDailyActivity(db), listRecentReviewSkillAttempts(db), getKnowledgeMap(db)]).then(
+        ([nextStats, nextHsk, settings, activity, attempts, map]) => {
+          if (!active) return;
           setStats(nextStats);
           setHsk(nextHsk);
           setStudyGoal(settings.dailyStudyMinutes);
+          setHeatmap(buildStudyHeatmap(activity));
+          setSkillMastery(buildSkillMastery(attempts));
+          setKnowledgeMap(map);
         },
-      );
+      ).catch(() => { if (active) Alert.alert('Chưa tải được thống kê', 'Vui lòng mở lại màn hình.'); });
+      return () => { active = false; };
     }, [db]),
   );
 
@@ -48,6 +61,7 @@ export default function StatsScreen() {
 
   return (
     <Screen title="Tiến độ học tập" subtitle="Theo dõi tiến độ học.">
+      <PrimaryButton variant="secondary" label="XP · Thành tích · Mục tiêu tuần" onPress={() => router.push('/achievements' as Href)} />
       <View style={styles.grid}>
         {metrics.map(([label, value, unit]) => (
           <View key={label} style={[card, styles.metric]}>
@@ -77,6 +91,30 @@ export default function StatsScreen() {
       </View>
 
       <View style={card}>
+        <Text style={styles.section}>Kỹ năng gần đây</Text>
+        <Text style={styles.note}>Dựa trên các lượt ôn mới, không thay đổi lịch SRS.</Text>
+        <View style={styles.skillList}>
+          {skillMastery.map((metric) => (
+            <View key={metric.skill} style={styles.skillRow}>
+              <Text style={styles.skillLabel}>{skillLabel(metric.skill)}</Text>
+              <Text style={[styles.skillValue, metric.status === "weak" && styles.skillWeak]}>
+                {metric.accuracy === null ? "Chưa đủ dữ liệu" : `${metric.accuracy}% · ${metric.attempts} lượt`}
+              </Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      <View style={card}>
+        <Text style={styles.section}>Bản đồ kỹ năng lưu bền</Text>
+        <Text style={styles.note}>Chỉ tính nội dung có dữ liệu luyện. Điểm từ vựng là chỉ số theo dõi 0–100; ngữ pháp là tỷ lệ đúng.</Text>
+        <View style={styles.skillList}>{knowledgeMap.map((metric) => <View key={metric.skill} style={styles.skillRow}>
+          <Text style={styles.skillLabel}>{metric.label}</Text>
+          <Text style={styles.skillValue}>{metric.score === null ? 'Chưa có dữ liệu' : `${metric.score}${metric.skill === 'GRAMMAR' ? '%' : '/100'} · ${metric.wordCount} ${metric.skill === 'GRAMMAR' ? 'cấu trúc' : 'từ'}`}</Text>
+        </View>)}</View>
+      </View>
+
+      <View style={card}>
         <Text style={styles.section}>Tiến độ HSK</Text>
         <View style={styles.hskList}>
           {hsk.map((row) => {
@@ -97,14 +135,15 @@ export default function StatsScreen() {
       <View style={card}>
         <Text style={styles.section}>Lịch học 28 ngày</Text>
         <View style={styles.heatmap}>
-          {Array.from({ length: 28 }, (_, index) => (
+          {heatmap.map((day) => (
             <View
-              key={index}
-              style={[styles.cell, { opacity: index > 22 ? 0.9 : index > 14 ? 0.55 : 0.2 }]}
+              key={day.date}
+              accessibilityLabel={`${day.date}: ${day.activity} lượt học`}
+              style={[styles.cell, { opacity: [0.12, 0.32, 0.52, 0.74, 1][day.level] }]}
             />
           ))}
         </View>
-        <Text style={styles.note}>Đậm hơn = ôn nhiều hơn.</Text>
+        <Text style={styles.note}>Đậm hơn = nhiều lượt học và ôn hoàn tất hơn.</Text>
       </View>
     </Screen>
   );
@@ -127,6 +166,11 @@ const styles = StyleSheet.create({
   studyValue: { color: colors.text, fontSize: 28, fontWeight: "900", marginBottom: spacing.md },
   studyTrack: { height: 10, borderRadius: 5, backgroundColor: colors.border, overflow: "hidden" },
   studyFill: { height: "100%", backgroundColor: colors.primary, borderRadius: 5 },
+  skillList: { gap: spacing.sm, marginTop: spacing.md },
+  skillRow: { alignItems: "center", borderBottomColor: colors.border, borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingBottom: spacing.sm },
+  skillLabel: { color: colors.text, fontSize: 14, fontWeight: "800" },
+  skillValue: { color: colors.success, fontSize: 12, fontWeight: "800" },
+  skillWeak: { color: colors.danger },
   hskList: { gap: spacing.md },
   hskRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   hskLabel: { width: 62, color: colors.text, fontSize: 12, fontWeight: "700" },
