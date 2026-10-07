@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,13 @@ const hsk14Characters = new Set(
 );
 
 describe("offline HSK 1-4 stroke hints", () => {
+  it.each(["搾", "獃", "秊", "薙", "颿", "骽"])("keeps the exact-character source gap for %s without borrowing variant paths", (character) => {
+    expect(existsSync(resolve('node_modules/hanzi-writer-data', `${character}.json`))).toBe(false);
+    expect(coverage.missing).toContain(character);
+    expect(strokes[character]).toBeUndefined();
+    const shard = JSON.parse(readFileSync(resolve('src/data', `stroke-shard-${character.charCodeAt(0) % 8}.json`), 'utf8')) as Record<string, string[]>;
+    expect(shard[character]).toBeUndefined();
+  });
   it("bundles ordered paths for common review characters", () => {
     for (const character of ["我", "你", "学", "习", "是", "国"]) {
       expect(strokes[character]?.length, character).toBeGreaterThan(0);

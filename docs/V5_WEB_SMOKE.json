@@ -1,0 +1,20 @@
+{
+  "at": "2026-10-01T17:37:09.657Z",
+  "origin": "http://localhost:8085",
+  "passed": true,
+  "results": [
+    "10-minute selection, no-back high-water position and reload resume",
+    "100k UTF-8 TXT import, 50 lazy chunks, durable part-2 resume after reload",
+    "Reader word-detail/back retains semantic chunk",
+    "Listening inline controls, explicit reveal and honest empty advanced level",
+    "Written center renders 21 writing / 21 translation tasks",
+    "Error intelligence empty state distinct from loading/failure",
+    "Offline roleplay works without provider calls; AI mode blocked before consent",
+    "Granting/revoking AI consent changes mode without sending private offline history",
+    "360px dark/reduced-motion listening renders without horizontal overflow"
+  ],
+  "errors": [],
+  "failure": null,
+  "nativeDeviceTested": false,
+  "geminiTested": false
+}

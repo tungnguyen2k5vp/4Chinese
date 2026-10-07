@@ -9,11 +9,13 @@ import { AudioButton } from "@/components/AudioButton";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { radius, spacing, themedCard } from "@/constants/design";
 import { getDeckVocabulary, getSettings, listPersonalDecks } from "@/db/repository";
 import { useStudySession } from "@/hooks/use-study-session";
 import { cancelMandarinPronunciation, isNativePronunciationAvailable, NativePronunciationError, recognizeMandarinPronunciation } from "@/services/pronunciation/native-pronunciation";
 import type { PronunciationResult } from "@/services/pronunciation/provider";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
 const PRACTICE_BATCH_SIZE = 10;
@@ -24,6 +26,8 @@ const AiPronunciationPanel = hasExpoAudio ? require("@/components/AiPronunciatio
 export default function DeckPronunciationNative() {
   const { deckId = "" } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   useStudySession(db);
   const [deckName, setDeckName] = useState("Bộ từ riêng");
   const [words, setWords] = useState<Vocabulary[]>([]);
@@ -101,25 +105,25 @@ export default function DeckPronunciationNative() {
     setNotice(null);
   };
 
-  if (loading) return <Screen title="Luyện phát âm"><ActivityIndicator color={colors.primary} size="large" /></Screen>;
+  if (loading) return <Screen title="Luyện phát âm"><ActivityIndicator color={theme.primary} size="large" /></Screen>;
   if (!word) return <Screen title="Luyện phát âm" subtitle={deckName}><EmptyState icon="🎙" title="Bộ từ đang trống" message="Hãy thêm từ vào bộ trước khi luyện phát âm." /><PrimaryButton label="Quay lại bộ từ" variant="secondary" onPress={() => router.back()} /></Screen>;
 
   const batch = Math.floor(index / PRACTICE_BATCH_SIZE) + 1;
   const batchTotal = Math.ceil(words.length / PRACTICE_BATCH_SIZE);
   return <Screen title="Luyện phát âm" subtitle={`${deckName} · Lượt ${batch}/${batchTotal} · Từ ${index + 1}/${words.length}`}>
-    <View style={[card, styles.wordCard]}>
+    <View style={[styles.card, styles.wordCard]}>
       <Text style={styles.eyebrow}>NGHE MẪU, RỒI ĐỌC LẠI</Text><Text style={styles.hanzi}>{word.simplified}</Text><Text style={styles.pinyin}>{word.pinyin}</Text><Text style={styles.meaning}>{word.primaryMeaningVi}</Text><AudioButton text={word.simplified} size={29} rate={settings?.speechRate} />
     </View>
-    <View style={[card, styles.practiceCard]}>
+    <View style={[styles.card, styles.practiceCard]}>
       <Text style={styles.practiceTitle}>Nhận diện giọng nói trên thiết bị</Text>
       <Text style={styles.practiceHint}>Miễn phí. Kết quả cho biết máy nhận được từ nào, không phải điểm phát âm hay chấm thanh điệu.</Text>
-      <Pressable accessibilityLabel={listening ? "Dừng nhận diện giọng nói" : "Bắt đầu nhận diện giọng nói"} accessibilityRole="button" disabled={!nativeAvailable} onPress={() => void (listening ? stopRecognition() : startRecognition())} style={({ pressed }) => [styles.recordButton, listening && styles.recordingButton, !nativeAvailable && styles.disabled, pressed && nativeAvailable && styles.pressed]}>
-        <Ionicons color="#FFFFFF" name={listening ? "stop" : "mic"} size={27} /><Text style={styles.recordButtonText}>{listening ? "Dừng nghe" : "Bắt đầu nói"}</Text>
+      <Pressable accessibilityLabel={listening ? "Dừng nhận diện giọng nói" : "Bắt đầu nhận diện giọng nói"} accessibilityHint={!nativeAvailable ? "Cần bản development hoặc release có mô-đun nhận dạng giọng nói." : "Nói từ tiếng Trung đang hiển thị."} accessibilityRole="button" accessibilityState={{ disabled: !nativeAvailable, busy: listening }} disabled={!nativeAvailable} onPress={() => void (listening ? stopRecognition() : startRecognition())} style={({ pressed }) => [styles.recordButton, listening && styles.recordingButton, !nativeAvailable && styles.disabled, pressed && nativeAvailable && styles.pressed]}>
+        <Ionicons color={listening ? theme.onError : theme.onPrimary} name={listening ? "stop" : "mic"} size={27} /><Text style={[styles.recordButtonText, listening && styles.recordingButtonText]}>{listening ? "Dừng nghe" : "Bắt đầu nói"}</Text>
       </Pressable>
       {!nativeAvailable ? <Text style={styles.notice}>Micro nhận diện cần bản development/release có mô-đun speech; Expo Go chỉ hỗ trợ các phần học khác.</Text> : null}
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
     </View>
-    {result ? <View style={[card, styles.resultCard, result.exactMatch ? styles.resultGood : styles.resultRetry]}>
+    {result ? <View accessibilityLiveRegion="polite" style={[styles.card, styles.resultCard, result.exactMatch ? styles.resultGood : styles.resultRetry]}>
       <Text style={styles.eyebrow}>KẾT QUẢ NHẬN DIỆN</Text><Text style={styles.resultStatus}>{result.exactMatch ? "Nhận đúng từ" : result.partialMatch ? "Có chứa từ mục tiêu" : "Chưa khớp từ mục tiêu"}</Text><Text style={styles.transcriptLabel}>MÁY NHẬN ĐƯỢC</Text><Text style={styles.transcript}>{result.transcript || "(không rõ)"}</Text><Text style={styles.feedback}>{result.feedback}</Text>
     </View> : null}
     {AiPronunciationPanel ? <AiPronunciationPanel key={word.id} word={word} /> : null}
@@ -128,8 +132,11 @@ export default function DeckPronunciationNative() {
   </Screen>;
 }
 
-const styles = StyleSheet.create({
-  wordCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xl }, eyebrow: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 }, hanzi: { color: colors.text, fontSize: 78, fontWeight: "900", marginTop: spacing.xs }, pinyin: { color: colors.primary, fontSize: 24, fontWeight: "900" }, meaning: { color: colors.textMuted, fontSize: 18, fontWeight: "700" },
-  practiceCard: { alignItems: "center", gap: spacing.md }, practiceTitle: { color: colors.text, fontSize: 20, fontWeight: "900", textAlign: "center" }, practiceHint: { color: colors.textMuted, fontSize: 13, lineHeight: 20, textAlign: "center" }, recordButton: { alignItems: "center", backgroundColor: colors.primary, borderRadius: radius.lg, flexDirection: "row", gap: spacing.sm, justifyContent: "center", minHeight: 66, paddingHorizontal: spacing.xl, width: "100%" }, recordingButton: { backgroundColor: colors.danger }, recordButtonText: { color: "#FFFFFF", fontSize: 17, fontWeight: "900" }, disabled: { opacity: 0.5 }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, notice: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
-  resultCard: { alignItems: "center", gap: 5, paddingVertical: spacing.lg }, resultGood: { backgroundColor: "#E9F9F0" }, resultRetry: { backgroundColor: "#FFF6EA" }, resultStatus: { color: colors.text, fontSize: 24, fontWeight: "900", textAlign: "center" }, transcriptLabel: { color: colors.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 0.7, marginTop: spacing.xs }, transcript: { color: colors.text, fontSize: 28, fontWeight: "900" }, feedback: { color: colors.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" }, privacy: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    card: { ...themedCard(theme), borderWidth: 1, borderColor: theme.border },
+    wordCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xl }, eyebrow: { color: theme.primaryText, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 }, hanzi: { color: theme.textPrimary, fontSize: 78, fontWeight: "900", marginTop: spacing.xs }, pinyin: { color: theme.primaryText, fontSize: 24, fontWeight: "900" }, meaning: { color: theme.textMuted, fontSize: 18, fontWeight: "700" },
+    practiceCard: { alignItems: "center", gap: spacing.md }, practiceTitle: { color: theme.textPrimary, fontSize: 20, fontWeight: "900", textAlign: "center" }, practiceHint: { color: theme.textMuted, fontSize: 13, lineHeight: 20, textAlign: "center" }, recordButton: { alignItems: "center", backgroundColor: theme.primary, borderRadius: radius.lg, flexDirection: "row", gap: spacing.sm, justifyContent: "center", minHeight: 66, paddingHorizontal: spacing.xl, width: "100%" }, recordingButton: { backgroundColor: theme.error }, recordButtonText: { color: theme.onPrimary, fontSize: 17, fontWeight: "900" }, recordingButtonText: { color: theme.onError }, disabled: { opacity: 0.5 }, pressed: { opacity: 0.84, transform: [{ scale: 0.99 }] }, notice: { color: theme.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+    resultCard: { alignItems: "center", gap: 5, paddingVertical: spacing.lg }, resultGood: { backgroundColor: theme.successSoft }, resultRetry: { backgroundColor: theme.warningSoft }, resultStatus: { color: theme.textPrimary, fontSize: 24, fontWeight: "900", textAlign: "center" }, transcriptLabel: { color: theme.textMuted, fontSize: 11, fontWeight: "900", letterSpacing: 0.7, marginTop: spacing.xs }, transcript: { color: theme.textPrimary, fontSize: 28, fontWeight: "900" }, feedback: { color: theme.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" }, privacy: { color: theme.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+  });
+}

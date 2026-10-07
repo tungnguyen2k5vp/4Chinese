@@ -123,11 +123,12 @@ type BulkLookupQueryContext = BulkLookupQuery & {
   hasHanzi: boolean;
 };
 
-const BULK_INDEX_CANDIDATES_PER_QUERY = 128;
+const BULK_INDEX_CANDIDATES_PER_QUERY = 48;
 const BULK_INDEX_BUCKET_LIMIT = 256;
 const BULK_FETCH_ID_CHUNK_SIZE = 500;
 const BULK_CUSTOM_LOOKUP_TIMEOUT_MS = 350;
-const BULK_SQL_LOOKUP_LIMIT = 48;
+const BULK_SQL_LOOKUP_MAX_CANDIDATES = 2_400;
+const BULK_SQL_LOOKUP_TIMEOUT_MS = 900;
 const bulkLookupIndexCache = new WeakMap<SQLiteDatabase, Promise<BulkLookupIndex>>();
 let bulkOfflineVocabularyCache: Vocabulary[] | null = null;
 let bulkFastOfflineVocabularyCache: Vocabulary[] | null = null;
@@ -196,6 +197,11 @@ export const defaultSettings: UserSettings = {
   autoPlayAudio: false,
   speechRate: 0.82,
   hapticEnabled: true,
+  themeMode: "system",
+  motionMode: "full",
+  dailyReminderEnabled: false,
+  dailyReminderHour: 19,
+  dailyReminderMinute: 0,
   onboardingCompleted: false,
   reviewStyle: "automatic",
   reviewSessionSize: 20,
@@ -212,6 +218,7 @@ export async function listVocabulary(
     deckId?: string;
     limit?: number;
     offset?: number;
+    bandSlice?: { offset: number; limit: number };
   } = {},
 ): Promise<Vocabulary[]> {
   const clauses: string[] = [
@@ -225,6 +232,17 @@ export async function listVocabulary(
   if (options.band && options.band !== "all") {
     clauses.push("v.hsk_band = ?");
     values.push(String(options.band));
+  }
+  if (options.bandSlice && options.band && options.band !== "all") {
+    const sliceOffset = Math.max(0, Math.trunc(options.bandSlice.offset));
+    const sliceLimit = Math.min(100, Math.max(1, Math.trunc(options.bandSlice.limit)));
+    clauses.push(`v.id IN (
+      SELECT page_word.id FROM vocabulary page_word
+      WHERE page_word.hsk_band=? AND (page_word.deck_id IS NULL OR EXISTS (
+        SELECT 1 FROM personal_deck d WHERE d.id=page_word.deck_id AND d.deleted_at IS NULL))
+      ORDER BY COALESCE(page_word.frequency_rank,999999),page_word.pinyin_numeric,page_word.id
+      LIMIT ? OFFSET ?)`);
+    values.push(String(options.band), sliceLimit, sliceOffset);
   }
   if (options.memoryLevel && options.memoryLevel >= 1 && options.memoryLevel <= 6) {
     clauses.push("p.status = 'LEARNING' AND p.studied = 1 AND p.memory_level = ?");
@@ -261,6 +279,18 @@ export async function listVocabulary(
   return attachSingleExamples(db, rows.map(mapWord));
 }
 
+export type SharedVocabularySentence = {
+  id: string;
+  hanzi: string;
+  pinyin: string;
+  translationVi: string;
+  translationEn: string | null;
+  hskLevel: string | null;
+  topic: string | null;
+  provenance: string;
+  sourceUrl: string | null;
+};
+
 export async function getVocabulary(
   db: SQLiteDatabase,
   id: string,
@@ -276,9 +306,14 @@ export async function getVocabulary(
   );
   if (!row) return null;
   const examples = await getExampleSentences(db, id, 5);
+  const sharedSentences = await listSharedSentencesForVocabulary(db, id, 5);
+  const allExamples = [...examples, ...sharedSentences.map((sentence) => ({
+    id: sentence.id, vocabularyId: id, chinese: sentence.hanzi, pinyin: sentence.pinyin,
+    vietnamese: sentence.translationVi, english: sentence.translationEn ?? undefined, difficulty: 1,
+  }))];
   return withContextualExamples({
     ...mapWord(row),
-    examples,
+    examples: Array.from(new Map(allExamples.map((example) => [example.chinese, example])).values()),
   });
 }
 
@@ -312,6 +347,26 @@ export async function getExampleSentences(
     difficulty: item.difficulty,
   })).filter((example) => !isGenericContextualExample({ simplified: "" }, example))
     .slice(0, Math.max(1, Math.min(20, Math.trunc(limit))));
+}
+
+export async function listSharedSentencesForVocabulary(
+  db: SQLiteDatabase,
+  vocabularyId: string,
+  limit = 5,
+): Promise<SharedVocabularySentence[]> {
+  const rows = await db.getAllAsync<{
+    id: string; hanzi: string; pinyin: string; translation_vi: string; translation_en: string | null;
+    hsk_level: string | null; topic: string | null; provenance: string; source_url: string | null;
+  }>(`SELECT s.id,s.hanzi,s.pinyin,s.translation_vi,s.translation_en,s.hsk_level,s.topic,
+      s.provenance,s.source_url
+    FROM sentence_vocabulary sv JOIN sentences s ON s.id=sv.sentence_id
+    WHERE sv.vocabulary_id=? AND s.is_active=1 AND s.review_status='REVIEWED'
+    ORDER BY s.difficulty,s.id LIMIT ?`, vocabularyId, Math.max(1, Math.min(20, Math.trunc(limit))));
+  return rows.map((row) => ({
+    id: row.id, hanzi: row.hanzi, pinyin: row.pinyin, translationVi: row.translation_vi,
+    translationEn: row.translation_en, hskLevel: row.hsk_level, topic: row.topic,
+    provenance: row.provenance, sourceUrl: row.source_url,
+  }));
 }
 
 export async function getProgress(
@@ -804,6 +859,7 @@ export async function getDashboardStats(
       streakRows.map((row) => row.date),
       now,
     ),
+      lastStudyDate: streakRows[0]?.date ?? null,
     mastery,
   };
 }
@@ -1554,66 +1610,52 @@ function bulkIndexMatchScore(query: BulkLookupQueryContext, row: BulkLookupIndex
   return score ? score + levelAndFrequency : 0;
 }
 
-function bulkSqlLookupParts(query: BulkLookupQueryContext): {
-  clause: string;
-  params: string[];
-} | null {
-  if (query.hasHanzi) {
-    return {
-      clause: "(v.simplified LIKE ? OR v.traditional LIKE ?)",
-      params: [`%${query.raw}%`, `%${query.raw}%`],
-    };
+/**
+ * Creates one safe FTS expression for all unresolved inputs. The offline
+ * index receives only IDs; candidate ranking remains in the existing
+ * learner-facing scorer after full rows are fetched in bounded chunks.
+ */
+function createBulkFtsMatch(queries: BulkLookupQueryContext[]): string {
+  const values = new Set<string>();
+  for (const query of queries) {
+    if (query.hasHanzi) values.add(normalizeSearch(query.raw));
+    query.alternatives.forEach((value) => values.add(value));
+    if (query.allowPinyin && query.pinyinQuery.length >= 2) values.add(query.pinyinQuery);
   }
-
-  const clauses = query.alternatives.slice(0, 8).map(() => "v.search_text LIKE ?");
-  const params = query.alternatives.slice(0, 8).map((value) => `%${value}%`);
-  const tokens = query.tokens.slice(0, 8);
-  if (tokens.length > 1) {
-    clauses.push(`(${tokens.map(() => "v.search_text LIKE ?").join(" AND ")})`);
-    params.push(...tokens.map((token) => `%${token}%`));
-  }
-  if (query.allowPinyin && query.pinyinQuery.length >= 2) {
-    const compactPinyin = "LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(v.pinyin_numeric,'1',''),'2',''),'3',''),'4',''),'5',''),' ',''),'ü','v'))";
-    clauses.push(`${compactPinyin} LIKE ?`);
-    params.push(`${query.pinyinQuery}%`);
-  }
-  return clauses.length ? { clause: clauses.join(" OR "), params } : null;
+  return Array.from(values)
+    .map((value) => normalizeSearch(value))
+    .filter((value) => value.length >= 2 || /[\u3400-\u9fff]/u.test(value))
+    .slice(0, 800)
+    .map((value) => value.includes(' ') ? `"${value.replace(/"/g, '""')}"` : `${value.replace(/"/g, '""')}*`)
+    .join(' OR ');
 }
 
-/**
- * Looks up only user-created rows through SQLite. The bundled HSK 1-4
- * dictionary is already indexed in memory, so bulk import never scans the
- * full SQLite table for every input line.
- */
-async function findBulkSqlCandidates(
+async function findBulkFtsCandidateIds(
   db: SQLiteDatabase,
   queries: BulkLookupQueryContext[],
-): Promise<Vocabulary[]> {
-  const rowsByQuery = await Promise.all(
-    queries.map(async (query) => {
-      const parts = bulkSqlLookupParts(query);
-      if (!parts) return [] as DbWord[];
-      return withFallbackTimeout(
-        () => db.getAllAsync<DbWord>(
-          `SELECT v.* FROM vocabulary v
-           WHERE v.is_custom=1 AND (${parts.clause})
-             AND (v.deck_id IS NULL OR EXISTS (
-               SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-             ))
-           ORDER BY
-             COALESCE(v.frequency_rank,999999), LENGTH(v.simplified), v.pinyin_numeric
-           LIMIT ?`,
-          ...parts.params,
-          BULK_SQL_LOOKUP_LIMIT,
-        ),
-        [],
-        BULK_CUSTOM_LOOKUP_TIMEOUT_MS,
-      );
-    }),
+): Promise<string[]> {
+  const match = createBulkFtsMatch(queries);
+  if (!match) return [];
+  if (typeof document !== 'undefined') return [];
+  const rows = await withFallbackTimeout(
+    () => db.getAllAsync<{ id: string }>(
+      `SELECT vocabulary_search_fts.vocabulary_id AS id
+       FROM vocabulary_search_fts
+       JOIN vocabulary v ON v.id=vocabulary_search_fts.vocabulary_id
+       WHERE vocabulary_search_fts MATCH ?
+         AND (v.is_custom=1 OR (v.is_custom=0 AND v.hsk_band IN ('5','6','7-9')))
+         AND (v.is_custom=0 OR v.deck_id IS NULL OR EXISTS (
+           SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+         ))
+       ORDER BY bm25(vocabulary_search_fts), COALESCE(v.frequency_rank,999999)
+       LIMIT ?`,
+      match,
+      BULK_SQL_LOOKUP_MAX_CANDIDATES,
+    ),
+    [],
+    BULK_SQL_LOOKUP_TIMEOUT_MS,
   );
-  const words = new Map<string, Vocabulary>();
-  rowsByQuery.flat().forEach((row) => words.set(row.id, mapWord(row)));
-  return Array.from(words.values());
+  return Array.from(new Set(rows.map((row) => row.id)));
 }
 
 async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndex> {
@@ -1623,7 +1665,8 @@ async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndex> 
   const promise = (async (): Promise<BulkLookupIndex> => {
     // The compact in-memory index is the fast path. It covers HSK 1-4,
     // without building an index for the 7-9 dictionary on the UI thread.
-    if (!bulkFastOfflineVocabularyCache) bulkFastOfflineVocabularyCache = getOfflineVocabulary([1, 2, 3, 4]);
+    const bands = typeof document !== 'undefined' ? undefined : ([1, 2, 3, 4] as HskBand[]);
+    if (!bulkFastOfflineVocabularyCache) bulkFastOfflineVocabularyCache = getOfflineVocabulary(bands);
 
     const bundledRows = bulkFastOfflineVocabularyCache.map((word) => {
       const meaningsVi = cleanLearnerMeanings([word.primaryMeaningVi, ...word.meaningsVi]);
@@ -1710,10 +1753,10 @@ async function fetchBulkCandidatesById(
  * matching any input line, which made common meanings transfer thousands of
  * full JSON rows across the SQLite bridge before JS ranking even started.
  */
-export async function findBulkLookupCandidates(
+export async function findBulkLookupCandidateGroups(
   db: SQLiteDatabase,
   queries: BulkLookupQuery[],
-): Promise<Vocabulary[]> {
+): Promise<Map<string, Vocabulary[]>> {
   const uniqueQueries = Array.from(
     new Map(
       queries
@@ -1722,31 +1765,69 @@ export async function findBulkLookupCandidates(
         .map((query) => [normalizeSearch(query.value), query] as const),
   ).values(),
   );
-  if (!uniqueQueries.length) return [];
+  if (!uniqueQueries.length) return new Map();
 
   const contexts = uniqueQueries.map(createBulkLookupQueryContext);
-  const sqlCandidates = await findBulkSqlCandidates(db, contexts);
   const index = await getBulkLookupIndex(db);
-  const selectedIds = new Set<string>();
-  for (const query of contexts) {
+  const indexedCandidates = contexts.map((query) =>
     getBulkCandidateRows(query, index)
       .map((row) => ({ row, score: bulkIndexMatchScore(query, row) }))
       .filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score)
+      .sort((left, right) => right.score - left.score),
+  );
+  // Most everyday imports are HSK 1-4 and never need SQLite. Only unresolved
+  // inputs enter the FTS path, avoiding expensive work for a 20-100 line list.
+  const unresolvedContexts = contexts.filter(
+    (_query, indexPosition) => (indexedCandidates[indexPosition]?.[0]?.score ?? 0) < 7_000,
+  );
+  const sqlCandidateIds = await findBulkFtsCandidateIds(db, unresolvedContexts);
+  const selectedIds = new Set<string>();
+  indexedCandidates.forEach((candidates) => {
+    candidates
       .slice(0, BULK_INDEX_CANDIDATES_PER_QUERY)
       .forEach((item) => selectedIds.add(item.row.id));
-  }
+  });
+  sqlCandidateIds.forEach((id) => selectedIds.add(id));
 
   const bundledWords = new Map(
     index.rows
       .filter((row): row is BulkLookupIndexRow & { word: Vocabulary } => Boolean(row.word && selectedIds.has(row.id)))
       .map((row) => [row.id, row.word]),
   );
-  const customIds = Array.from(selectedIds).filter((id) => !bundledWords.has(id));
-  const customWords = customIds.length ? await fetchBulkCandidatesById(db, customIds) : [];
-  const candidates = new Map(sqlCandidates.map((word) => [word.id, word]));
-  bundledWords.forEach((word, id) => candidates.set(id, word));
-  customWords.forEach((word) => candidates.set(word.id, word));
+  const databaseIds = Array.from(selectedIds).filter((id) => !bundledWords.has(id));
+  const databaseWords = databaseIds.length ? await fetchBulkCandidatesById(db, databaseIds) : [];
+  const candidates = new Map(bundledWords);
+  databaseWords.forEach((word) => candidates.set(word.id, word));
+  const groups = new Map<string, Vocabulary[]>();
+  contexts.forEach((context, indexPosition) => {
+    const ids = new Set(
+      indexedCandidates[indexPosition]
+        ?.slice(0, BULK_INDEX_CANDIDATES_PER_QUERY)
+        .map((item) => item.row.id) ?? [],
+    );
+    // FTS is only used for queries that have no strong HSK 1-4/custom match.
+    // Keeping its results off other groups prevents N inputs from each
+    // re-ranking a union of every candidate produced by the whole batch.
+    if ((indexedCandidates[indexPosition]?.[0]?.score ?? 0) < 7_000) {
+      sqlCandidateIds.forEach((id) => ids.add(id));
+    }
+    groups.set(
+      context.normalized,
+      Array.from(ids)
+        .map((id) => candidates.get(id))
+        .filter((word): word is Vocabulary => Boolean(word)),
+    );
+  });
+  return groups;
+}
+
+export async function findBulkLookupCandidates(
+  db: SQLiteDatabase,
+  queries: BulkLookupQuery[],
+): Promise<Vocabulary[]> {
+  const groups = await findBulkLookupCandidateGroups(db, queries);
+  const candidates = new Map<string, Vocabulary>();
+  groups.forEach((group) => group.forEach((word) => candidates.set(word.id, word)));
   return Array.from(candidates.values());
 }
 

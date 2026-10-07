@@ -2,17 +2,23 @@ import { useMemo, useState } from "react";
 import { PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
 import Svg, { G, Line, Path, Polyline, Text as SvgText } from "react-native-svg";
 
-import { colors, radius, spacing } from "@/constants/design";
+import { radius, spacing } from "@/constants/design";
 import { getStrokePaths } from '@/services/handwriting/stroke-data';
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 
 type Point = { x: number; y: number };
+const PAPER_INK = "#172033";
 
-export function WritingCanvas({ character, size = 300 }: { character: string; size?: number }) {
+export function WritingCanvas({ character, size = 300, onFirstStroke }: { character: string; size?: number; onFirstStroke?: () => void }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [lines, setLines] = useState<Point[][]>([]);
   const [hint, setHint] = useState(false);
   const [guided, setGuided] = useState(false);
   const [guideIndex, setGuideIndex] = useState(0);
   const paths = useMemo(() => getStrokePaths(character), [character]);
+  const [reportedStroke, setReportedStroke] = useState(false);
 
   const responder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
@@ -20,6 +26,7 @@ export function WritingCanvas({ character, size = 300 }: { character: string; si
     onPanResponderGrant: (event) => {
       const point = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
       setLines((value) => [...value, [point]]);
+      if (!reportedStroke) { setReportedStroke(true); onFirstStroke?.(); }
     },
     onPanResponderMove: (event) => {
       const point = { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY };
@@ -30,29 +37,36 @@ export function WritingCanvas({ character, size = 300 }: { character: string; si
         return [...value.slice(0, -1), [...last, point]];
       });
     },
-  }), []);
+  }), [onFirstStroke, reportedStroke]);
 
   return (
     <View style={styles.wrapper}>
       <View style={styles.actions}>
-        <Pressable accessibilityRole="button" accessibilityState={{ selected: !guided }} onPress={() => setGuided(false)} style={styles.button}><Text style={styles.text}>Tự viết</Text></Pressable>
-        <Pressable accessibilityRole="button" accessibilityState={{ selected: guided, disabled: !paths.length }} disabled={!paths.length}
+        <Pressable accessibilityRole="button" accessibilityLabel="Tự viết" accessibilityState={{ selected: !guided }} onPress={() => setGuided(false)} style={styles.button}><Text style={styles.text}>Tự viết</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Tô theo nét mẫu" accessibilityState={{ selected: guided, disabled: !paths.length }} disabled={!paths.length}
           onPress={() => setGuided(true)} style={[styles.button, !paths.length && styles.disabled]}><Text style={styles.text}>Tô theo nét</Text></Pressable>
       </View>
-      <View style={[styles.canvas, { width: size, height: size }]} {...responder.panHandlers}>
+      <View
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel={`Vùng giấy viết chữ ${character}`}
+        accessibilityHint="Dùng ngón tay để viết chữ Hán trên vùng giấy này. Các nút bên dưới cho phép xóa nét hoặc bật gợi ý."
+        style={[styles.canvas, { width: size, height: size }]}
+        {...responder.panHandlers}
+      >
         <Svg height={size} width={size}>
-          <Line stroke="#D8DDEA" strokeDasharray="5 5" x1={size / 2} x2={size / 2} y1="0" y2={size} />
-          <Line stroke="#D8DDEA" strokeDasharray="5 5" x1="0" x2={size} y1={size / 2} y2={size / 2} />
-          {hint ? <SvgText fill="#2457D618" fontSize={size * 0.65} textAnchor="middle" x={size / 2} y={size * 0.72}>{character}</SvgText> : null}
+          <Line stroke={theme.border} strokeDasharray="5 5" x1={size / 2} x2={size / 2} y1="0" y2={size} />
+          <Line stroke={theme.border} strokeDasharray="5 5" x1="0" x2={size} y1={size / 2} y2={size / 2} />
+          {hint ? <SvgText fill={theme.primary} fillOpacity={0.12} fontSize={size * 0.65} textAnchor="middle" x={size / 2} y={size * 0.72}>{character}</SvgText> : null}
           {guided ? <G transform={`scale(${size / 1024}) translate(0 900) scale(1 -1)`}>
-            {paths.map((path, index) => <Path key={index} d={path} fill={index === guideIndex ? '#2457D655' : '#2457D610'} />)}
+            {paths.map((path, index) => <Path key={index} d={path} fill={theme.primary} opacity={index === guideIndex ? 0.34 : 0.09} />)}
           </G> : null}
           {lines.map((line, index) => (
             <Polyline
               fill="none"
               key={index}
               points={line.map((point) => `${point.x},${point.y}`).join(" ")}
-              stroke={colors.text}
+              stroke={PAPER_INK}
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth="7"
@@ -85,12 +99,14 @@ export function WritingCanvas({ character, size = 300 }: { character: string; si
   );
 }
 
-const styles = StyleSheet.create({
-  wrapper: { alignItems: "center", gap: spacing.sm },
-  canvas: { backgroundColor: "#FFFDFC", borderWidth: 1.5, borderColor: "#D5A8A1", borderRadius: radius.md, overflow: "hidden" },
-  tip: { color: colors.textMuted, fontSize: 12, textAlign: "center" },
-  actions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.sm },
-  button: { minWidth: 94, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.sm },
-  disabled: { opacity: 0.45 },
-  text: { color: colors.primary, fontSize: 12, fontWeight: "800" },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    wrapper: { alignItems: "center", gap: spacing.sm },
+    canvas: { backgroundColor: "#FFFDFC", borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, overflow: "hidden" },
+    tip: { color: theme.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+    actions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.sm },
+    button: { minWidth: 94, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: theme.primarySoft, paddingHorizontal: spacing.sm },
+    disabled: { opacity: 0.45 },
+    text: { color: theme.primaryText, fontSize: 12, fontWeight: "800" },
+  });
+}

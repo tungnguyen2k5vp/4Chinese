@@ -2,18 +2,18 @@
   "expo": {
     "name": "4Chinese",
     "slug": "4chinese",
-    "version": "0.1.16",
+    "version": "0.1.34",
     "orientation": "portrait",
     "icon": "./assets/images/hanzi-icon.png",
     "scheme": "4chinese",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/hanzi-icon.png",
       "bundleIdentifier": "com.tungnguyen2k5vp.fourchinese"
     },
     "android": {
       "package": "com.tungnguyen2k5vp.fourchinese",
-      "versionCode": 18,
+      "versionCode": 36,
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ],
@@ -24,11 +24,19 @@
       "predictiveBackGestureEnabled": true
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/hanzi-icon.png"
     },
     "plugins": [
-      "expo-router",
+      [
+        "expo-router",
+        {
+          "headers": {
+            "Cross-Origin-Embedder-Policy": "credentialless",
+            "Cross-Origin-Opener-Policy": "same-origin"
+          }
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -65,7 +73,8 @@
         }
       ],
       "expo-sharing",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

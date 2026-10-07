@@ -15,7 +15,7 @@ import { BilingualMeaningList } from "@/components/BilingualMeaningList";
 import { HanziHandwritingPad } from "@/components/HanziHandwritingPad";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import {
   findHanziCandidates,
   findHanziWordCandidates,
@@ -26,6 +26,7 @@ import {
 } from "@/db/repository";
 import { pickAndPersistWordImage } from "@/services/media/word-image";
 import { primaryEnglishMeaning } from "@/services/vocabulary/bilingual-meanings";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { EditableVocabulary, HskBand, Vocabulary } from "@/types/models";
 
 type ExampleDraft = { chinese: string; pinyin: string; vietnamese: string };
@@ -36,6 +37,9 @@ const emptyExample = (): ExampleDraft => ({
 });
 const bands: HskBand[] = [1, 2, 3, 4, 5, 6, "7-9"];
 export default function WordEditor() {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const card = themedCard(theme);
   const { deckId = "", id } = useLocalSearchParams<{
     deckId?: string;
     id?: string;
@@ -569,19 +573,21 @@ function Field({
   placeholder: string;
   multiline?: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.field}>
       <Text style={styles.smallLabel}>{label}</Text>
       <TextInput
         {...props}
-        placeholderTextColor={colors.textMuted}
+        placeholderTextColor={theme.textMuted}
         style={[styles.input, props.multiline && styles.multiline]}
         textAlignVertical={props.multiline ? "top" : "center"}
       />
     </View>
   );
 }
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({
   section: { gap: spacing.md },
   title: { fontSize: 18, fontWeight: "900", color: colors.text },
   field: { gap: 6 },
@@ -611,10 +617,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   recognizedHanzi: { fontSize: 40, fontWeight: "900", color: colors.text },
-  selectedPinyin: { fontSize: 17, fontWeight: "800", color: colors.primary },
+  selectedPinyin: { fontSize: 17, fontWeight: "800", color: colors.primaryText },
   selectedTraditional: { fontSize: 12, color: colors.textMuted },
   helperText: { fontSize: 12, color: colors.textMuted, textAlign: "center" },
-  warningText: { fontSize: 12, color: colors.primary, marginTop: spacing.sm },
+  warningText: { fontSize: 12, color: colors.primaryText, marginTop: spacing.sm },
   suggestions: { gap: spacing.sm, marginTop: spacing.sm },
   manualEntry: { gap: spacing.md, marginTop: spacing.sm },
   suggestion: {
@@ -632,7 +638,7 @@ const styles = StyleSheet.create({
   },
   suggestionHanzi: { fontSize: 22, fontWeight: "800", color: colors.text },
   suggestionBody: { flex: 1, gap: 2 },
-  suggestionPinyin: { fontSize: 13, fontWeight: "700", color: colors.primary },
+  suggestionPinyin: { fontSize: 13, fontWeight: "700", color: colors.primaryText },
   suggestionMeaning: { fontSize: 12, color: colors.textMuted },
   suggestionEnglish: { fontSize: 11, color: colors.textMuted, fontStyle: "italic" },
   suggestionMeta: { fontSize: 11, color: colors.textMuted },
@@ -658,5 +664,5 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingTop: spacing.md,
   },
-  exampleTitle: { fontSize: 13, fontWeight: "900", color: colors.primary },
-});
+  exampleTitle: { fontSize: 13, fontWeight: "900", color: colors.primaryText },
+}); }

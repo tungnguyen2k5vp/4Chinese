@@ -32,13 +32,13 @@ function assertNoUserDataLoss(sqlite: ReturnType<typeof createLegacyDatabase>, b
 }
 
 describe('real SQLite legacy release upgrade', () => {
-  it('keeps the bundled 11,330 HSK IDs unique and unchanged', () => {
-    expect(bundledHsk).toHaveLength(11330);
-    expect(new Set(bundledHsk.map((word) => word.id)).size).toBe(11330);
-    expect(bundledHsk.filter((word) => word.hskBand === 1)).toHaveLength(507);
-    expect(bundledHsk.filter((word) => word.hskBand === 2)).toHaveLength(750);
-    expect(bundledHsk.filter((word) => word.hskBand === 3)).toHaveLength(955);
-    expect(bundledHsk.filter((word) => word.hskBand === 4)).toHaveLength(979);
+  it('keeps the merged HSK IDs unique and preserves the legacy set', () => {
+    expect(bundledHsk).toHaveLength(11828);
+    expect(new Set(bundledHsk.map((word) => word.id)).size).toBe(11828);
+    expect(bundledHsk.filter((word) => word.hskBand === 1)).toHaveLength(508);
+    expect(bundledHsk.filter((word) => word.hskBand === 2)).toHaveLength(751);
+    expect(bundledHsk.filter((word) => word.hskBand === 3)).toHaveLength(963);
+    expect(bundledHsk.filter((word) => word.hskBand === 4)).toHaveLength(987);
   });
 
   it('creates a fresh schema without relying on old ALTER statements', async () => {

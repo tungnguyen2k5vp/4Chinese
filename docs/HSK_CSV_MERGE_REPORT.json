@@ -1,0 +1,303 @@
+{
+  "source": {
+    "sha256": "48b3ef407fb763bdf7890edd403cc2f5afd614c158c1612cc434ebd0385a9cc8",
+    "version": "all_hsk_clean.csv sha256:48b3ef407fb763bd"
+  },
+  "sourceRows": 11449,
+  "sourceDistribution": {
+    "1": 504,
+    "2": 748,
+    "3": 957,
+    "4": 981,
+    "5": 1440,
+    "6": 1208,
+    "7-9": 5611
+  },
+  "resultingRows": 11828,
+  "resultingDistribution": {
+    "1": 508,
+    "2": 751,
+    "3": 963,
+    "4": 987,
+    "5": 1461,
+    "6": 1242,
+    "7-9": 5916
+  },
+  "matchedExisting": 10951,
+  "added": 498,
+  "unchanged": 228,
+  "updated": {
+    "pinyin": 0,
+    "meaningVi": 10500,
+    "meaningEn": 10160,
+    "hskBand": 20,
+    "records": 10723
+  },
+  "addedByBand": {
+    "1": 6,
+    "2": 5,
+    "3": 3,
+    "4": 9,
+    "5": 378,
+    "6": 89,
+    "7-9": 8
+  },
+  "preservedExistingNotInSource": 376,
+  "preservedExistingAmbiguousReadings": [
+    {
+      "id": "hsk-131ef5cf3e58",
+      "simplified": "圈",
+      "pinyinNumeric": "juan1"
+    },
+    {
+      "id": "hsk-07f5171589cd",
+      "simplified": "着",
+      "pinyinNumeric": "zhao1"
+    },
+    {
+      "id": "hsk-074fd3c00714",
+      "simplified": "转",
+      "pinyinNumeric": "zhuai3"
+    }
+  ],
+  "sourceDuplicateReadings": [
+    {
+      "simplified": "背",
+      "readings": [
+        "bèi",
+        "bēi"
+      ]
+    },
+    {
+      "simplified": "冲",
+      "readings": [
+        "chōng",
+        "chòng"
+      ]
+    },
+    {
+      "simplified": "传",
+      "readings": [
+        "chuán",
+        "zhuàn"
+      ]
+    },
+    {
+      "simplified": "打",
+      "readings": [
+        "dǎ",
+        "dá"
+      ]
+    },
+    {
+      "simplified": "待",
+      "readings": [
+        "dāi",
+        "dài"
+      ]
+    },
+    {
+      "simplified": "得",
+      "readings": [
+        "dé",
+        "děi"
+      ]
+    },
+    {
+      "simplified": "地方",
+      "readings": [
+        "dìfang",
+        "dìfāng"
+      ]
+    },
+    {
+      "simplified": "过去",
+      "readings": [
+        "guò qu",
+        "guòqù"
+      ]
+    },
+    {
+      "simplified": "好",
+      "readings": [
+        "hǎo",
+        "hào"
+      ]
+    },
+    {
+      "simplified": "横",
+      "readings": [
+        "héng",
+        "hèng"
+      ]
+    },
+    {
+      "simplified": "结",
+      "readings": [
+        "jié",
+        "jiē"
+      ]
+    },
+    {
+      "simplified": "结果",
+      "readings": [
+        "jiéguǒ",
+        "jiē guǒ"
+      ]
+    },
+    {
+      "simplified": "尽",
+      "readings": [
+        "jìn",
+        "jǐn"
+      ]
+    },
+    {
+      "simplified": "卡",
+      "readings": [
+        "kǎ",
+        "qiǎ"
+      ]
+    },
+    {
+      "simplified": "看",
+      "readings": [
+        "kàn",
+        "kān"
+      ]
+    },
+    {
+      "simplified": "空",
+      "readings": [
+        "kōng",
+        "kòng"
+      ]
+    },
+    {
+      "simplified": "了",
+      "readings": [
+        "le",
+        "liǎo"
+      ]
+    },
+    {
+      "simplified": "落",
+      "readings": [
+        "luò",
+        "là"
+      ]
+    },
+    {
+      "simplified": "圈",
+      "readings": [
+        "quān",
+        "juàn"
+      ]
+    },
+    {
+      "simplified": "散",
+      "readings": [
+        "sàn",
+        "sǎn"
+      ]
+    },
+    {
+      "simplified": "头",
+      "readings": [
+        "tou",
+        "tóu"
+      ]
+    },
+    {
+      "simplified": "为",
+      "readings": [
+        "wèi",
+        "wéi"
+      ]
+    },
+    {
+      "simplified": "系",
+      "readings": [
+        "xì",
+        "jì"
+      ]
+    },
+    {
+      "simplified": "行",
+      "readings": [
+        "xíng",
+        "háng"
+      ]
+    },
+    {
+      "simplified": "一下儿",
+      "readings": [
+        "yīxiàr",
+        "yí xiàr"
+      ]
+    },
+    {
+      "simplified": "炸",
+      "readings": [
+        "zhà",
+        "zhá"
+      ]
+    },
+    {
+      "simplified": "长",
+      "readings": [
+        "cháng",
+        "zhǎng"
+      ]
+    },
+    {
+      "simplified": "涨",
+      "readings": [
+        "zhǎng",
+        "zhàng"
+      ]
+    },
+    {
+      "simplified": "着",
+      "readings": [
+        "zhe",
+        "zháo"
+      ]
+    },
+    {
+      "simplified": "只",
+      "readings": [
+        "zhǐ",
+        "zhī"
+      ]
+    },
+    {
+      "simplified": "种",
+      "readings": [
+        "zhǒng",
+        "zhòng"
+      ]
+    },
+    {
+      "simplified": "重",
+      "readings": [
+        "zhòng",
+        "chóng"
+      ]
+    },
+    {
+      "simplified": "转",
+      "readings": [
+        "zhuǎn",
+        "zhuàn"
+      ]
+    },
+    {
+      "simplified": "转动",
+      "readings": [
+        "zhuǎn dòng",
+        "zhuàn dòng"
+      ]
+    }
+  ]
+}

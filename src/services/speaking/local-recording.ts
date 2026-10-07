@@ -12,7 +12,9 @@ export class LocalRecording {
   private active = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private state: LocalRecordingState = { phase: 'idle', uri: null, notice: null };
-  constructor(private adapter: RecordingAdapter, private changed: (state: LocalRecordingState) => void) {}
+  constructor(private adapter: RecordingAdapter, private changed: (state: LocalRecordingState) => void, private maxDurationMs = 30_000) {
+    if (!Number.isInteger(maxDurationMs) || maxDurationMs < 1000 || maxDurationMs > 120000) throw new Error('INVALID_RECORDING_DURATION');
+  }
   activate() { this.active = true; }
   private emit(next: LocalRecordingState) { this.state = next; if (this.active) this.changed(next); }
   private enqueue(task: () => Promise<void>) {
@@ -46,7 +48,7 @@ export class LocalRecording {
         this.deleteFile(this.state.uri);
         this.adapter.record();
         this.emit({ phase: 'recording', uri: null, notice: null });
-        this.timer = setTimeout(() => { void this.stop(); }, 30_000);
+        this.timer = setTimeout(() => { void this.stop(); }, this.maxDurationMs);
       } catch {
         if (valid()) this.emit({ phase: 'idle', uri: null, notice: 'Không mở được micro. Hãy thử lại.' });
       } finally {
@@ -76,12 +78,14 @@ export class LocalRecording {
       }
     });
   }
-  cancel(): Promise<void> {
+  /** Invalidate now; only defer cleanup, never deactivation, while a source copy settles. */
+  cancel(after?: Promise<unknown>): Promise<void> {
     this.active = false;
     this.generation++;
     this.clearTimer();
     return this.enqueue(async () => {
       await this.closeMic();
+      await after?.catch(() => undefined);
       this.deleteFile(this.state.uri);
       this.deleteFile(this.currentUri());
       await this.playbackMode();

@@ -1,19 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
+import { useMemo } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { Screen } from "@/components/Screen";
 import { StrokeWriter } from "@/components/StrokeWriter";
 import { WritingCanvas } from "@/components/WritingCanvas";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { radius, spacing, themedCard } from "@/constants/design";
 import { findCommonRadical } from "@/data/common-radicals";
+import { recordLessonActivityEvidence } from "@/db/learning-path";
 import { useStudySession } from "@/hooks/use-study-session";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 
 export default function WritingScreen() {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const db = useSQLiteContext();
   useStudySession(db);
-  const { character: rawCharacter = "学" } = useLocalSearchParams<{ character: string }>();
+  const { character: rawCharacter = "学", lessonActivityId } = useLocalSearchParams<{ character: string; lessonActivityId?: string }>();
   const character = Array.from(rawCharacter)[0] ?? "学";
   const radical = findCommonRadical(character);
 
@@ -27,7 +33,7 @@ export default function WritingScreen() {
       title={`Luyện viết ${character}`}
     >
       {radical ? (
-        <View style={[card, styles.lesson]}>
+        <View style={[themedCard(theme), styles.lesson]}>
           <View style={styles.lessonTop}>
             <View style={styles.radicalBadge}><Text style={styles.radical}>{radical.character}</Text></View>
             <View style={styles.lessonCopy}>
@@ -37,7 +43,7 @@ export default function WritingScreen() {
             </View>
           </View>
           <View style={styles.usageBox}>
-            <Ionicons color={colors.primary} name="bulb-outline" size={19} />
+            <Ionicons color={theme.primary} name="bulb-outline" size={19} />
             <Text style={styles.usage}>{radical.usage}</Text>
           </View>
           <Text style={styles.examplesLabel}>TỪ GỢI Ý LIÊN QUAN</Text>
@@ -51,43 +57,45 @@ export default function WritingScreen() {
         </View>
       ) : null}
 
-      <View style={[card, styles.sectionCard]}>
+      <View style={[themedCard(theme), styles.sectionCard]}>
         <View style={styles.sectionHeading}>
-          <View style={styles.sectionIcon}><Ionicons color={colors.primary} name="play" size={17} /></View>
-          <View><Text style={styles.section}>Thứ tự nét</Text><Text style={styles.sectionHint}>Xem từng nét, sau đó phát lại để quan sát nhịp viết.</Text></View>
+          <View style={styles.sectionIcon}><Ionicons color={theme.primary} name="play" size={17} /></View>
+          <View><Text accessibilityRole="header" style={styles.section}>Thứ tự nét</Text><Text style={styles.sectionHint}>Xem từng nét, sau đó phát lại để quan sát nhịp viết.</Text></View>
         </View>
         <StrokeWriter character={character} key={character} />
       </View>
 
-      <View style={[card, styles.sectionCard]}>
+      <View style={[themedCard(theme), styles.sectionCard]}>
         <View style={styles.sectionHeading}>
-          <View style={styles.sectionIcon}><Ionicons color={colors.primary} name="brush" size={18} /></View>
-          <View><Text style={styles.section}>Tự luyện trong ô 田字格</Text><Text style={styles.sectionHint}>Bật gợi ý khi quên hình, xóa từng nét để sửa chính xác.</Text></View>
+          <View style={styles.sectionIcon}><Ionicons color={theme.primary} name="brush" size={18} /></View>
+          <View><Text accessibilityRole="header" style={styles.section}>Tự luyện trong ô 田字格</Text><Text style={styles.sectionHint}>Bật gợi ý khi quên hình, xóa từng nét để sửa chính xác.</Text></View>
         </View>
-        <WritingCanvas character={character} key={character} />
+        <WritingCanvas character={character} key={character} onFirstStroke={() => { if (lessonActivityId) void recordLessonActivityEvidence(db, lessonActivityId, "HANZI_STROKE_DRAWN", character).catch(() => undefined); }} />
       </View>
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  lesson: { gap: spacing.md, backgroundColor: "#F5F8FF" },
-  lessonTop: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  radicalBadge: { width: 76, height: 76, alignItems: "center", justifyContent: "center", borderRadius: 24, backgroundColor: "#FFFFFF" },
-  radical: { color: colors.text, fontSize: 46, fontWeight: "900" },
-  lessonCopy: { flex: 1, gap: 2 },
-  eyebrow: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
-  lessonTitle: { color: colors.text, fontSize: 22, fontWeight: "900" },
-  lessonMeaning: { color: colors.textMuted, fontSize: 15, fontWeight: "700" },
-  usageBox: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, borderRadius: radius.md, backgroundColor: "#FFFFFF", padding: spacing.md },
-  usage: { flex: 1, color: colors.text, fontSize: 14, lineHeight: 20 },
-  examplesLabel: { color: colors.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
-  examples: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  exampleChip: { minWidth: 52, alignItems: "center", borderRadius: radius.pill, backgroundColor: "#FFFFFF", paddingHorizontal: spacing.md, paddingVertical: 8 },
-  exampleText: { color: colors.primary, fontSize: 18, fontWeight: "900" },
-  sectionCard: { gap: spacing.md },
-  sectionHeading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
-  sectionIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: colors.primarySoft },
-  section: { color: colors.text, fontSize: 17, fontWeight: "900" },
-  sectionHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 2 },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    lesson: { gap: spacing.md, backgroundColor: theme.surfaceElevated },
+    lessonTop: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+    radicalBadge: { width: 76, height: 76, alignItems: "center", justifyContent: "center", borderRadius: 24, backgroundColor: theme.primarySoft },
+    radical: { color: theme.primaryText, fontSize: 46, fontWeight: "900" },
+    lessonCopy: { flex: 1, gap: 2 },
+    eyebrow: { color: theme.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
+    lessonTitle: { color: theme.textPrimary, fontSize: 22, fontWeight: "900" },
+    lessonMeaning: { color: theme.textMuted, fontSize: 15, fontWeight: "700" },
+    usageBox: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, borderRadius: radius.md, backgroundColor: theme.surface, padding: spacing.md },
+    usage: { flex: 1, color: theme.textPrimary, fontSize: 14, lineHeight: 20 },
+    examplesLabel: { color: theme.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
+    examples: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+    exampleChip: { minWidth: 52, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: theme.primarySoft, paddingHorizontal: spacing.md, paddingVertical: 8 },
+    exampleText: { color: theme.primaryText, fontSize: 18, fontWeight: "900" },
+    sectionCard: { gap: spacing.md },
+    sectionHeading: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
+    sectionIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 12, backgroundColor: theme.primarySoft },
+    section: { color: theme.textPrimary, fontSize: 17, fontWeight: "900" },
+    sectionHint: { color: theme.textMuted, fontSize: 12, lineHeight: 18, marginTop: 2 },
+  });
+}

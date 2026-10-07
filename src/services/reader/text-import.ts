@@ -1,6 +1,9 @@
 import { strFromU8, strToU8 } from 'fflate';
 
-export const MAX_TEXT_FILE_BYTES = 256 * 1024;
+import { MAX_READER_CHARACTERS } from './pages';
+
+// 100k Unicode code points may require four bytes each, plus a UTF-8 BOM.
+export const MAX_TEXT_FILE_BYTES = MAX_READER_CHARACTERS * 4 + 3;
 export type ReaderImportSource = 'TEXT' | 'TXT' | 'EPUB' | 'PDF' | 'WEB' | 'IMAGE_OCR';
 export type ExtractedReaderText = { source: ReaderImportSource; text: string; truncated: boolean };
 
@@ -14,12 +17,22 @@ export function normalizeImportedText(text: string, source: ReaderImportSource):
     throw new TextImportError('Tệp có dữ liệu nhị phân hoặc mã hóa chưa hỗ trợ. Hãy lưu lại dưới dạng TXT UTF-8.');
   }
   const characters = Array.from(normalized);
-  return { source, text: characters.slice(0, 2000).join(''), truncated: characters.length > 2000 };
+  // OCR keeps its existing preview contract; TXT/manual input must never silently lose text.
+  if (source === 'IMAGE_OCR') return { source, text: characters.slice(0, 2000).join(''), truncated: characters.length > 2000 };
+  if (characters.length > MAX_READER_CHARACTERS) throw new TextImportError('Giới hạn 100.000 ký tự mỗi bài đọc. Hãy chia tệp thành các phần nhỏ hơn.');
+  for (let i = 0; i < normalized.length; i++) {
+    const code = normalized.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = normalized.charCodeAt(++i);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) throw new TextImportError('Văn bản có ký tự Unicode bị hỏng.');
+    } else if (code >= 0xdc00 && code <= 0xdfff) throw new TextImportError('Văn bản có ký tự Unicode bị hỏng.');
+  }
+  return { source, text: normalized, truncated: false };
 }
 
 export function extractTxt(bytes: Uint8Array, filename: string): ExtractedReaderText {
   if (!/\.txt$/i.test(filename.trim())) throw new TextImportError('Chỉ hỗ trợ tệp .txt; PDF/EPUB chưa được đọc ở bước này.');
-  if (bytes.byteLength > MAX_TEXT_FILE_BYTES) throw new TextImportError('Tệp TXT quá lớn. Giới hạn 256 KB mỗi tệp.');
+  if (bytes.byteLength > MAX_TEXT_FILE_BYTES) throw new TextImportError('Tệp TXT quá lớn. Giới hạn 400.003 byte và 100.000 ký tự mỗi tệp.');
   let text: string;
   if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) {
     if (bytes.length % 2) throw new TextImportError('Tệp UTF-16 bị thiếu byte.');
@@ -38,7 +51,8 @@ export function extractTxt(bytes: Uint8Array, filename: string): ExtractedReader
     }
   } else {
     const payload = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
-    text = strFromU8(payload);
+    try { text = strFromU8(payload); }
+    catch { throw new TextImportError('Mã hóa chưa hỗ trợ. Hãy lưu tệp dưới dạng TXT UTF-8 hoặc UTF-16 có BOM.'); }
     const encoded = strToU8(text);
     if (encoded.length !== payload.length || encoded.some((byte, index) => byte !== payload[index])) {
       throw new TextImportError('Mã hóa chưa hỗ trợ. Hãy lưu tệp dưới dạng TXT UTF-8 hoặc UTF-16 có BOM.');

@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-01T17:37:47.711Z",
+  "status": "PASS",
+  "cases": [
+    "EPUB picker/extraction",
+    "OPF spine order preserved in saved title",
+    "reload and saved document reopen",
+    "recording library honest web fallback"
+  ],
+  "errors": [],
+  "limitation": "Browser fixture only; not Android document-provider QA."
+}

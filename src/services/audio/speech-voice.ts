@@ -56,5 +56,5 @@ export function selectBestMandarinVoice<T extends SpeechVoiceLike>(
 
 export function clampSpeechRate(rate: number): number {
   if (!Number.isFinite(rate)) return 0.82;
-  return Math.min(1, Math.max(0.6, rate));
+  return Math.min(1.25, Math.max(0.6, rate));
 }

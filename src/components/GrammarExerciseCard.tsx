@@ -4,13 +4,16 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { PrimaryButton } from './PrimaryButton';
 
-import { colors, spacing } from '@/constants/design';
+import { spacing } from '@/constants/design';
 import { recordGrammarAnswer } from '@/db/grammar';
 import { isGrammarAnswerCorrect, type GrammarExercise } from '@/services/learning/grammar-exercises';
+import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
 
 /** Parent keys by exercise + round, so changing exercise cannot reuse a previous answer. */
-export function GrammarExerciseCard({ grammarId, exercise }: { grammarId: string; exercise: GrammarExercise }) {
+export function GrammarExerciseCard({ grammarId, exercise, onRecorded }: { grammarId: string; exercise: GrammarExercise; onRecorded?: (correct: boolean) => void }) {
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [value, setValue] = useState('');
   const [order, setOrder] = useState<number[]>([]);
   const [result, setResult] = useState<boolean | null>(null);
@@ -29,7 +32,7 @@ export function GrammarExerciseCard({ grammarId, exercise }: { grammarId: string
     const correct = isGrammarAnswerCorrect(exercise, chosen);
     try {
       await recordGrammarAnswer(db, grammarId, correct, { id: attemptId, exerciseType: `grammar_${exercise.kind}` });
-      if (live.current) { setValue(chosen); setResult(correct); }
+      if (live.current) { setValue(chosen); setResult(correct); onRecorded?.(correct); }
     } catch { if (live.current) setNotice('Chưa lưu được kết quả. Câu trả lời vẫn giữ nguyên, hãy thử lại.'); }
     finally { busy.current = false; if (live.current) setSaving(false); }
   };
@@ -56,20 +59,20 @@ export function GrammarExerciseCard({ grammarId, exercise }: { grammarId: string
       disabled={locked || !answer.trim() || (exercise.kind === 'reorder' && order.length !== exercise.tokens.length)} onPress={() => void submit()} /> : null}
     {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
     {result !== null ? <>
-      <Text accessibilityRole="alert" style={[styles.feedback, { color: result ? colors.success : colors.danger }]}>
+      <Text accessibilityRole="alert" style={[styles.feedback, { color: result ? theme.success : theme.error }]}>
         {result ? 'Chính xác!' : `Đáp án: ${exercise.answer}`}</Text>
       <Text style={styles.notice}>{exercise.explanation}</Text>
     </> : null}
   </View>;
 }
 
-const styles = StyleSheet.create({
-  block: { gap: spacing.md }, label: { color: colors.primary, fontWeight: '800' },
-  prompt: { color: colors.text, fontSize: 24, lineHeight: 34 },
-  input: { color: colors.text, fontSize: 20, borderWidth: 1, borderColor: colors.border, padding: spacing.md, borderRadius: 12, minHeight: 48 },
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
+  block: { gap: spacing.md }, label: { color: theme.primaryText, fontWeight: '800' },
+  prompt: { color: theme.textPrimary, fontSize: 24, lineHeight: 34 },
+  input: { color: theme.textPrimary, backgroundColor: theme.surface, fontSize: 20, borderWidth: 1, borderColor: theme.border, padding: spacing.md, borderRadius: 12, minHeight: 48 },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  option: { minHeight: 48, justifyContent: 'center', padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: 12 },
-  optionText: { color: colors.text, fontSize: 18 }, selected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  disabled: { opacity: 0.35 }, assembled: { color: colors.primary, fontSize: 23, minHeight: 45 },
-  feedback: { fontWeight: '800', fontSize: 18 }, notice: { color: colors.textMuted, lineHeight: 22 },
-});
+  option: { minHeight: 48, justifyContent: 'center', padding: spacing.md, borderWidth: 1, borderColor: theme.border, borderRadius: 12 },
+  optionText: { color: theme.textPrimary, fontSize: 18 }, selected: { borderColor: theme.primary, backgroundColor: theme.primarySoft },
+  disabled: { opacity: 0.35 }, assembled: { color: theme.primaryText, fontSize: 23, minHeight: 45 },
+  feedback: { fontWeight: '800', fontSize: 18 }, notice: { color: theme.textMuted, lineHeight: 22 },
+}); }

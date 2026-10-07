@@ -1,5 +1,9 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
+import { migrationV35Sql } from './confusable-words';
+import { migrationV33Sql } from './exam-schema';
+import { migrationV32Sql } from './hsk-standard-schema';
+import { roleplaySchemaSQL } from './roleplay-history';
 import {
   DATABASE_VERSION,
   latestIndexSql,
@@ -19,7 +23,22 @@ import {
   migrationV18Sql,
   migrationV19Sql,
   migrationV20Sql,
+  migrationV21Sql,
+  migrationV22Sql,
+  migrationV23Sql,
+  migrationV24Sql,
+  migrationV25ColumnsSql,
+  migrationV25TablesSql,
+  migrationV26Sql,
+  migrationV27Sql,
+  migrationV28Sql,
+  migrationV29Sql,
 } from './schema';
+import { migrationV37Sql } from './speaking-attempt-schema';
+import { migrationV36Sql } from './v5-content-schema';
+import { migrationV41Sql } from './v5-context-schema';
+import { migrationV42Sql } from './v5-sense-schema';
+import { migrationV34Sql } from './written-practice-schema';
 
 // CREATE TABLE IF NOT EXISTS does not upgrade an existing table. In particular,
 // indexes on newly added columns must never be run before the ALTER statements.
@@ -119,6 +138,28 @@ export async function migrateDatabaseSchema(db: SQLiteDatabase): Promise<number>
     await db.execAsync(migrationV18Sql);
     await db.execAsync(migrationV19Sql);
     await db.execAsync(migrationV20Sql);
+    await db.execAsync(migrationV21Sql);
+    if (typeof document === 'undefined') await db.execAsync(migrationV22Sql);
+    await ensureColumns(db, migrationV23Sql);
+    await db.execAsync(migrationV24Sql);
+    await ensureColumns(db, migrationV25ColumnsSql);
+    await db.execAsync(migrationV25TablesSql);
+    await db.execAsync(migrationV26Sql);
+    await ensureColumns(db, migrationV27Sql);
+    await db.execAsync(`CREATE INDEX IF NOT EXISTS idx_grammar_points_active ON grammar_points(is_active,hsk_level,difficulty);
+      CREATE INDEX IF NOT EXISTS idx_sentences_active ON sentences(is_active,review_status,hsk_level,difficulty);
+      CREATE INDEX IF NOT EXISTS idx_stories_active ON stories(is_active,hsk_level,difficulty);`);
+    await db.execAsync(migrationV28Sql);
+    await db.execAsync(migrationV29Sql);
+    await db.execAsync(migrationV32Sql);
+    await db.execAsync(migrationV33Sql);
+    await db.execAsync(migrationV34Sql);
+    await db.execAsync(migrationV35Sql);
+    await db.execAsync(migrationV36Sql);
+    await db.execAsync(migrationV37Sql);
+    await db.execAsync(roleplaySchemaSQL);
+    await db.execAsync(migrationV41Sql);
+    await ensureColumns(db, migrationV42Sql);
     await db.execAsync(latestIndexSql);
     await assertDatabaseIntegrity(db);
   });

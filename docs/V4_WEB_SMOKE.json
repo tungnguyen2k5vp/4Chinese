@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-01T08:39:55.172Z",
+  "origin": "http://localhost:8084",
+  "viewports": [
+    "412x915",
+    "360x800"
+  ],
+  "passed": true,
+  "failure": null,
+  "results": [
+    "Mini test answer + flag survive reload",
+    "Submit + result breakdown",
+    "Writing draft survives reload + self-review",
+    "Translation tab exposes seven tasks",
+    "Speaking web fallback + self-review",
+    "Readiness + grammar focus render",
+    "Practice/library destinations + browser back",
+    "Confusable context feedback + durable progress after reload",
+    "Second tab blocked safely; after owner closes, progress survives takeover",
+    "Compact 360px + dark/reduced-motion library renders without horizontal overflow",
+    "Offline in-app library to stories navigation"
+  ],
+  "errors": []
+}

@@ -33,3 +33,43 @@ export function buildDeckListeningSession(
     return { target, choices: shuffled([target, ...distractors], random) };
   });
 }
+
+export type ListeningMatchRound = {
+  pairs: Vocabulary[];
+  audioOrder: string[];
+  meaningOrder: string[];
+};
+
+/** Builds compact, shuffled audio-to-meaning matching rounds. */
+export function buildListeningMatchRounds(
+  words: Vocabulary[],
+  roundSize = 4,
+  random: () => number = Math.random,
+): ListeningMatchRound[] {
+  const uniqueWords = words.filter(
+    (word, index, items) => items.findIndex((item) => item.simplified === word.simplified) === index,
+  );
+  if (uniqueWords.length < 2) return [];
+
+  const size = Math.min(6, Math.max(2, Math.trunc(roundSize) || 4));
+  const shuffledWords = shuffled(uniqueWords, random);
+  const groups: Vocabulary[][] = [];
+  for (let offset = 0; offset < shuffledWords.length; offset += size) {
+    groups.push(shuffledWords.slice(offset, offset + size));
+  }
+
+  // Never strand one word in the final round: move one item from the previous
+  // round so every round remains a real matching exercise with at least 2 pairs.
+  if (groups.length > 1 && groups.at(-1)?.length === 1) {
+    const previous = groups.at(-2)!;
+    const last = groups.at(-1)!;
+    if (previous.length > 2) last.unshift(previous.pop()!);
+    else previous.push(...last.splice(0));
+  }
+
+  return groups.map((pairs) => ({
+    pairs,
+    audioOrder: shuffled(pairs, random).map((word) => word.id),
+    meaningOrder: shuffled(pairs, random).map((word) => word.id),
+  }));
+}

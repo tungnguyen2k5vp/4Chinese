@@ -107,7 +107,7 @@ export async function recognizeMandarinPronunciation(
         interimResults: true,
         maxAlternatives: 3,
         contextualStrings: Array.from(new Set([target.simplified, target.traditional, target.pinyin, ...contextualStrings])).slice(0, 60),
-        androidIntentOptions: { EXTRA_LANGUAGE_MODEL: "web_search" },
+        androidIntentOptions: { EXTRA_LANGUAGE_MODEL: "free_form" },
         iosTaskHint: "confirmation",
       });
     } catch {

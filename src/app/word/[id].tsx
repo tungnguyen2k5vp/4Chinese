@@ -3,50 +3,79 @@ import { Image } from "expo-image";
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
 import { HskBadge, MasteryBadge } from "@/components/Badges";
 import { BilingualMeaningList } from "@/components/BilingualMeaningList";
 import { EmptyState } from "@/components/EmptyState";
+import { LexicalKnowledgeCard } from '@/components/LexicalKnowledgeCard';
+import { PersonalContextCard } from '@/components/PersonalContextCard';
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { StrokeWriter } from "@/components/StrokeWriter";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { designColors, radius, spacing, themedCard } from "@/constants/design";
+import { recordLessonActivityEvidence } from "@/db/learning-path";
 import {
+  copyVocabularyBatchToDeck,
   getNotes,
   getRelatedVocabulary,
   getVocabulary,
+  listPersonalDecks,
   saveNotes,
   toggleFavorite,
 } from "@/db/repository";
 import { primaryEnglishMeaning } from "@/services/vocabulary/bilingual-meanings";
 import { analyzeVocabulary, buildMnemonicNote } from "@/services/vocabulary/character-analysis";
 import { useAppStore } from "@/stores/app-store";
-import type { Vocabulary } from "@/types/models";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
+import type { PersonalDeck, Vocabulary } from "@/types/models";
 
 type Tab = "overview" | "writing" | "examples" | "notes";
 export default function WordDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, lessonActivityId } = useLocalSearchParams<{ id: string; lessonActivityId?: string }>();
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const colors = designColors(theme);
+  const card = themedCard(theme);
+  const styles = useThemeStyles(createStyles);
   const [word, setWord] = useState<Vocabulary | null>();
   const [tab, setTab] = useState<Tab>("overview");
   const [character, setCharacter] = useState("");
   const [notes, setNotes] = useState("");
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
   const [related, setRelated] = useState<Vocabulary[]>([]);
+  const [decks, setDecks] = useState<PersonalDeck[]>([]);
+  const [deckPickerOpen, setDeckPickerOpen] = useState(false);
+  const [deckPickerLoading, setDeckPickerLoading] = useState(false);
+  const [addingToDeckId, setAddingToDeckId] = useState<string | null>(null);
+  const [deckPickerMessage, setDeckPickerMessage] = useState("");
   const setLearnQueue = useAppStore((state) => state.setLearnQueue);
   useEffect(() => {
-    if (!id) return;
-    Promise.all([getVocabulary(db, id), getNotes(db, id)]).then(
+    let live = true;
+    // Clear the previous word before an asynchronous ID-scoped load.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWord(undefined); setLoadFailed(false); setRelated([]); setSaveMessage("");
+    if (!id) { setWord(null); return; }
+    void Promise.all([getVocabulary(db, id), getNotes(db, id)]).then(
       ([value, note]) => {
+        if (!live) return;
         setWord(value);
         setCharacter(value?.simplified[0] ?? "");
         setNotes(note);
-        if (value) void getRelatedVocabulary(db, value).then(setRelated).catch(() => setRelated([]));
+        if (value) {
+          void getRelatedVocabulary(db, value).then(rows => { if (live) setRelated(rows); }).catch(() => { if (live) setRelated([]); });
+          if (lessonActivityId) void recordLessonActivityEvidence(db, lessonActivityId, "VOCABULARY_DETAIL_VIEWED", value.id).catch(() => undefined);
+        }
       },
-    );
-  }, [db, id]);
+    ).catch(() => { if (live) setLoadFailed(true); });
+    return () => { live = false; };
+  }, [db, id, lessonActivityId, reload]);
+  if (loadFailed) return <Screen><Text style={styles.loading}>Chưa tải được từ vựng. Dữ liệu của bạn vẫn được giữ nguyên.</Text><PrimaryButton label="Thử tải lại" onPress={() => setReload(value => value + 1)} /></Screen>;
   if (word === undefined)
     return (
       <Screen>
@@ -78,6 +107,35 @@ export default function WordDetail() {
         : "/learn/session",
     );
   };
+  const addToDeck = () => { void openDeckPicker(); };
+  async function openDeckPicker() {
+    setDeckPickerOpen(true);
+    setDeckPickerLoading(true);
+    setDeckPickerMessage("");
+    try {
+      setDecks(await listPersonalDecks(db));
+    } catch {
+      setDeckPickerMessage("Không tải được danh sách bộ từ. Hãy thử lại.");
+    } finally {
+      setDeckPickerLoading(false);
+    }
+  }
+  const addSelectedWordToDeck = async (deck: PersonalDeck) => {
+    if (addingToDeckId || word.deckId === deck.id) return;
+    setAddingToDeckId(deck.id);
+    setDeckPickerMessage("");
+    try {
+      const outcome = await copyVocabularyBatchToDeck(db, deck.id, [word]);
+      setDeckPickerMessage(outcome.saved
+        ? "\u0110\u00e3 th\u00eam " + word.simplified + " v\u00e0o \u201c" + deck.name + "\u201d."
+        : "T\u1eeb n\u00e0y \u0111\u00e3 c\u00f3 trong \u201c" + deck.name + "\u201d.");
+    } catch {
+      setDeckPickerMessage("Ch\u01b0a th\u1ec3 th\u00eam t\u1eeb. H\u00e3y th\u1eed l\u1ea1i.");
+    } finally {
+      setAddingToDeckId(null);
+    }
+  };
+
   const favorite = async () => {
     const next = await toggleFavorite(db, word.id);
     setWord({ ...word, isFavorite: next });
@@ -89,6 +147,7 @@ export default function WordDetail() {
     setNotes(notes.trim() ? `${notes.trim()}\n\n${generatedMnemonic}` : generatedMnemonic);
   };
   return (
+    <>
     <Screen>
       <View style={styles.hero}>
         <View style={styles.heroTop}>
@@ -98,6 +157,7 @@ export default function WordDetail() {
             <Text style={styles.traditional}>Phồn thể: {word.traditional}</Text>
           </View>
           <View style={styles.heroActions}>
+            {!word.deckId ? <Pressable accessibilityLabel="Thêm vào bộ từ" accessibilityRole="button" onPress={() => void addToDeck()} style={styles.round}><Ionicons name="add" size={25} color={theme.primaryText} /></Pressable> : null}
             <AudioButton text={word.simplified} size={25} />
             <Pressable
               accessibilityLabel="Chỉnh sửa nghĩa"
@@ -109,13 +169,13 @@ export default function WordDetail() {
               }
               style={styles.round}
             >
-              <Ionicons name="pencil" size={21} color={colors.primary} />
+              <Ionicons name="pencil" size={21} color={theme.primaryText} />
             </Pressable>
             <Pressable onPress={() => void favorite()} style={styles.round}>
               <Ionicons
                 name={word.isFavorite ? "bookmark" : "bookmark-outline"}
                 size={24}
-                color={word.isFavorite ? colors.accent : colors.primary}
+                color={word.isFavorite ? colors.accent : theme.primaryText}
               />
             </Pressable>
           </View>
@@ -177,9 +237,10 @@ export default function WordDetail() {
               primaryMeaningVi={word.primaryMeaningVi}
             />
             <Text style={styles.source}>
-              Nguồn: {word.source} · {word.translationStatus}
+              Nghĩa và cách dùng có thể thay đổi theo ngữ cảnh; hãy xem ví dụ trước khi ghi nhớ.
             </Text>
           </View>
+          <LexicalKnowledgeCard vocabularyId={word.id} />
           {word.examples[0] ? <Example item={word.examples[0]} /> : null}
           {related.length ? <View style={[card, styles.related]}>
             <Text style={styles.section}>Từ liên quan</Text>
@@ -230,10 +291,12 @@ export default function WordDetail() {
       ) : null}
       {tab === "examples" ? (
         <View style={styles.exampleList}>
+          <PersonalContextCard key={word.id} vocabularyId={word.id} answers={[word.simplified,word.traditional]} reveal editable />
           {word.examples.length ? (
             word.examples.map((item) => <Example key={item.id} item={item} />)
           ) : (
             <EmptyState
+              variant="vocabulary"
               title="Chưa có ví dụ"
               message="Chưa có câu song ngữ phù hợp đã kiểm tra cho từ này."
             />
@@ -280,15 +343,64 @@ export default function WordDetail() {
           />
           <PrimaryButton
             label="Lưu ghi chú"
-            onPress={() => void saveNotes(db, word.id, notes)}
+            disabled={savingNotes}
+            onPress={() => {
+              setSavingNotes(true); setSaveMessage("");
+              void saveNotes(db, word.id, notes).then(() => setSaveMessage("Đã lưu ghi chú."))
+                .catch(() => setSaveMessage("Chưa lưu được. Ghi chú đang nhập vẫn còn; hãy thử lại."))
+                .finally(() => setSavingNotes(false));
+            }}
           />
+          {saveMessage ? <Text accessibilityLiveRegion="polite" style={{ color: theme.textMuted }}>{saveMessage}</Text> : null}
           </View>
         </>
       ) : null}
     </Screen>
+      <Modal visible={deckPickerOpen} transparent animationType="fade" onRequestClose={() => setDeckPickerOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.deckPicker}>
+            <Text style={styles.deckPickerTitle}>{"Th\u00eam v\u00e0o b\u1ed9 t\u1eeb"}</Text>
+            <Text style={styles.deckPickerHint}>{"Ch\u1ecdn b\u1ea5t k\u1ef3 b\u1ed9 t\u1eeb ri\u00eang n\u00e0o \u0111\u1ec3 sao ch\u00e9p t\u1eeb n\u00e0y."}</Text>
+            {deckPickerLoading ? <View style={styles.deckPickerLoading}><ActivityIndicator color={colors.primary} /><Text style={styles.deckPickerStatus}>{"\u0110ang t\u1ea3i b\u1ed9 t\u1eeb..."}</Text></View> : null}
+            {!deckPickerLoading && decks.length ? <ScrollView style={styles.deckList} contentContainerStyle={styles.deckListContent} showsVerticalScrollIndicator>
+              {decks.map((deck) => {
+                const isCurrentDeck = word.deckId === deck.id;
+                const isAdding = addingToDeckId === deck.id;
+                return <Pressable
+                  key={deck.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={deck.name + ", " + (isCurrentDeck ? "\u0111ang \u1edf b\u1ed9 n\u00e0y" : deck.wordCount + " t\u1eeb")}
+                  disabled={isCurrentDeck || Boolean(addingToDeckId)}
+                  onPress={() => void addSelectedWordToDeck(deck)}
+                  style={[styles.deckRow, isCurrentDeck && styles.deckRowDisabled]}
+                >
+                  <View style={[styles.deckColor, { backgroundColor: deck.color }]} />
+                  <View style={styles.deckCopy}>
+                    <Text numberOfLines={1} style={styles.deckName}>{deck.name}</Text>
+                    <Text style={styles.deckMeta}>{isCurrentDeck ? "\u0110ang \u1edf b\u1ed9 n\u00e0y" : deck.wordCount + " t\u1eeb"}</Text>
+                  </View>
+                  {isAdding ? <ActivityIndicator color={colors.primary} /> : <Ionicons name={isCurrentDeck ? "checkmark-circle" : "add-circle-outline"} size={24} color={isCurrentDeck ? colors.textMuted : colors.primary} />}
+                </Pressable>;
+              })}
+            </ScrollView> : null}
+            {!deckPickerLoading && !decks.length ? <View style={styles.deckPickerEmpty}>
+              <Text style={styles.deckPickerStatus}>{"Ch\u01b0a c\u00f3 b\u1ed9 t\u1eeb ri\u00eang n\u00e0o."}</Text>
+              <PrimaryButton label={"T\u1ea1o b\u1ed9 t\u1eeb"} onPress={() => { setDeckPickerOpen(false); router.push("/decks"); }} />
+            </View> : null}
+            {deckPickerMessage ? <Text accessibilityLiveRegion="polite" style={styles.deckPickerMessage}>{deckPickerMessage}</Text> : null}
+            <Pressable accessibilityRole="button" accessibilityLabel="\u0110\u00f3ng" onPress={() => setDeckPickerOpen(false)} style={styles.deckPickerClose}>
+              <Text style={styles.deckPickerCloseText}>{"\u0110\u00f3ng"}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 function Example({ item }: { item: Vocabulary["examples"][number] }) {
+  const theme = useTheme();
+  const card = themedCard(theme);
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={[card, styles.example]}>
       <View style={styles.exampleHead}>
@@ -300,7 +412,7 @@ function Example({ item }: { item: Vocabulary["examples"][number] }) {
     </View>
   );
 }
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({
   loading: { marginTop: 60, textAlign: "center", color: colors.textMuted },
   hero: { marginTop: spacing.lg, gap: spacing.md },
   heroTop: { flexDirection: "row", justifyContent: "space-between" },
@@ -340,12 +452,12 @@ const styles = StyleSheet.create({
   },
   tabActive: { borderBottomWidth: 3, borderBottomColor: colors.primary },
   tabText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
-  tabTextActive: { color: colors.primary },
+  tabTextActive: { color: colors.primaryText },
   wordImage: { height: 210, width: "100%", borderRadius: radius.lg },
   illustration: {
     height: 170,
     borderRadius: radius.lg,
-    backgroundColor: "#FFF1E3",
+    backgroundColor: theme.mode === "dark" ? theme.warningSoft : "#FFF1E3",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -355,7 +467,7 @@ const styles = StyleSheet.create({
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: "#FFD89A",
+    backgroundColor: theme.mode === "dark" ? "#674C24" : "#FFD89A",
     right: -25,
     top: -30,
   },
@@ -396,20 +508,20 @@ const styles = StyleSheet.create({
   relatedHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: -spacing.sm },
   relatedList: { gap: spacing.xs },
   relatedItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
-  relatedHanzi: { minWidth: 48, color: colors.primary, fontSize: 25, fontWeight: "900" },
+  relatedHanzi: { minWidth: 48, color: colors.primaryText, fontSize: 25, fontWeight: "900" },
   relatedCopy: { flex: 1, gap: 2 },
   relatedMeaning: { color: colors.textMuted, fontSize: 12 },
   analysisCard: { gap: spacing.md, backgroundColor: colors.primarySoft },
   analysisHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   analysisCopy: { flex: 1 },
   analysisHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  analysisIcon: { color: colors.primary, fontSize: 34, fontWeight: "900" },
+  analysisIcon: { color: colors.primaryText, fontSize: 34, fontWeight: "900" },
   analysisRow: { flexDirection: "row", gap: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md },
   analysisCharacter: { alignItems: "center", backgroundColor: colors.surface, borderRadius: radius.md, justifyContent: "center", minHeight: 78, width: 72 },
   analysisHanzi: { color: colors.text, fontSize: 37, fontWeight: "900" },
-  analysisRadical: { color: colors.primary, fontSize: 12, fontWeight: "900", marginTop: 2 },
+  analysisRadical: { color: colors.primaryText, fontSize: 12, fontWeight: "900", marginTop: 2 },
   analysisBody: { flex: 1, gap: 2 },
-  analysisLabel: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.5, marginTop: 3 },
+  analysisLabel: { color: colors.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.5, marginTop: 3 },
   analysisText: { color: colors.text, fontSize: 13, lineHeight: 19 },
   mnemonic: { color: colors.text, fontSize: 13, fontStyle: "italic", lineHeight: 19 },
   notes: {
@@ -422,4 +534,22 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     marginBottom: spacing.md,
   },
-});
+  modalBackdrop: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.overlay, padding: spacing.lg },
+  deckPicker: { width: "100%", maxWidth: 460, maxHeight: "82%", backgroundColor: colors.surface, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
+  deckPickerTitle: { color: colors.text, fontSize: 22, fontWeight: "800" },
+  deckPickerHint: { color: colors.textMuted, fontSize: 14, lineHeight: 21 },
+  deckPickerLoading: { minHeight: 120, alignItems: "center", justifyContent: "center", gap: spacing.sm },
+  deckList: { maxHeight: 360, marginTop: spacing.xs },
+  deckListContent: { gap: spacing.xs, paddingVertical: spacing.xs },
+  deckRow: { alignItems: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, flexDirection: "row", gap: spacing.sm, minHeight: 60, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  deckRowDisabled: { backgroundColor: colors.background, opacity: 0.72 },
+  deckColor: { width: 12, height: 36, borderRadius: 6 },
+  deckCopy: { flex: 1, gap: 2 },
+  deckName: { color: colors.text, fontSize: 16, fontWeight: "700" },
+  deckMeta: { color: colors.textMuted, fontSize: 12 },
+  deckPickerEmpty: { gap: spacing.md, paddingVertical: spacing.md },
+  deckPickerStatus: { color: colors.textMuted, fontSize: 14, textAlign: "center" },
+  deckPickerMessage: { color: colors.primaryText, fontSize: 13, fontWeight: "700", lineHeight: 19, marginTop: spacing.xs },
+  deckPickerClose: { alignItems: "center", minHeight: 44, justifyContent: "center", marginTop: spacing.xs },
+  deckPickerCloseText: { color: colors.primaryText, fontSize: 16, fontWeight: "800" },
+}); }

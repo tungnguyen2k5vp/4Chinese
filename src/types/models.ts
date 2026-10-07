@@ -166,6 +166,8 @@ export interface DashboardStats {
   correctToday: number;
   newToday: number;
   streak: number;
+  /** Most recent local study day, or null before the first study session. */
+  lastStudyDate: string | null;
   studySeconds: number;
   mastery: number[];
 }
@@ -173,7 +175,7 @@ export interface DashboardStats {
 export interface UserSettings {
   dailyNewWordGoal: number;
   /** Maximum new cards in one learning session; the daily goal remains separate. */
-  learnSessionSize: 5 | 10 | 15 | 20;
+  learnSessionSize: 5 | 10 | 15 | 20 | 30 | 50 | 75 | 100;
   dailyStudyMinutes: number;
   dailyReviewGoal: number;
   desiredRetention: number;
@@ -185,6 +187,14 @@ export interface UserSettings {
   autoPlayAudio: boolean;
   speechRate: number;
   hapticEnabled: boolean;
+  /** Visual theme preference; system is resolved without an app restart. */
+  themeMode: "system" | "light" | "dark";
+  /** Honors system accessibility first; users may further reduce or disable decorative motion. */
+  motionMode: "full" | "reduced" | "off";
+  /** Local on-device reminder; disabled until the learner explicitly opts in. */
+  dailyReminderEnabled: boolean;
+  dailyReminderHour: number;
+  dailyReminderMinute: number;
   onboardingCompleted: boolean;
   reviewStyle: "automatic" | "self-rating";
   reviewSessionSize: 10 | 20 | 30 | 50;

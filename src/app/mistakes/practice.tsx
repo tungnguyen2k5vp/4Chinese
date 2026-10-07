@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { AudioButton } from '@/components/AudioButton';
+import { EmptyState } from '@/components/EmptyState';
 import { HanziHandwritingPad } from '@/components/HanziHandwritingPad';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
-import { card, colors, spacing } from '@/constants/design';
+import { spacing, themedCard } from '@/constants/design';
 import { practiceMistake, type PracticeSkill } from '@/db/mistakes';
 import { getVocabulary, listVocabulary } from '@/db/repository';
 import { useStudySession } from '@/hooks/use-study-session';
 import { stopChineseSpeech } from '@/services/audio/chinese-speech';
+import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
 import type { Vocabulary } from '@/types/models';
 
 type Target = { vocabulary_id: string; skill_type: PracticeSkill; exercise_type: string; correct_streak: number };
@@ -23,6 +25,8 @@ export default function MistakePractice() {
 
 function PracticeContent({ id }: { id: string }) {
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   useStudySession(db);
   const [target, setTarget] = useState<Target | null>(null);
   const [word, setWord] = useState<Vocabulary | null>(null);
@@ -34,6 +38,8 @@ function PracticeContent({ id }: { id: string }) {
   const [round, setRound] = useState(0);
   const [saving, setSaving] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [saveError, setSaveError] = useState('');
   const locked = useRef(false);
   const started = useRef(0);
   useEffect(() => {
@@ -46,13 +52,15 @@ function PracticeContent({ id }: { id: string }) {
       if (!nextWord) throw new Error('MISSING_WORD');
       const nextPool = await listVocabulary(db, { band: nextWord.hskBand, limit: 80 });
       if (live) { setTarget(row); setWord(nextWord); setPool(nextPool); started.current = Date.now(); }
-    })().catch(() => { if (live) Alert.alert('Không mở được bài', 'Lỗi đã được khắc phục hoặc nội dung không còn tồn tại.'); })
+    })().catch(() => { if (live) setLoadError('Lỗi này đã được khắc phục hoặc nội dung không còn tồn tại.'); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; void stopChineseSpeech(); };
   }, [db, id]);
 
   if (loading) return <Screen title="Củng cố lỗi"><ActivityIndicator /></Screen>;
-  if (!word || !target) return <Screen title="Củng cố lỗi"><PrimaryButton label="Về sổ lỗi" onPress={() => router.back()} /></Screen>;
+  if (!word || !target) return <Screen title="Củng cố lỗi">
+    <View style={themedCard(theme)}><EmptyState variant="review" scene="mistakes" title="Bài luyện không còn khả dụng" message={loadError || "Mục lỗi không còn trong sổ. Lịch ôn từ vựng không bị thay đổi."} primaryAction={{ label: 'Về sổ lỗi', onPress: () => router.back() }} /></View>
+  </Screen>;
   const listening = target.skill_type === 'LISTENING';
   const pinyin = target.skill_type === 'PINYIN';
   const meaning = target.skill_type === 'MEANING' || target.exercise_type === 'audio_to_meaning';
@@ -73,12 +81,13 @@ function PracticeContent({ id }: { id: string }) {
         'SELECT resolved,correct_streak FROM mistake_records WHERE id=?', id);
       setResolved(row?.resolved === 1);
       setTarget({ ...target, correct_streak: row?.correct_streak ?? 0 });
+      setSaveError('');
       setFeedback(correct ? hint ? 'Đúng với gợi ý; chưa tính vào chuỗi khắc phục.' : 'Đúng.' : `Chưa đúng. Đáp án: ${expected}`);
-    } catch { Alert.alert('Chưa lưu được kết quả', 'Hãy thử lại; lịch ôn không bị thay đổi.'); }
+    } catch { setSaveError('Chưa lưu được kết quả. Câu trả lời được giữ lại; lịch ôn không bị thay đổi.'); }
     finally { locked.current = false; setSaving(false); }
   };
   return <Screen title="Củng cố lỗi" subtitle="Bài luyện riêng, không thay đổi lịch SRS.">
-    <View style={[card, styles.block]}>
+    <View style={[themedCard(theme), styles.block]}>
       <Text style={styles.meta}>Đúng không gợi ý {target.correct_streak}/3</Text>
       {listening ? <AudioButton text={word.simplified} allowWhenSoundDisabled /> :
         <Text style={styles.prompt}>{pinyin || meaning ? word.simplified : target.exercise_type === 'pinyin_to_hanzi' ? word.pinyin : word.primaryMeaningVi}</Text>}
@@ -87,6 +96,7 @@ function PracticeContent({ id }: { id: string }) {
         : <HanziHandwritingPad key={round} characterCount={Array.from(word.simplified).length}
           targetWord={word.simplified} onSelect={setAnswer} onHintUsed={() => setHint(true)} />)}
       {!feedback && !resolved && <PrimaryButton label="Kiểm tra" disabled={saving || !answer.trim()} onPress={() => { void submit(); }} />}
+      {saveError ? <View accessibilityRole="alert" style={styles.errorNotice}><Text style={styles.meta}>{saveError}</Text><PrimaryButton label={saving ? 'Đang lưu…' : 'Thử lưu lại'} disabled={saving} variant="secondary" onPress={() => void submit()} /></View> : null}
       {feedback && <Text style={styles.meta}>{feedback}</Text>}
       {resolved ? <><Text style={styles.prompt}>Đã khắc phục lỗi</Text><PrimaryButton label="Về sổ lỗi" onPress={() => router.back()} /></> : feedback &&
         <PrimaryButton label="Luyện tiếp" onPress={() => { setAnswer(''); setHint(false); setFeedback(null); setRound((value) => value + 1); started.current = Date.now(); }} />}
@@ -94,5 +104,5 @@ function PracticeContent({ id }: { id: string }) {
   </Screen>;
 }
 
-const styles = StyleSheet.create({ block: { gap: spacing.md },
-  prompt: { color: colors.text, fontSize: 26, fontWeight: '800' }, meta: { color: colors.textMuted, lineHeight: 20 } });
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({ block: { gap: spacing.md }, errorNotice: { gap: spacing.sm, backgroundColor: theme.errorSoft, borderRadius: 12, padding: spacing.md },
+  prompt: { color: theme.textPrimary, fontSize: 26, fontWeight: '800' }, meta: { color: theme.textMuted, lineHeight: 20 } }); }

@@ -5,11 +5,13 @@ import type {
   ExpoSpeechRecognitionOptions,
   ExpoSpeechRecognitionResultEvent,
 } from "expo-speech-recognition";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors, radius, spacing } from "@/constants/design";
+import { radius, spacing } from "@/constants/design";
 import { pinyinInputFromSpeechTranscript, type SpeechVocabularyHint } from "@/services/speech/chinese-speech-input";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 
 type SpeechEventName = "start" | "end" | "result" | "error" | "nomatch";
 type NativeSpeechModule = {
@@ -35,6 +37,8 @@ export function SpeechPinyinButton({
   disabled?: boolean;
   onRecognizedPinyin: (pinyin: string) => void;
 }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -45,7 +49,7 @@ export function SpeechPinyinButton({
       setListening(true);
       setStatus("Đang nghe tiếng Trung…");
     });
-    const end = speechModule.addListener("end", () => setListening(false));
+    const end = speechModule.addListener("end", () => { setListening(false); setStatus((current) => current === "?ang nghe ti?ng Trung?" ? "Ch?a nghe r?. Ch?m N?i ?? th? l?i ho?c nh?p pinyin." : current); });
     const noMatch = speechModule.addListener("nomatch", () => {
       setListening(false);
       setStatus("Chưa nghe rõ. Hãy nói chậm một lần nữa.");
@@ -68,6 +72,11 @@ export function SpeechPinyinButton({
       const speechError = event as ExpoSpeechRecognitionErrorEvent;
       setListening(false);
       if (speechError.error !== "aborted") {
+        if (speechError.error === "audio-capture") {
+          setStatus("Kh\u00f4ng m\u1edf \u0111\u01b0\u1ee3c micro. Ki\u1ec3m tra quy\u1ec1n micro r\u1ed3i th\u1eed l\u1ea1i.");
+          return;
+        }
+        if (speechError.error === "network") { setStatus("D\u1ecbch v\u1ee5 nh\u1eadn d\u1ea1ng \u0111ang ngo\u1ea1i tuy\u1ebfn. H\u00e3y nh\u1eadp pinyin ho\u1eb7c th\u1eed l\u1ea1i khi c\u00f3 m\u1ea1ng."); return; }
         setStatus("Không nhận được giọng nói. Kiểm tra mạng hoặc nói lại.");
       }
     });
@@ -105,7 +114,7 @@ export function SpeechPinyinButton({
         interimResults: true,
         maxAlternatives: 3,
         contextualStrings,
-        androidIntentOptions: { EXTRA_LANGUAGE_MODEL: "web_search" },
+        androidIntentOptions: { EXTRA_LANGUAGE_MODEL: "free_form" },
         iosTaskHint: "confirmation",
       });
     } catch {
@@ -118,12 +127,14 @@ export function SpeechPinyinButton({
     <View style={styles.container}>
       <Pressable
         accessibilityLabel={listening ? "Dừng nhận diện giọng nói" : "Nhập pinyin bằng giọng nói"}
+        accessibilityHint={listening ? "Dừng nghe hiện tại." : "Đọc rõ từ tiếng Trung để điền pinyin."}
         accessibilityRole="button"
+        accessibilityState={{ disabled, busy: listening }}
         disabled={disabled}
         onPress={() => void toggleListening()}
         style={({ pressed }) => [styles.button, listening && styles.listening, disabled && styles.disabled, pressed && styles.pressed]}
       >
-        <Ionicons color={listening ? "#FFFFFF" : colors.primary} name={listening ? "stop" : "mic"} size={20} />
+        <Ionicons color={listening ? theme.onError : theme.primaryText} name={listening ? "stop" : "mic"} size={20} />
         <Text style={[styles.buttonText, listening && styles.listeningText]}>{listening ? "Dừng" : "Nói"}</Text>
       </Pressable>
       {status ? <Text accessibilityLiveRegion="polite" style={styles.status}>{status}</Text> : null}
@@ -131,13 +142,15 @@ export function SpeechPinyinButton({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { gap: spacing.xs },
-  button: { minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primarySoft, paddingHorizontal: spacing.md },
-  listening: { borderColor: colors.danger, backgroundColor: colors.danger },
-  disabled: { opacity: 0.45 },
-  pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
-  buttonText: { color: colors.primary, fontSize: 13, fontWeight: "900" },
-  listeningText: { color: "#FFFFFF" },
-  status: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    container: { width: 116, flexShrink: 0, gap: spacing.xs },
+    button: { width: 116, minHeight: 52, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: radius.md, borderWidth: 1, borderColor: theme.primary, backgroundColor: theme.primarySoft, paddingHorizontal: spacing.md },
+    listening: { borderColor: theme.error, backgroundColor: theme.error },
+    disabled: { opacity: 0.45 },
+    pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
+    buttonText: { color: theme.primaryText, fontSize: 13, fontWeight: "900" },
+    listeningText: { color: theme.onError },
+    status: { color: theme.textMuted, fontSize: 12, lineHeight: 17, width: 116 },
+  });
+}

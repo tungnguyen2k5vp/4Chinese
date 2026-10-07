@@ -11,6 +11,8 @@ export type CharacterAnalysis = {
 };
 
 const decompositionMap: Record<string, string[]> = {
+  "\u8fd9": ["\u8fb6", "\u6587"],
+  "\u6837": ["\u6728", "\u7f8a"],
   你: ["亻", "尔"],
   他: ["亻", "也"],
   她: ["女", "也"],
@@ -102,9 +104,23 @@ const componentMeanings: Record<string, string> = {
   雨: "mưa, thời tiết",
   田: "ruộng",
   力: "sức mạnh",
+  "\u8fb6": "b\u01b0\u1edbc ch\u00e2n, di chuy\u1ec3n",
+  "\u6587": "v\u0103n; ph\u1ea7n g\u1ee3i \u00e2m",
+  "\u7f8a": "con d\u00ea; ph\u1ea7n g\u1ee3i \u00e2m",
+  "\u7eba": "t\u01a1, s\u1ee3i",
+  "\u5f84": "\u0111\u01b0\u1eddng nh\u1ecf",
   饣: "ăn uống",
   囗: "khung bao quanh",
 };
+const mnemonicOverrides: Record<string, string> = {
+  "\u8fd9": "\u8fb6 g\u1ee3i b\u01b0\u1edbc ch\u00e2n \u0111ang \u0111i, \u6587 l\u00e0 ph\u1ea7n g\u1ee3i \u00e2m. H\u00ecnh dung b\u01b0\u1edbc ch\u00e2n ch\u1ec9 \u0111\u00fang n\u01a1i n\u00e0y: \u8fd9 = n\u00e0y.",
+  "\u6837": "\u6728 g\u1ee3i v\u1eadt b\u1eb1ng g\u1ed7, \u7f8a g\u1ee3i \u00e2m y\u00e1ng. H\u00ecnh dung m\u1ed9t m\u00f3n \u0111\u1ed3 g\u1ed7 c\u00f3 ki\u1ec3u d\u00e1ng con d\u00ea: \u6837 = ki\u1ec3u, lo\u1ea1i.",
+  "\u4e3a": "Nh\u1edb \u4e3a qua hai c\u00e1ch d\u00f9ng: w\u00e8i l\u00e0 \u201cv\u00ec, cho\u201d; w\u00e9i l\u00e0 \u201cl\u00e0m, tr\u1edf th\u00e0nh\u201d. Lu\u00f4n nh\u00ecn c\u1ea3 c\u00e2u \u0111\u1ec3 ch\u1ecdn ngh\u0129a.",
+  "\u5df2": "N\u00e9t cong nh\u01b0 m\u1ed9t v\u00f2ng \u0111\u00e3 kh\u00e9p l\u1ea1i. Vi\u1ec7c \u0111\u00e3 k\u1ebft th\u00fac th\u00ec d\u00f9ng \u5df2: \u201c\u0111\u00e3\u201d.",
+  "\u7ecf": "\u7eba b\u00ean tr\u00e1i l\u00e0 s\u1ee3i t\u01a1; \u5f84 b\u00ean ph\u1ea3i g\u1ee3i m\u1ed9t l\u1ed1i \u0111i. N\u1ed1i c\u00e1c s\u1ee3i l\u1ea1i th\u00e0nh m\u1ed9t tuy\u1ebfn quen thu\u1ed9c: \u7ecf = \u0111\u00e3 tr\u1ea3i qua, kinh qua.",
+  "\u65b0": "\u4eb2 g\u1ee3i s\u1ef1 g\u1ea7n g\u0169i, \u65a4 l\u00e0 c\u00e1i r\u00ecu ch\u1eb7t ra ph\u1ea7n m\u1edbi. H\u00ecnh dung ch\u1eb7t m\u1ed9t l\u00e1t m\u1edbi: \u65b0 = m\u1edbi.",
+};
+
 
 function uniqueCharacters(value: string): string[] {
   return [...value].filter((character, index, characters) => characters.indexOf(character) === index);
@@ -131,10 +147,11 @@ export function analyzeCharacter(
   const radical = findComponentInfo(parts[0] ?? "") ?? (preferred ? findComponentInfo(preferred) : undefined);
   const partText = parts.map(componentDescription).join(" + ");
   const leadMeaning = radical?.meaningVi ?? componentMeanings[parts[0] ?? ""] ?? "hình dáng chữ";
-  const mnemonic = parts.length > 1
+  const generatedMnemonic = parts.length > 1
     ? `Hãy hình dung ${parts.map((part) => componentMeanings[part] ?? part).join(" + ")} → liên tưởng đến “${primaryMeaning}” để nhớ ${character}.`
     : `Nhìn ${character} như “${leadMeaning}”; gắn hình ảnh này với nghĩa “${primaryMeaning}” để nhớ lâu.`;
 
+  const mnemonic = mnemonicOverrides[character] ?? generatedMnemonic;
   return {
     character,
     decomposition: partText,

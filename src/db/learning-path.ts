@@ -1,6 +1,22 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 const bands = ['1', '2', '3', '4', '5', '6', '7-9'] as const;
+const vocabularyChunkSize = 50;
+const advancedVocabularyChunkSize = 100;
+const lessonsPerVocabularyUnit = 5;
+
+export type LearningVocabularyBatch = { band: string; offset: number; limit: number };
+
+export function parseLearningVocabularyTarget(target: string | null | undefined): LearningVocabularyBatch | null {
+  if (!target) return null;
+  const match = /^(1|2|3|4|5|6|7-9):(\d+):(\d+)$/u.exec(target);
+  if (!match) return null;
+  const [, band, rawOffset, rawLimit] = match;
+  const offset = Number(rawOffset);
+  const limit = Number(rawLimit);
+  if (!band || !Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > advancedVocabularyChunkSize) return null;
+  return { band, offset, limit };
+}
 
 export type LearningCourse = { id: string; title: string; description: string; hsk_band: string;
   total_lessons: number; completed_lessons: number; earned_xp: number };
@@ -9,6 +25,16 @@ export type LearningLesson = { id: string; course_id: string; unit_title: string
   sort_order: number };
 export type LearningActivity = { id: string; activity_type: 'VOCABULARY' | 'GRAMMAR' | 'LISTENING' |
   'SPEAKING' | 'READING' | 'HANZI' | 'QUIZ'; title: string; target: string | null };
+type CurriculumSkill = { key: string; title: string; type: LearningActivity['activity_type'];
+  activityTitle: string; target: string | null };
+export type LessonActivityEvidenceType = 'VOCABULARY_DETAIL_VIEWED' | 'READING_TOKENS_ANALYZED' |
+  'GRAMMAR_CORRECT_ANSWER' | 'HANZI_STROKE_DRAWN' | 'REVIEW_ATTEMPT_RECORDED';
+
+const evidenceByActivity: Record<LearningActivity['activity_type'], LessonActivityEvidenceType> = {
+  VOCABULARY: 'VOCABULARY_DETAIL_VIEWED', GRAMMAR: 'GRAMMAR_CORRECT_ANSWER',
+  LISTENING: 'REVIEW_ATTEMPT_RECORDED', SPEAKING: 'REVIEW_ATTEMPT_RECORDED',
+  READING: 'READING_TOKENS_ANALYZED', HANZI: 'HANZI_STROKE_DRAWN', QUIZ: 'REVIEW_ATTEMPT_RECORDED',
+};
 
 /** Stable IDs and INSERT OR IGNORE keep local curriculum additions/progress intact. */
 export async function seedLearningPath(db: SQLiteDatabase): Promise<void> {
@@ -38,6 +64,77 @@ export async function seedLearningPath(db: SQLiteDatabase): Promise<void> {
       }
     } finally {
       await Promise.all([course.finalizeAsync(), unit.finalizeAsync(), lesson.finalizeAsync(), activity.finalizeAsync()]);
+    }
+  });
+  await seedExpandedLearningPath(db);
+}
+
+/** Adds stable, bounded word lessons and actionable skill practice without touching old progress. */
+async function seedExpandedLearningPath(db: SQLiteDatabase): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    const unit = await db.prepareAsync('INSERT OR IGNORE INTO units(id,course_id,title,sort_order) VALUES(?,?,?,?)');
+    const lesson = await db.prepareAsync(`INSERT OR IGNORE INTO lessons
+      (id,unit_id,title,estimated_minutes,xp_reward,sort_order) VALUES(?,?,?,?,?,?)`);
+    const activity = await db.prepareAsync(`INSERT OR IGNORE INTO lesson_activities
+      (id,lesson_id,activity_type,title,target,sort_order) VALUES(?,?,?,?,?,?)`);
+    try {
+      for (const band of bands) {
+        const courseId = 'hsk-' + band + '-path';
+        const wordCount = await db.getFirstAsync<{ total: number }>(`SELECT COUNT(*) AS total FROM vocabulary v
+          WHERE v.hsk_band=? AND (v.deck_id IS NULL OR EXISTS (
+            SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))`, band);
+        const totalWords = Math.max(0, Number(wordCount?.total ?? 0));
+        const chunkSize = band === '7-9' ? advancedVocabularyChunkSize : vocabularyChunkSize;
+        const pageCount = Math.ceil(totalWords / chunkSize);
+        const unitCount = Math.ceil(pageCount / lessonsPerVocabularyUnit);
+        const grammarRows = band === '7-9'
+          ? await db.getAllAsync<{ id: string; title: string }>(`SELECT id,title FROM grammar_points
+            WHERE is_active=1 AND id NOT GLOB 'v5-*' AND hsk_level IN ('7','8','9','7-9') ORDER BY CAST(hsk_level AS INTEGER),difficulty,id`)
+          : await db.getAllAsync<{ id: string; title: string }>(`SELECT id,title FROM grammar_points
+            WHERE is_active=1 AND id NOT GLOB 'v5-*' AND hsk_level=? ORDER BY difficulty,id`, band);
+
+        for (let page = 0; page < pageCount; page++) {
+          const group = Math.floor(page / lessonsPerVocabularyUnit) + 1;
+          const unitId = 'hsk-' + band + '-unit-words-' + group;
+          const lessonId = 'hsk-' + band + '-words-' + (page + 1);
+          const offset = page * chunkSize;
+          const limit = Math.min(chunkSize, totalWords - offset);
+          const firstWord = offset + 1;
+          const lastWord = offset + limit;
+          await unit.executeAsync([unitId, courseId, 'Từ vựng HSK ' + band + ' · chặng ' + group, group]);
+          await lesson.executeAsync([lessonId, unitId,
+            'Từ vựng ' + firstWord + '–' + lastWord + ' · HSK ' + band, 12, 15, page % lessonsPerVocabularyUnit]);
+          await activity.executeAsync([lessonId + '-vocab', lessonId, 'VOCABULARY', 'Học nhóm từ này',
+            band + ':' + offset + ':' + limit, 0]);
+        }
+
+        if (grammarRows.length) {
+          const grammarUnitId = 'hsk-' + band + '-unit-grammar';
+          await unit.executeAsync([grammarUnitId, courseId, 'Ngữ pháp trọng điểm HSK ' + band, unitCount + 1]);
+          for (const [index, grammar] of grammarRows.entries()) {
+            const lessonId = 'hsk-' + band + '-grammar-' + grammar.id;
+            await lesson.executeAsync([lessonId, grammarUnitId, 'Ngữ pháp · ' + grammar.title, 12, 15, index]);
+            await activity.executeAsync([lessonId + '-practice', lessonId, 'GRAMMAR', 'Học và luyện cấu trúc', grammar.id, 0]);
+          }
+        }
+
+        const skills: CurriculumSkill[] = [];
+        skills.push(
+          { key: 'listening', title: 'Nghe hiểu và nhận diện thanh điệu', type: 'LISTENING', activityTitle: 'Nghe rồi chọn thanh điệu', target: null },
+          { key: 'speaking', title: 'Nói theo câu mẫu', type: 'SPEAKING', activityTitle: 'Nghe mẫu và tự ghi âm', target: null },
+          { key: 'reading', title: 'Đọc hiểu từ trong ngữ cảnh', type: 'READING', activityTitle: 'Đọc câu và tra từ mới', target: null },
+          { key: 'writing', title: 'Nhận biết và viết Hán tự', type: 'HANZI', activityTitle: 'Luyện viết chữ Hán', target: null },
+        );
+        const skillsUnitId = 'hsk-' + band + '-unit-skills';
+        await unit.executeAsync([skillsUnitId, courseId, 'Kỹ năng và tổng ôn', unitCount + (grammarRows.length ? 2 : 1)]);
+        for (const [index, skill] of skills.entries()) {
+          const lessonId = 'hsk-' + band + '-skill-' + skill.key;
+          await lesson.executeAsync([lessonId, skillsUnitId, skill.title, 15, 20, index]);
+          await activity.executeAsync([lessonId + '-activity', lessonId, skill.type, skill.activityTitle, skill.target, 0]);
+        }
+      }
+    } finally {
+      await Promise.all([unit.finalizeAsync(), lesson.finalizeAsync(), activity.finalizeAsync()]);
     }
   });
 }
@@ -76,15 +173,15 @@ export async function listCompletedLessonActivityIds(
   return rows.map((row) => row.activity_id);
 }
 
-export async function completeLessonActivity(
-  db: SQLiteDatabase,
-  activityId: string,
+export async function recordLessonActivityEvidence(
+  db: SQLiteDatabase, activityId: string, evidenceType: LessonActivityEvidenceType, sourceId: string,
 ): Promise<void> {
-  const exists = await db.getFirstAsync<{ id: string }>(
-    "SELECT id FROM lesson_activities WHERE id=?",
-    activityId,
+  const activity = await db.getFirstAsync<Pick<LearningActivity, 'id' | 'activity_type'>>(
+    'SELECT id,activity_type FROM lesson_activities WHERE id=?', activityId,
   );
-  if (!exists) throw new Error("LESSON_ACTIVITY_NOT_FOUND");
+  if (!activity) throw new Error('LESSON_ACTIVITY_NOT_FOUND');
+  if (evidenceByActivity[activity.activity_type] !== evidenceType) throw new Error('LESSON_ACTIVITY_EVIDENCE_MISMATCH');
+  if (!sourceId.trim()) throw new Error('LESSON_ACTIVITY_EVIDENCE_SOURCE_REQUIRED');
   await db.runAsync(`INSERT INTO lesson_activity_progress(activity_id,completed_at)
     VALUES(?,?) ON CONFLICT(activity_id) DO NOTHING`, activityId, new Date().toISOString());
 }

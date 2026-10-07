@@ -7,15 +7,18 @@ import { Alert, StyleSheet, Text, View } from "react-native";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { radius, spacing, themedCard } from "@/constants/design";
 import {
   listDeletedPersonalDecks,
   restorePersonalDeck,
 } from "@/db/repository";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { PersonalDeck } from "@/types/models";
 
 export default function DeckTrash() {
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [decks, setDecks] = useState<PersonalDeck[]>([]);
   const [restoringId, setRestoringId] = useState<string | null>(null);
 
@@ -44,7 +47,7 @@ export default function DeckTrash() {
     >
       {decks.length ? (
         decks.map((deck) => (
-          <View key={deck.id} style={[card, styles.deck]}>
+          <View key={deck.id} style={[themedCard(theme), styles.deck]}>
             <View style={[styles.icon, { backgroundColor: `${deck.color}18` }]}>
               <Ionicons name="trash-outline" size={24} color={deck.color} />
             </View>
@@ -68,6 +71,8 @@ export default function DeckTrash() {
       ) : (
         <EmptyState
           icon="♻"
+          variant="vocabulary"
+          scene="history"
           title="Thùng rác đang trống"
           message="Khi bạn đưa một bộ từ vào thùng rác, bộ đó sẽ xuất hiện ở đây để khôi phục."
         />
@@ -88,7 +93,7 @@ function formatDate(value: string | null): string {
   return date.toLocaleDateString("vi-VN");
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
   deck: {
     flexDirection: "row",
     alignItems: "center",
@@ -102,7 +107,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   copy: { flex: 1, gap: 4 },
-  name: { fontSize: 17, fontWeight: "800", color: colors.text },
-  meta: { fontSize: 12, color: colors.textMuted },
+  name: { fontSize: 17, fontWeight: "800", color: theme.textPrimary },
+  meta: { fontSize: 12, color: theme.textMuted },
   restoreButton: { minHeight: 42, paddingHorizontal: spacing.md },
-});
+}); }

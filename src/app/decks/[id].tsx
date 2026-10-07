@@ -12,13 +12,14 @@ import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { VocabularyCard } from "@/components/VocabularyCard";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { deletePersonalDeck, getDeckVocabulary, getDueVocabulary, getSettings, listPersonalDecks, removeVocabularyFromDeck, renamePersonalDeck } from "@/db/repository";
 import { createSharedDeckPayload } from "@/services/decks/share-code";
 import { publishShortDeck, ShortDeckShareError } from "@/services/decks/short-share";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
 import { searchHanziCandidates, type PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
 import { useAppStore } from "@/stores/app-store";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { Vocabulary } from "@/types/models";
 
 const levelColors = [
@@ -33,6 +34,10 @@ const levelColors = [
 export default function DeckDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const colors = designColors(theme);
+  const card = themedCard(theme);
+  const styles = useThemeStyles(createStyles);
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [dueWords, setDueWords] = useState<Vocabulary[]>([]);
   const [name, setName] = useState("Bộ từ riêng");
@@ -512,6 +517,8 @@ export default function DeckDetail() {
       ) : (
         <EmptyState
           icon="词"
+          variant="vocabulary"
+          scene="deck"
           title="Bộ từ đang trống"
           message="Thêm Hanzi bằng cách viết tay hoặc nhập bàn phím; app sẽ gợi ý Pinyin và nghĩa sẵn có."
         />
@@ -519,11 +526,11 @@ export default function DeckDetail() {
     </Screen>
   );
 }
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({
   renameTrigger: { flexDirection: "row", alignItems: "center", gap: 4 },
-  renameTriggerIcon: { color: colors.primary, fontSize: 17, fontWeight: "900" },
+  renameTriggerIcon: { color: colors.primaryText, fontSize: 17, fontWeight: "900" },
   renameCard: { gap: spacing.sm },
-  renameLabel: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.7 },
+  renameLabel: { color: colors.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.7 },
   renameInput: { minHeight: 50, borderWidth: 1.5, borderColor: colors.primary, borderRadius: radius.md, paddingHorizontal: spacing.md, color: colors.text, backgroundColor: colors.background, fontSize: 17, fontWeight: "700" },
   renameActions: { flexDirection: "row", gap: spacing.sm },
   renameButton: { flex: 1 },
@@ -531,7 +538,7 @@ const styles = StyleSheet.create({
   actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   compactAction: { width: "48%", minHeight: 44, paddingHorizontal: spacing.sm },
   searchCard: { gap: spacing.sm },
-  searchTitle: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
+  searchTitle: { color: colors.primaryText, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
   searchHint: { color: colors.textMuted, fontSize: 12, lineHeight: 17 },
   searchInputRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   searchInput: { flex: 1, minHeight: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, color: colors.text, fontSize: 16, paddingHorizontal: spacing.md },
@@ -545,17 +552,17 @@ const styles = StyleSheet.create({
   candidateChip: { minWidth: 64, alignItems: "center", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.background, paddingHorizontal: spacing.sm, paddingVertical: 7 },
   candidateChipSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
   candidateHanzi: { color: colors.text, fontSize: 22, fontWeight: "900" },
-  candidateHanziSelected: { color: colors.primary },
+  candidateHanziSelected: { color: colors.primaryText },
   candidatePinyin: { color: colors.textMuted, fontSize: 10, fontWeight: "700" },
-  candidatePinyinSelected: { color: colors.primary },
+  candidatePinyinSelected: { color: colors.primaryText },
   searchResultRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
   searchResultText: { flex: 1, color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  clearSearch: { color: colors.primary, fontSize: 12, fontWeight: "900" },
+  clearSearch: { color: colors.primaryText, fontSize: 12, fontWeight: "900" },
   progressCard: { gap: spacing.sm },
   progressHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  progressEyebrow: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
+  progressEyebrow: { color: colors.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
   progressTitle: { color: colors.text, fontSize: 21, fontWeight: "900", marginTop: 3 },
-  progressPercent: { color: colors.primary, fontSize: 25, fontWeight: "900" },
+  progressPercent: { color: colors.primaryText, fontSize: 25, fontWeight: "900" },
   progressTrack: { height: 8, borderRadius: 99, overflow: "hidden", backgroundColor: colors.border },
   progressFill: { height: "100%", borderRadius: 99, backgroundColor: colors.primary },
   progressMeta: { color: colors.textMuted, fontSize: 12 },
@@ -569,7 +576,7 @@ const styles = StyleSheet.create({
   levelCount: { color: colors.text, fontSize: 10, fontWeight: "800" },
   chartHint: { color: colors.textMuted, fontSize: 11, textAlign: "center" },
   learnCard: { gap: spacing.sm },
-  learnEyebrow: { color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
+  learnEyebrow: { color: colors.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
   learnTitle: { color: colors.text, fontSize: 19, fontWeight: "900" },
   learnHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   countChoices: { flexDirection: "row", gap: spacing.sm },
@@ -585,7 +592,7 @@ const styles = StyleSheet.create({
   reviewCopy: { flex: 1, gap: 3 },
   reviewTitle: { fontSize: 18, fontWeight: "900", color: colors.text },
   reviewSubtitle: { fontSize: 13, color: colors.textMuted },
-  reviewIcon: { fontSize: 42, color: colors.primary, fontWeight: "900" },
+  reviewIcon: { fontSize: 42, color: colors.primaryText, fontWeight: "900" },
   reviewLevels: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   reviewLevel: {
     minWidth: 74,
@@ -597,17 +604,17 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   reviewLevelLabel: { fontSize: 10, color: colors.textMuted, fontWeight: "800" },
-  reviewLevelCount: { fontSize: 19, color: colors.primary, fontWeight: "900" },
+  reviewLevelCount: { fontSize: 19, color: colors.primaryText, fontWeight: "900" },
   reviewHint: { fontSize: 12, lineHeight: 18, color: colors.textMuted },
   reviewEmptyText: { fontSize: 13, lineHeight: 20, color: colors.textMuted },
   badge: {
     fontSize: 10,
     fontWeight: "900",
-    color: colors.primary,
+    color: colors.primaryText,
     backgroundColor: colors.primarySoft,
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 99,
   },
   list: { gap: spacing.md },
-});
+}); }

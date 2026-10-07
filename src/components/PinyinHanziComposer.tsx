@@ -3,9 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { SpeechPinyinButton } from "@/components/SpeechPinyinButton";
-import { colors, radius, spacing } from "@/constants/design";
+import { radius, spacing } from "@/constants/design";
 import { searchHanziCandidates, type PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
 import { buildChineseSpeechContext, type SpeechVocabularyHint } from "@/services/speech/chinese-speech-input";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 import type { Vocabulary } from "@/types/models";
 
 export interface PinyinHanziComposerProps {
@@ -40,6 +42,8 @@ export function PinyinHanziComposer({
   scriptMode = "simplified",
   onHint,
 }: PinyinHanziComposerProps) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [selectedCandidates, setSelectedCandidates] = useState<PinyinHanziCandidate[]>([]);
   const [loading, setLoading] = useState(false);
   const [speechHints, setSpeechHints] = useState<SpeechVocabularyHint[]>([]);
@@ -113,9 +117,9 @@ export function PinyinHanziComposer({
           keyboardType="default"
           onChangeText={onPinyinChange}
           placeholder="Ví dụ: xihuan"
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={theme.textMuted}
           returnKeyType="done"
-          selectionColor={colors.primary}
+          selectionColor={theme.primary}
           style={styles.input}
           value={pinyinQuery}
         />
@@ -134,9 +138,9 @@ export function PinyinHanziComposer({
         keyboardShouldPersistTaps="handled"
         showsHorizontalScrollIndicator={false}
       >
-        {loading ? <ActivityIndicator color={colors.primary} style={styles.loader} /> : null}
+        {loading ? <ActivityIndicator accessibilityLabel="Đang tìm chữ Hán phù hợp" color={theme.primary} style={styles.loader} /> : null}
         {!loading && pinyinQuery.trim() && selectedCandidates.length === 0 ? (
-          <Text style={styles.empty}>Chưa tìm thấy từ phù hợp. Thử bỏ dấu hoặc nhập thêm âm tiết.</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.empty}>Chưa tìm thấy từ phù hợp. Thử bỏ dấu hoặc nhập thêm âm tiết.</Text>
         ) : null}
         {selectedCandidates.map((candidate) => {
           const hanzi = visibleHanzi(candidate);
@@ -145,6 +149,7 @@ export function PinyinHanziComposer({
             <Pressable
               accessibilityLabel={`Chọn ${hanzi}`}
               accessibilityRole="button"
+              accessibilityState={{ selected, disabled }}
               disabled={disabled}
               key={`${candidate.word.id}-${candidate.candidateRank}`}
               onPress={() => onSelectCandidate(candidate)}
@@ -157,19 +162,19 @@ export function PinyinHanziComposer({
       </ScrollView>
 
       <View style={styles.answerHeader}>
-        <Text style={styles.sectionLabel}>CÂU TRẢ LỜI</Text>
+        <Text accessibilityRole="header" style={styles.sectionLabel}>CÂU TRẢ LỜI</Text>
         <Text style={styles.answerValue}>{selectedHanzi || "Chưa chọn chữ Hán"}</Text>
       </View>
       <View style={styles.controls}>
-        <Pressable accessibilityRole="button" disabled={disabled || !selectedHanzi} onPress={onDeleteLast} style={styles.controlButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Xóa chữ Hán cuối cùng" accessibilityState={{ disabled: disabled || !selectedHanzi }} disabled={disabled || !selectedHanzi} onPress={onDeleteLast} style={styles.controlButton}>
           <Text style={styles.controlText}>Xóa chữ cuối</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" disabled={disabled || !selectedHanzi} onPress={onClear} style={styles.controlButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Xóa toàn bộ câu trả lời" accessibilityState={{ disabled: disabled || !selectedHanzi }} disabled={disabled || !selectedHanzi} onPress={onClear} style={styles.controlButton}>
           <Text style={styles.controlText}>Xóa hết</Text>
         </Pressable>
       </View>
       {onHint ? (
-        <Pressable accessibilityRole="button" disabled={disabled} onPress={onHint} style={styles.hintButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Xem gợi ý" accessibilityState={{ disabled }} disabled={disabled} onPress={onHint} style={styles.hintButton}>
           <Text style={styles.hintText}>Gợi ý</Text>
         </Pressable>
       ) : null}
@@ -177,24 +182,26 @@ export function PinyinHanziComposer({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { gap: spacing.sm },
-  sectionLabel: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
-  inputRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
-  input: { flex: 1, minHeight: 52, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface, color: colors.text, fontSize: 18, paddingHorizontal: spacing.md },
-  candidateContent: { gap: spacing.sm, alignItems: "center", minHeight: 66, paddingVertical: 2 },
-  loader: { marginHorizontal: spacing.md },
-  empty: { color: colors.textMuted, fontSize: 12, paddingVertical: spacing.md },
-  candidate: { minWidth: 68, minHeight: 60, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md },
-  wholeWord: { minWidth: 88 },
-  selectedCandidate: { borderColor: colors.primary, backgroundColor: "#DCE6FF" },
-  pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
-  candidateText: { color: colors.primary, fontSize: 27, fontWeight: "900" },
-  answerHeader: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: 2 },
-  answerValue: { color: colors.text, fontSize: 34, fontWeight: "900", minHeight: 42 },
-  controls: { flexDirection: "row", gap: spacing.sm },
-  controlButton: { flex: 1, minHeight: 42, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
-  controlText: { color: colors.textMuted, fontSize: 12, fontWeight: "800" },
-  hintButton: { minHeight: 46, borderRadius: radius.md, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center" },
-  hintText: { color: colors.primary, fontSize: 15, fontWeight: "900" },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    container: { gap: spacing.sm },
+    sectionLabel: { color: theme.primaryText, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
+    inputRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+    input: { flex: 1, flexShrink: 1, minHeight: 52, borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, backgroundColor: theme.surface, color: theme.textPrimary, fontSize: 18, paddingHorizontal: spacing.md },
+    candidateContent: { gap: spacing.sm, alignItems: "center", minHeight: 66, paddingVertical: 2 },
+    loader: { marginHorizontal: spacing.md },
+    empty: { color: theme.textMuted, fontSize: 12, lineHeight: 18, paddingVertical: spacing.md },
+    candidate: { minWidth: 68, minHeight: 60, borderRadius: radius.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md },
+    wholeWord: { minWidth: 88 },
+    selectedCandidate: { borderColor: theme.primary, backgroundColor: theme.primarySoft },
+    pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
+    candidateText: { color: theme.primaryText, fontSize: 27, fontWeight: "900" },
+    answerHeader: { borderTopWidth: 1, borderTopColor: theme.border, paddingTop: spacing.sm, gap: 2 },
+    answerValue: { color: theme.textPrimary, fontSize: 34, fontWeight: "900", minHeight: 42 },
+    controls: { flexDirection: "row", gap: spacing.sm },
+    controlButton: { flex: 1, minHeight: 44, borderRadius: radius.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, alignItems: "center", justifyContent: "center" },
+    controlText: { color: theme.textSecondary, fontSize: 12, fontWeight: "800" },
+    hintButton: { minHeight: 46, borderRadius: radius.md, backgroundColor: theme.primarySoft, alignItems: "center", justifyContent: "center" },
+    hintText: { color: theme.primaryText, fontSize: 15, fontWeight: "900" },
+  });
+}

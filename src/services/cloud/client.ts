@@ -7,6 +7,27 @@ import { AppState, Platform } from 'react-native';
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/u, '');
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 let client: SupabaseClient | null = null;
+const deviceIdKey = '4chinese.sync.device-id';
+let deviceIdPromise: Promise<string> | null = null;
+
+function createDeviceId(): string {
+  return `device-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
+
+export function getCloudDeviceId(): Promise<string> {
+  if (!deviceIdPromise) deviceIdPromise = (async () => {
+    const existing = Platform.OS === 'web'
+      ? typeof localStorage === 'undefined' ? null : localStorage.getItem(deviceIdKey)
+      : await SecureStore.getItemAsync(deviceIdKey);
+    if (existing && /^[A-Za-z0-9:_-]{8,160}$/u.test(existing)) return existing;
+    const next = createDeviceId();
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(deviceIdKey, next);
+    } else await SecureStore.setItemAsync(deviceIdKey, next);
+    return next;
+  })();
+  return deviceIdPromise;
+}
 
 const sessionStorage = {
   getItem: (key: string): Promise<string | null> => Platform.OS === 'web'

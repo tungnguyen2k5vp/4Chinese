@@ -1,0 +1,4 @@
+project_id = "4chinese"
+
+[functions.gemini-conversation]
+verify_jwt = true

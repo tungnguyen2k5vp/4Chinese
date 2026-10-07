@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { getDashboardStats, getSettings, getUnlearnedVocabulary, setKnown, setSkipped } from "@/db/repository";
 import { speakChinese, stopChineseSpeech } from "@/services/audio/chinese-speech";
 import { getLearnSessionLimit } from "@/services/learning/session-limit";
@@ -19,11 +19,16 @@ import {
   type VocabularyTopicId,
 } from "@/services/learning/vocabulary-topics";
 import { useAppStore } from "@/stores/app-store";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { Vocabulary } from "@/types/models";
 
 export default function LearnSetup() {
   const { deckId } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const colors = designColors(theme);
+  const card = themedCard(theme);
+  const styles = useThemeStyles(createStyles);
   const setQueue = useAppStore((state) => state.setLearnQueue);
   const [available, setAvailable] = useState<Vocabulary[]>([]);
   const [selected, setSelected] = useState<Vocabulary[]>([]);
@@ -136,7 +141,7 @@ export default function LearnSetup() {
 
   if (goal === 0) {
     return <Screen title="Mục tiêu hôm nay đã hoàn thành" subtitle="Ngày mai bạn sẽ có thêm lượt từ mới theo mục tiêu đã chọn.">
-      <EmptyState title="Đã đủ từ mới hôm nay" message="Bạn vẫn có thể ôn các từ đến hạn để củng cố trí nhớ." />
+      <EmptyState variant="vocabulary" title="Đã đủ từ mới hôm nay" message="Bạn vẫn có thể ôn các từ đến hạn để củng cố trí nhớ." />
       <PrimaryButton label="Ôn tập ngay" onPress={() => router.push("/review")} />
     </Screen>;
   }
@@ -170,7 +175,7 @@ export default function LearnSetup() {
             ))}
           </View>
         ) : (
-          <EmptyState title="Không còn từ mới" message="Các từ HSK trong phạm vi đã chọn đều đã được xử lý." />
+          <EmptyState variant="vocabulary" title="Không còn từ mới" message="Các từ HSK trong phạm vi đã chọn đều đã được xử lý." />
         )}
       </Screen>
     );
@@ -179,7 +184,7 @@ export default function LearnSetup() {
   if (!word) {
     return (
       <Screen title={deckId ? "Chọn từ trong bộ" : "Chọn từ để học"}>
-        <EmptyState title="Không còn từ mới" message="Các từ chưa học trong phạm vi này đã được xử lý." />
+        <EmptyState variant="vocabulary" title="Không còn từ mới" message="Các từ chưa học trong phạm vi này đã được xử lý." />
         {selected.length ? <PrimaryButton label={"Bắt đầu với " + selected.length + " từ"} onPress={() => begin(selected)} /> : null}
       </Screen>
     );
@@ -241,7 +246,7 @@ export default function LearnSetup() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({
   topicGrid: { gap: spacing.md },
   topicCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 94 },
   topicPressed: { opacity: 0.72 },
@@ -249,18 +254,18 @@ const styles = StyleSheet.create({
   topicTitle: { color: colors.text, fontSize: 17, fontWeight: "900" },
   topicDescription: { color: colors.textMuted, fontSize: 13, lineHeight: 18 },
   topicCount: { minWidth: 54, height: 54, borderRadius: radius.md, backgroundColor: colors.primarySoft, alignItems: "center", justifyContent: "center" },
-  topicCountText: { color: colors.primary, fontSize: 18, fontWeight: "900" },
-  topicCountLabel: { color: colors.primary, fontSize: 10, fontWeight: "800" },
+  topicCountText: { color: colors.primaryText, fontSize: 18, fontWeight: "900" },
+  topicCountLabel: { color: colors.primaryText, fontSize: 10, fontWeight: "800" },
   changeTopic: { alignSelf: "flex-start", minHeight: 40, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.primarySoft },
-  changeTopicText: { color: colors.primary, fontWeight: "900" },
+  changeTopicText: { color: colors.primaryText, fontWeight: "900" },
   progressTrack: { height: 9, borderRadius: 99, backgroundColor: colors.border, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 99, backgroundColor: colors.primary },
   wordCard: { gap: spacing.sm, alignItems: "flex-start", paddingVertical: spacing.lg },
-  hanzi: { color: colors.primary, fontSize: 50, fontWeight: "900" },
+  hanzi: { color: colors.primaryText, fontSize: 50, fontWeight: "900" },
   audioRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   pinyin: { fontSize: 22 }, meaning: { color: colors.text, fontSize: 22, fontWeight: "800" },
   meta: { color: colors.textMuted, fontSize: 13 }, image: { width: "100%", height: 160, borderRadius: radius.md },
   example: { marginTop: spacing.xs, gap: spacing.xs }, exampleChinese: { color: colors.text, fontSize: 17, fontWeight: "700" }, exampleVi: { color: colors.textMuted, lineHeight: 20 },
   skipRow: { alignItems: "flex-end" }, skipButton: { paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }, skipText: { color: colors.text, fontWeight: "800" },
   actionButtons: { flexDirection: "row", gap: spacing.sm }, actionButton: { flex: 1, minHeight: 46, paddingHorizontal: spacing.sm },
-});
+}); }

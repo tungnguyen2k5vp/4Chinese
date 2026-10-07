@@ -14,6 +14,19 @@ function fixture() {
 
 afterEach(() => vi.useRealTimers());
 describe('local microphone lifecycle', () => {
+  it('supports a bounded advanced speaking duration and rejects unsafe limits', async () => {
+    vi.useFakeTimers();
+    const { adapter } = fixture(); const states: LocalRecordingState[] = [];
+    const recording = new LocalRecording(adapter, (state) => states.push(state), 90_000);
+    recording.activate(); await recording.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(states.at(-1)?.phase).toBe('recording');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(states.at(-1)?.phase).toBe('ready');
+    await recording.cancel();
+    expect(() => new LocalRecording(adapter, () => {}, 0)).toThrow('INVALID_RECORDING_DURATION');
+    expect(() => new LocalRecording(adapter, () => {}, 120001)).toThrow('INVALID_RECORDING_DURATION');
+  });
   it('denial never opens the mic', async () => {
     const { adapter, recording, states } = fixture();
     adapter.permission = vi.fn(async () => false);
