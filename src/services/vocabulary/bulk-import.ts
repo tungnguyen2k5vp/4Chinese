@@ -1,7 +1,7 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import {
-  findBulkLookupCandidates,
+  findBulkLookupCandidateGroups,
   type BulkLookupQuery,
 } from "@/db/repository";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
@@ -14,6 +14,10 @@ export interface BulkResolvedWord {
   input: string;
   word: Vocabulary | null;
   alternatives: Vocabulary[];
+}
+
+export function removeBulkVocabularyResult(results: BulkResolvedWord[], input: string): BulkResolvedWord[] {
+  return results.filter((item) => item.input !== input);
 }
 
 export function parseBulkVocabularyInput(value: string, limit = 100): string[] {
@@ -72,19 +76,41 @@ function hasNameOrSurnameIntent(query: string): boolean {
   return /(^| )(ho|ten|ten rieng|ho ten|nguoi)( |$)/.test(normalized);
 }
 
-function isNameOrSurnameCandidate(word: Vocabulary): boolean {
-  const fields = [
-    ...word.pos,
+type BulkCandidateSearchData = {
+  rawMeanings: string[];
+  meanings: string[];
+  pinyin: string;
+  isNameOrSurname: boolean;
+  hasLowQualityMeaning: boolean;
+};
+
+const bulkCandidateSearchCache = new WeakMap<Vocabulary, BulkCandidateSearchData>();
+
+function getBulkCandidateSearchData(word: Vocabulary): BulkCandidateSearchData {
+  const cached = bulkCandidateSearchCache.get(word);
+  if (cached) return cached;
+  const rawMeanings = [
     word.primaryMeaningVi,
     ...word.meaningsVi,
     ...word.meaningsEn,
-    word.source,
-  ].map(normalizeSearch);
-  return fields.some((field) =>
-    field.includes("ho") ||
-    field.includes("ten rieng") ||
-    field.includes("surname")
-  );
+    ...vocabularySearchAliases(word.simplified),
+  ].map((meaning) => meaning.trim()).filter(Boolean);
+  const fields = [...word.pos, ...rawMeanings, word.source].map(normalizeSearch);
+  const data: BulkCandidateSearchData = {
+    rawMeanings,
+    meanings: rawMeanings.map(normalizeSearch).filter(Boolean),
+    pinyin: normalizePinyinInput(word.pinyinNumeric || word.pinyin),
+    isNameOrSurname: fields.some((field) =>
+      field.includes('ho') || field.includes('ten rieng') || field.includes('surname'),
+    ),
+    hasLowQualityMeaning: rawMeanings.some(isLowQualityMeaning),
+  };
+  bulkCandidateSearchCache.set(word, data);
+  return data;
+}
+
+function isNameOrSurnameCandidate(word: Vocabulary): boolean {
+  return getBulkCandidateSearchData(word).isNameOrSurname;
 }
 
 type BulkScoreContext = {
@@ -252,8 +278,9 @@ export async function resolveBulkVocabulary(
     value: term,
     allowPinyin: !containsHanzi(term) && isLikelyPinyin(term),
   }));
-  const candidates = await findBulkLookupCandidates(db, queries);
+  const candidatesByQuery = await findBulkLookupCandidateGroups(db, queries);
   return terms.map((term) => {
+    const candidates = candidatesByQuery.get(normalizeSearch(term)) ?? [];
     const unique = rankBulkCandidates(term, candidates);
     return { input: term, word: unique[0] ?? null, alternatives: unique.slice(0, 6) };
   });

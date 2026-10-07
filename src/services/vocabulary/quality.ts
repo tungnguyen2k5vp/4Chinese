@@ -166,6 +166,76 @@ const canonicalOverrides: Record<string, VocabularyQualityOverride> = {
     translationStatus: "verified",
     aliases: ["mấy", "vài", "bao nhiêu"],
   },
+  看: {
+    pinyin: "kàn / kān",
+    pinyinNumeric: "kan4/kan1",
+    primaryMeaningVi: "xem; nhìn; đọc",
+    meaningsVi: ["xem; nhìn", "đọc", "trông nom; chăm sóc"],
+    meaningsEn: ["to look; to watch", "to read", "to look after"],
+    pos: ["động từ"],
+    translationStatus: "verified",
+    aliases: ["xem", "nhìn", "đọc", "trông nom", "chăm sóc"],
+  },
+  听: {
+    pinyin: "tīng",
+    pinyinNumeric: "ting1",
+    primaryMeaningVi: "nghe",
+    meaningsVi: ["nghe", "lắng nghe"],
+    meaningsEn: ["to listen", "to hear"],
+    pos: ["động từ"],
+    translationStatus: "verified",
+    aliases: ["nghe", "lắng nghe"],
+  },
+  行: {
+    pinyin: "xíng / háng",
+    pinyinNumeric: "xing2/hang2",
+    primaryMeaningVi: "được; ổn; có thể",
+    meaningsVi: ["được; ổn; có thể", "hàng; dòng", "ngành; nghề"],
+    meaningsEn: ["okay; to be possible", "row; line", "profession; trade"],
+    pos: ["động từ", "danh từ"],
+    translationStatus: "verified",
+    aliases: ["được", "ổn", "có thể", "hàng", "dòng", "ngành"],
+  },
+  得: {
+    pinyin: "dé / de / děi",
+    pinyinNumeric: "de2/de5/dei3",
+    primaryMeaningVi: "được; nhận được",
+    meaningsVi: ["được; nhận được", "trợ từ bổ ngữ", "phải; cần phải"],
+    meaningsEn: ["to get; to obtain", "complement particle", "must; have to"],
+    pos: ["động từ", "trợ từ", "động từ năng nguyện"],
+    translationStatus: "verified",
+    aliases: ["được", "nhận được", "bổ ngữ", "phải", "cần phải"],
+  },
+  长: {
+    pinyin: "cháng / zhǎng",
+    pinyinNumeric: "chang2/zhang3",
+    primaryMeaningVi: "dài",
+    meaningsVi: ["dài", "lớn lên; mọc; phát triển"],
+    meaningsEn: ["long", "to grow"],
+    pos: ["tính từ", "động từ"],
+    translationStatus: "verified",
+    aliases: ["dài", "lớn lên", "mọc", "phát triển"],
+  },
+  乐: {
+    pinyin: "lè / yuè",
+    pinyinNumeric: "le4/yue4",
+    primaryMeaningVi: "vui; vui vẻ",
+    meaningsVi: ["vui; vui vẻ", "âm nhạc"],
+    meaningsEn: ["happy; joyful", "music"],
+    pos: ["tính từ", "danh từ"],
+    translationStatus: "verified",
+    aliases: ["vui", "vui vẻ", "âm nhạc"],
+  },
+  "\u4e3a": {
+    pinyin: "wèi / wéi",
+    pinyinNumeric: "wei4/wei2",
+    primaryMeaningVi: "vì; cho; để",
+    meaningsVi: ["vì; do", "cho; để", "thay mặt", "là; làm; trở thành"],
+    meaningsEn: ["for; because of", "for; in order to", "on behalf of", "to be; to become"],
+    pos: ["giới từ", "động từ"],
+    translationStatus: "verified",
+    aliases: ["vì", "cho", "để", "thay mặt", "là", "trở thành"],
+  },
 };
 
 /** Common HSK 1–2 items whose dictionary row contains only a variant note. */
@@ -240,13 +310,37 @@ const learnerMeaningOverrides: Record<string, { vi: string[]; en: string[]; alia
   多少钱: { vi: ["bao nhiêu tiền", "giá bao nhiêu"], en: ["how much money"], aliases: ["bao nhiêu tiền", "giá bao nhiêu"] },
 };
 
-export function vocabularyQualityOverride(simplified: string): VocabularyQualityOverride | undefined {
+// all_hsk_clean.csv carries distinct rows for these readings. A headword-only
+// override would merge their meanings/pinyin back together and make one HSK
+// level incorrect, so only the source row is allowed to define them.
+
+const readingOverrides: Record<string, VocabularyQualityOverride> = {
+  '\u770b|kan4': { pinyin: 'k\u00e0n', pinyinNumeric: 'kan4', primaryMeaningVi: 'xem; nh\u00ecn; \u0111\u1ecdc', meaningsVi: ['xem', 'nh\u00ecn', '\u0111\u1ecdc'], meaningsEn: ['to look; to watch', 'to read'], translationStatus: 'verified' },
+  '\u884c|xing2': { pinyin: 'x\u00edng', pinyinNumeric: 'xing2', primaryMeaningVi: '\u0111\u01b0\u1ee3c; \u1ed5n; c\u00f3 th\u1ec3 ch\u1ea5p nh\u1eadn', meaningsVi: ['\u0111\u01b0\u1ee3c', '\u1ed5n', 'c\u00f3 th\u1ec3 ch\u1ea5p nh\u1eadn'], meaningsEn: ['okay', 'to be possible'], translationStatus: 'verified' },
+  '\u5f97|dei3': { pinyin: 'd\u011bi', pinyinNumeric: 'dei3', primaryMeaningVi: 'ph\u1ea3i; c\u1ea7n ph\u1ea3i', meaningsVi: ['ph\u1ea3i', 'c\u1ea7n ph\u1ea3i'], meaningsEn: ['must', 'have to'], translationStatus: 'verified' },
+  '\u957f|zhang3': { pinyin: 'zh\u01ce ng'.replace(' ', ''), pinyinNumeric: 'zhang3', primaryMeaningVi: 'l\u1edbn l\u00ean; m\u1ecdc; ph\u00e1t tri\u1ec3n', meaningsVi: ['l\u1edbn l\u00ean', 'm\u1ecdc', 'ph\u00e1t tri\u1ec3n'], meaningsEn: ['to grow', 'to develop'], translationStatus: 'verified' },
+  '\u4e3a|wei2': { pinyin: 'w\u00e9i', pinyinNumeric: 'wei2', primaryMeaningVi: 'l\u00e0; tr\u1edf th\u00e0nh; l\u00e0m', meaningsVi: ['l\u00e0', 'tr\u1edf th\u00e0nh', 'l\u00e0m'], meaningsEn: ['to be', 'to become', 'to act as'], translationStatus: 'verified' },
+  '\u4e3a|wei4': { pinyin: 'w\u00e8i', pinyinNumeric: 'wei4', primaryMeaningVi: 'v\u00ec; cho; \u0111\u1ec3', meaningsVi: ['v\u00ec', 'cho', '\u0111\u1ec3'], meaningsEn: ['for', 'because of', 'in order to'], translationStatus: 'verified' },
+};
+
+const multiReadingHeadwords = new Set([
+  '背', '冲', '传', '打', '待', '得', '地方', '过去', '好', '横', '结', '结果', '尽', '卡',
+  '看', '空', '了', '落', '圈', '散', '头', '为', '系', '行', '一下儿', '炸', '长', '涨',
+  '着', '只', '种', '重', '转', '转动',
+]);
+
+export function vocabularyQualityOverride(simplified: string, pinyinNumeric?: string): VocabularyQualityOverride | undefined {
+  const readingOverride = pinyinNumeric ? readingOverrides[`${simplified}|${pinyinNumeric}`] : undefined;
+  if (readingOverride) return readingOverride;
+  if (multiReadingHeadwords.has(simplified)) return undefined;
   return canonicalOverrides[simplified];
 }
 
 export function applyVocabularyQualityOverride<T extends Vocabulary>(word: T): T {
-  const override = vocabularyQualityOverride(word.simplified);
-  const learner = learnerMeaningOverrides[word.simplified];
+  const override = vocabularyQualityOverride(word.simplified, word.pinyinNumeric);
+  const learner = multiReadingHeadwords.has(word.simplified)
+    ? undefined
+    : learnerMeaningOverrides[word.simplified];
   if (!override && !learner) return word;
   return {
     ...word,
@@ -287,6 +381,7 @@ export function cleanLearnerMeanings(values: string[]): string[] {
 }
 
 export function vocabularySearchAliases(simplified: string): string[] {
+  if (multiReadingHeadwords.has(simplified)) return [];
   return [
     ...(learnerMeaningOverrides[simplified]?.aliases ?? []),
     ...(vocabularyQualityOverride(simplified)?.aliases ?? []),

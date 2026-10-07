@@ -1,0 +1,11 @@
+{
+  "passed": [
+    "Unified search and word-detail/back retain query",
+    "Minimal-pair navigation and honest web recording limitation",
+    "Explicit story draft preview without publication",
+    "Migration38 AI quota settings load offline"
+  ],
+  "errors": [],
+  "physicalDevice": false,
+  "liveGemini": false
+}

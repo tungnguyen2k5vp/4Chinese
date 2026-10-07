@@ -1,13 +1,35 @@
 import { describe, expect, it } from 'vitest';
 
 import { exportLocalBackup, importLocalBackup } from './backup-repository';
+import { createExamAttempt, getExamAttempt, saveExamAttempt } from './exam';
 import { createLegacyDatabase, expoAdapter } from './fixtures/legacy_database';
 import { migrateDatabaseSchema } from './migrations';
 import { DATABASE_VERSION } from './schema';
 
 import bundledHsk from '@/data/hsk-vocabulary.json';
+import { originalPracticeBank } from '@/services/exam/practice-bank';
 
 describe('local backup against real SQLite', () => {
+  it('round-trips exam snapshots, preserves them for old backups and rejects corrupt snapshots before writes', async () => {
+    const sqlite = createLegacyDatabase();
+    try {
+      const db = expoAdapter(sqlite); await migrateDatabaseSchema(db);
+      const bank = originalPracticeBank[0]!;
+      const attempt = await createExamAttempt(db, bank.profile, bank.questions, 1000);
+      const backup = await exportLocalBackup(db, 'test');
+      await saveExamAttempt(db, attempt, { answers: { [bank.questions[0]!.id]: 0 }, flaggedIds: [], currentIndex: 0 }, 2000);
+      await importLocalBackup(db, backup);
+      expect((await getExamAttempt(db, attempt.id)).snapshot.answers).toEqual({});
+      const legacy = { ...backup, data: { ...backup.data } }; delete legacy.data.examAttempts;
+      await importLocalBackup(db, legacy);
+      expect((await getExamAttempt(db, attempt.id)).id).toBe(attempt.id);
+      const before = sqlite.prepare('SELECT * FROM user_vocabulary_progress').all();
+      backup.data.examAttempts![0]!.snapshot_json = '{}';
+      await expect(importLocalBackup(db, backup)).rejects.toThrow();
+      expect(sqlite.prepare('SELECT * FROM user_vocabulary_progress').all()).toEqual(before);
+      expect((await getExamAttempt(db, attempt.id)).snapshot.profile.id).toBe(bank.profile.id);
+    } finally { sqlite.close(); }
+  });
   it('backs up and restores a learner edit to a bundled HSK word without changing its ID', async () => {
     const sqlite = createLegacyDatabase();
     try {

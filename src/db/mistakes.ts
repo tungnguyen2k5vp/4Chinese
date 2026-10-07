@@ -11,6 +11,13 @@ export type Mistake = { id: string; vocabulary_id: string | null; grammar_id: st
   skill_type: PracticeSkill; exercise_type: string; wrong_count: number; correct_streak: number;
   last_wrong_at: string | null; resolved: number; title: string; pinyin: string | null };
 
+export type MistakeFocus = {
+  skill: PracticeSkill;
+  openCount: number;
+  totalWrong: number;
+  topTitle: string;
+};
+
 /** Call inside the caller's transaction when paired with an SRS/grammar write. */
 export async function recordPracticeResult(db: SQLiteDatabase, input: {
   vocabularyId?: string; grammarId?: string; skill: PracticeSkill; exerciseType: string;
@@ -55,6 +62,21 @@ export async function listMistakes(db: SQLiteDatabase, skill?: PracticeSkill): P
     LEFT JOIN grammar_points g ON g.id=m.grammar_id
     WHERE m.resolved=0 ${skill ? 'AND m.skill_type=?' : ''}
     ORDER BY m.wrong_count DESC,m.last_wrong_at DESC LIMIT 200`, ...(skill ? [skill] : []));
+}
+
+/** Keeps the next practice recommendation actionable without touching SRS dates. */
+export async function getMistakeFocus(db: SQLiteDatabase): Promise<MistakeFocus | null> {
+  const items = await listMistakes(db);
+  if (!items.length) return null;
+  const bySkill = new Map<PracticeSkill, { openCount: number; totalWrong: number; topTitle: string }>();
+  for (const item of items) {
+    const current = bySkill.get(item.skill_type) ?? { openCount: 0, totalWrong: 0, topTitle: item.title };
+    current.openCount += 1;
+    current.totalWrong += item.wrong_count;
+    bySkill.set(item.skill_type, current);
+  }
+  const [skill, focus] = [...bySkill.entries()].sort(([, left], [, right]) => right.totalWrong - left.totalWrong || right.openCount - left.openCount || left.topTitle.localeCompare(right.topTitle))[0]!;
+  return { skill, ...focus };
 }
 
 /** Practice is independent of due reviews: it must never write SRS/progress/review_log. */

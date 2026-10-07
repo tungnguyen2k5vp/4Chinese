@@ -1,4 +1,176 @@
-export const DATABASE_VERSION = 20;
+export const DATABASE_VERSION = 43;
+
+/**
+ * Sentence provenance is additive: existing authored curriculum sentences
+ * remain reviewed, while future imports/AI drafts must state their status.
+ */
+export const migrationV23Sql = `
+ALTER TABLE sentences ADD COLUMN source_url TEXT;
+ALTER TABLE sentences ADD COLUMN provenance TEXT NOT NULL DEFAULT 'CURRICULUM'
+  CHECK(provenance IN ('CURRICULUM','EDITORIAL','USER','AI_DRAFT','IMPORTED'));
+ALTER TABLE sentences ADD COLUMN review_status TEXT NOT NULL DEFAULT 'REVIEWED'
+  CHECK(review_status IN ('REVIEWED','PENDING','REJECTED'));
+ALTER TABLE sentences ADD COLUMN reviewed_at TEXT;
+`;
+
+/** Durable local outbox. It is inert until the authenticated sync endpoint is deployed. */
+export const migrationV24Sql = `
+CREATE TABLE IF NOT EXISTS sync_outbox (
+  id TEXT PRIMARY KEY NOT NULL,
+  account_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('SETTINGS','DECK','VOCABULARY','PROGRESS','READING')),
+  entity_id TEXT NOT NULL,
+  operation TEXT NOT NULL CHECK(operation IN ('UPSERT','DELETE')),
+  payload_json TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'PENDING' CHECK(state IN ('PENDING','RETRY','COMPLETED','CONFLICT')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_outbox_due
+  ON sync_outbox(account_id,state,next_retry_at,created_at);
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+  id TEXT PRIMARY KEY NOT NULL,
+  operation_id TEXT NOT NULL REFERENCES sync_outbox(id) ON DELETE CASCADE,
+  local_payload_json TEXT NOT NULL,
+  remote_payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+);
+`;
+
+/**
+ * V25 only expands the durable v24 outbox. Existing operations stay valid and
+ * retryable; no learner-owned table is rebuilt or cleared.
+ */
+export const migrationV25ColumnsSql = `
+ALTER TABLE sync_outbox ADD COLUMN last_error TEXT;
+ALTER TABLE sync_outbox ADD COLUMN last_attempt_at TEXT;
+`;
+
+/** Per-pack state permits multiple independently updateable content packs of one type. */
+/** Local sync state deduplicates manual snapshots without replacing learner tables. */
+export const migrationV29Sql = `
+CREATE TABLE IF NOT EXISTS sync_entity_state (
+  account_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('SETTINGS','DECK','VOCABULARY','PROGRESS','READING')),
+  entity_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(account_id,entity_type,entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sync_entity_state_account
+  ON sync_entity_state(account_id,entity_type,updated_at);
+`;
+/** Reader text is stored in bounded chunks; old document.content remains a preview/fallback. */
+export const migrationV28Sql = `
+CREATE TABLE IF NOT EXISTS reading_document_chunks (
+  document_id TEXT NOT NULL REFERENCES reading_documents(id) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL CHECK(chunk_index >= 0),
+  content TEXT NOT NULL CHECK(length(content) > 0),
+  char_start INTEGER NOT NULL CHECK(char_start >= 0),
+  char_end INTEGER NOT NULL CHECK(char_end > char_start),
+  PRIMARY KEY(document_id,chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_reading_document_chunks_document
+  ON reading_document_chunks(document_id,chunk_index);
+`;
+/** Content records are deprecated, never hard-deleted, so learner progress keeps stable references. */
+export const migrationV27Sql = `
+ALTER TABLE grammar_points ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE grammar_points ADD COLUMN deprecated_at TEXT;
+ALTER TABLE sentences ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE sentences ADD COLUMN deprecated_at TEXT;
+ALTER TABLE stories ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE stories ADD COLUMN deprecated_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_grammar_points_active ON grammar_points(is_active,hsk_level,difficulty);
+CREATE INDEX IF NOT EXISTS idx_sentences_active ON sentences(is_active,review_status,hsk_level,difficulty);
+CREATE INDEX IF NOT EXISTS idx_stories_active ON stories(is_active,hsk_level,difficulty);
+`;
+export const migrationV26Sql = `
+CREATE TABLE IF NOT EXISTS content_packs (
+  id TEXT PRIMARY KEY NOT NULL,
+  content_type TEXT NOT NULL,
+  version INTEGER NOT NULL CHECK(version >= 0),
+  checksum TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+  min_app_version TEXT,
+  status TEXT NOT NULL CHECK(status IN ('INSTALLED','PARTIAL','PENDING','FAILED')),
+  installed_at TEXT,
+  updated_at TEXT NOT NULL,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_content_packs_type_status
+  ON content_packs(content_type,status,version);
+`;
+export const migrationV25TablesSql = `
+CREATE TABLE IF NOT EXISTS sync_cursor (
+  account_id TEXT PRIMARY KEY NOT NULL,
+  remote_cursor TEXT,
+  initial_sync_completed_at TEXT,
+  last_sync_at TEXT,
+  last_error TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sync_outbox_diagnostics
+  ON sync_outbox(account_id,state,updated_at);
+`;
+
+/**
+ * Search-only FTS index for the HSK 5-9 fallback path. It mirrors
+ * vocabulary rows through triggers; source vocabulary and learner data remain
+ * untouched. The compact pinyin column keeps xuesheng/xue2sheng1 lookup offline.
+ */
+export const migrationV22Sql = `
+CREATE VIRTUAL TABLE IF NOT EXISTS vocabulary_search_fts USING fts5(
+  vocabulary_id UNINDEXED,
+  search_text,
+  pinyin_compact,
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS vocabulary_search_fts_insert
+AFTER INSERT ON vocabulary BEGIN
+  INSERT INTO vocabulary_search_fts(rowid,vocabulary_id,search_text,pinyin_compact)
+  VALUES (
+    new.rowid, new.id, new.search_text,
+    LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(new.pinyin_numeric,'1',''),'2',''),'3',''),'4',''),'5',''),' ',''),'ü','v'))
+  );
+END;
+
+CREATE TRIGGER IF NOT EXISTS vocabulary_search_fts_update
+AFTER UPDATE OF search_text,pinyin_numeric ON vocabulary BEGIN
+  DELETE FROM vocabulary_search_fts WHERE rowid=old.rowid;
+  INSERT INTO vocabulary_search_fts(rowid,vocabulary_id,search_text,pinyin_compact)
+  VALUES (
+    new.rowid, new.id, new.search_text,
+    LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(new.pinyin_numeric,'1',''),'2',''),'3',''),'4',''),'5',''),' ',''),'ü','v'))
+  );
+END;
+
+CREATE TRIGGER IF NOT EXISTS vocabulary_search_fts_delete
+AFTER DELETE ON vocabulary BEGIN
+  DELETE FROM vocabulary_search_fts WHERE rowid=old.rowid;
+END;
+`;
+
+/**
+ * Additive content metadata. Schema version and content version are purposely
+ * separate: a curriculum refresh does not require a destructive DB rewrite.
+ */
+export const migrationV21Sql = `
+CREATE TABLE IF NOT EXISTS content_metadata (
+  content_type TEXT PRIMARY KEY NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0),
+  installed_at TEXT NOT NULL,
+  checksum TEXT,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('INSTALLED','PARTIAL','PENDING','FAILED'))
+);
+CREATE INDEX IF NOT EXISTS idx_content_metadata_status ON content_metadata(status,content_type);
+`;
 
 export const migrationV20Sql = `
 CREATE TABLE IF NOT EXISTS lesson_activity_progress (
@@ -338,6 +510,8 @@ ${migrationV17Sql}
 ${migrationV18Sql}
 ${migrationV19Sql}
 ${migrationV20Sql}
+${migrationV28Sql}
+${migrationV29Sql}
 
 CREATE INDEX IF NOT EXISTS idx_vocabulary_hsk ON vocabulary(hsk_band);
 CREATE INDEX IF NOT EXISTS idx_vocabulary_pinyin ON vocabulary(pinyin_numeric);
@@ -537,6 +711,7 @@ CREATE INDEX IF NOT EXISTS idx_lessons_unit ON lessons(unit_id,sort_order);
 CREATE INDEX IF NOT EXISTS idx_lesson_activities_lesson ON lesson_activities(lesson_id,sort_order);
 CREATE INDEX IF NOT EXISTS idx_grammar_points_hsk ON grammar_points(hsk_level,difficulty);
 CREATE INDEX IF NOT EXISTS idx_sentences_hsk ON sentences(hsk_level,difficulty);
+CREATE INDEX IF NOT EXISTS idx_sentences_review_status ON sentences(review_status,hsk_level,difficulty);
 CREATE INDEX IF NOT EXISTS idx_sentence_vocab_word ON sentence_vocabulary(vocabulary_id);
 CREATE INDEX IF NOT EXISTS idx_reading_documents_recent ON reading_documents(deleted_at,updated_at);
 CREATE INDEX IF NOT EXISTS idx_reading_vocabulary_word ON reading_vocabulary(vocabulary_id);

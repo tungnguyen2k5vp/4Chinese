@@ -1,16 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { EmptyState } from "@/components/EmptyState";
+import { HskBandSelect } from "@/components/HskBandSelect";
 import { MasteryChart } from "@/components/MasteryChart";
 import { SearchBar } from "@/components/SearchBar";
 import { VocabularyCard } from "@/components/VocabularyCard";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { designColors, radius, spacing, themedCard } from "@/constants/design";
+import { parseLearningVocabularyTarget } from "@/db/learning-path";
 import { getDashboardStats, listVocabulary, restoreSkipped, setKnown, toggleFavorite } from "@/db/repository";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { DashboardStats, HskBand, Vocabulary } from "@/types/models";
 
 const filters = ["all", "unlearned", "learned", "due", "favorite", "mastered", "known", "skipped"] as const;
@@ -18,15 +20,32 @@ const labels = { all: "Tất cả", unlearned: "Chưa học", learned: "Đã h�
 
 export default function VocabularyScreen() {
   const db = useSQLiteContext();
-  const params = useLocalSearchParams<{ band?: string; filter?: string; returnTo?: string }>();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const params = useLocalSearchParams<{ band?: string; filter?: string; returnTo?: string; lessonActivityId?: string; lessonVocabularyTarget?: string }>();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number]>((filters.includes(params.filter as never) ? params.filter : "all") as (typeof filters)[number]);
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const band = (params.band ? (params.band === "7-9" ? "7-9" : Number(params.band)) : "all") as HskBand | "all";
+  const [loadError, setLoadError] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const requestGeneration = useRef(0);
+  const dataGeneration = useRef(0);
+  const pageLock = useRef(false);
+  const pageOffset = useRef(0);
+  const lessonBatch = parseLearningVocabularyTarget(params.lessonVocabularyTarget);
+  const isLessonBatch = lessonBatch !== null;
+  const lessonBatchOffset = lessonBatch?.offset;
+  const lessonBatchLimit = lessonBatch?.limit;
+  const routeBand = (lessonBatch?.band ? (lessonBatch.band === "7-9" ? "7-9" : Number(lessonBatch.band))
+    : params.band ? (params.band === "7-9" ? "7-9" : Number(params.band)) : "all") as HskBand | "all";
+  const band = [1, 2, 3, 4, 5, 6, "7-9"].includes(routeBand) ? routeBand : "all";
   const returnTo = params.returnTo?.startsWith("/path/lesson/") ? params.returnTo : null;
+  const lessonActivityId = params.lessonActivityId?.trim() || null;
 
   useFocusEffect(useCallback(() => {
     let live = true;
@@ -35,14 +54,48 @@ export default function VocabularyScreen() {
   }, [band, db]));
 
   useEffect(() => {
+    const generation = ++requestGeneration.current;
     const timer = setTimeout(() => {
       setLoading(true);
-      void listVocabulary(db, { search: query, band, filter, memoryLevel: selectedLevel ?? undefined, limit: 80 })
-        .then(setWords)
-        .finally(() => setLoading(false));
+      setLoadError(false);
+      setLoadingMore(false);
+      pageLock.current = false;
+      void listVocabulary(db, {
+        search: isLessonBatch ? "" : query,
+        band,
+        filter: isLessonBatch ? "all" : filter,
+        memoryLevel: isLessonBatch ? undefined : selectedLevel ?? undefined,
+        limit: lessonBatchLimit ?? 100,
+        bandSlice: lessonBatchOffset !== undefined && lessonBatchLimit !== undefined
+          ? { offset: lessonBatchOffset, limit: lessonBatchLimit }
+          : undefined,
+      })
+        .then((items) => {
+          if (generation !== requestGeneration.current) return;
+          dataGeneration.current = generation;
+          setWords(items); pageOffset.current = items.length;
+          setHasMore(!isLessonBatch && items.length === 100);
+        })
+        .catch(() => { if (generation === requestGeneration.current) { setWords([]); setLoadError(true); setHasMore(false); } })
+        .finally(() => { if (generation === requestGeneration.current) setLoading(false); });
     }, 180);
-    return () => clearTimeout(timer);
-  }, [band, db, filter, query, selectedLevel]);
+    return () => { clearTimeout(timer); requestGeneration.current = generation + 1; };
+  }, [band, db, filter, query, selectedLevel, lessonBatchLimit, lessonBatchOffset, isLessonBatch, retry]);
+
+  const loadMore = async () => {
+    if (loading || !hasMore || pageLock.current || isLessonBatch || dataGeneration.current !== requestGeneration.current) return;
+    const generation = requestGeneration.current;
+    pageLock.current = true; setLoadingMore(true);
+    try {
+      const items = await listVocabulary(db, { band, search: query, filter, memoryLevel: selectedLevel ?? undefined, limit: 100, offset: pageOffset.current });
+      if (generation !== requestGeneration.current) return;
+      pageOffset.current += items.length;
+      setWords(current => [...new Map([...current, ...items].map(word => [word.id, word])).values()]);
+      setHasMore(items.length === 100);
+      setLoadError(false);
+    } catch { if (generation === requestGeneration.current) setLoadError(true); }
+    finally { if (generation === requestGeneration.current) { pageLock.current = false; setLoadingMore(false); } }
+  };
 
   const favorite = async (word: Vocabulary) => {
     await toggleFavorite(db, word.id);
@@ -56,7 +109,6 @@ export default function VocabularyScreen() {
 
   return (
     <View style={styles.screen}>
-      <StatusBar style="light" />
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View style={styles.headerCopy}>
@@ -67,8 +119,13 @@ export default function VocabularyScreen() {
             <Ionicons name="library" size={24} color="#FFFFFF" />
           </View>
         </View>
-        <Text style={styles.subtitle}>Học theo lịch SRS</Text>
-        <SearchBar value={query} onChangeText={setQuery} />
+        <Text style={styles.subtitle}>
+          {lessonBatch
+            ? `Lộ trình học · từ ${lessonBatch.offset + 1}–${lessonBatch.offset + lessonBatch.limit} · HSK ${lessonBatch.band}`
+            : "Học theo lịch SRS"}
+        </Text>
+        {!lessonBatch ? <SearchBar value={query} onChangeText={setQuery} /> : null}
+        {!lessonBatch ? <HskBandSelect value={band} onChange={(value) => { setSelectedLevel(null); router.setParams({ band: value === "all" ? "" : String(value) }); }} /> : null}
         {returnTo ? (
           <Pressable
             accessibilityRole="button"
@@ -80,7 +137,7 @@ export default function VocabularyScreen() {
           </Pressable>
         ) : null}
       </View>
-      <View style={styles.filterSection}>
+      {!lessonBatch ? <View style={styles.filterSection}>
         <FlatList
           horizontal
           data={filters}
@@ -101,24 +158,27 @@ export default function VocabularyScreen() {
             );
           }}
         />
-      </View>
+      </View> : null}
       <FlatList
         style={styles.wordList}
         data={words}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <VocabularyCard word={item} onPress={() => router.push(`/word/${item.id}`)} onFavorite={() => void favorite(item)} onRestore={filter === "skipped" || filter === "known" ? () => void restore(item) : undefined} />}
+        renderItem={({ item }) => <VocabularyCard word={item} onPress={() => router.push({ pathname: "/word/[id]", params: { id: item.id, returnTo: returnTo ?? "", lessonActivityId: lessonActivityId ?? "" } } as Href)} onFavorite={() => void favorite(item)} onRestore={filter === "skipped" || filter === "known" ? () => void restore(item) : undefined} />}
         contentContainerStyle={styles.list}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
         initialNumToRender={8}
         maxToRenderPerBatch={8}
         windowSize={6}
+        onEndReached={() => { if (!loadError) void loadMore(); }}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={loadingMore ? <ActivityIndicator color={theme.primary} /> : loadError ? <Pressable accessibilityRole="button" onPress={() => words.length ? void loadMore() : setRetry(value => value + 1)} style={styles.clearButton}><Text style={styles.clear}>Chưa tải được từ · Chạm để thử lại</Text></Pressable> : null}
         ListHeaderComponent={(
           <>
-            <View style={[card, styles.summary]}>
+            {!lessonBatch ? <View style={[themedCard(theme), styles.summary]}>
               <View style={styles.summaryHeader}>
                 <View style={styles.summaryHeading}>
                   <View style={styles.summaryIcon}>
-                    <Ionicons name="stats-chart" size={17} color={colors.primary} />
+                    <Ionicons name="stats-chart" size={17} color={theme.primary} />
                   </View>
                   <View>
                     <Text style={styles.summaryTitle}>Cấp độ nhớ</Text>
@@ -132,36 +192,40 @@ export default function VocabularyScreen() {
                 ) : null}
               </View>
               <MasteryChart values={stats?.mastery ?? [0, 0, 0, 0, 0, 0, 0]} selectedLevel={selectedLevel} onLevelPress={(level) => { setFilter("learned"); setSelectedLevel((current) => current === level ? null : level); }} />
-            </View>
+            </View> : null}
             <View style={styles.resultHeader}>
               <View>
                 <Text style={styles.resultEyebrow}>DANH SÁCH TỪ</Text>
                 <Text style={styles.resultTitle}>
-                  {selectedLevel
+                  {lessonBatch
+                    ? "Từ trong chặng"
+                    : selectedLevel
                     ? selectedLevel === 6 ? "Nhớ sâu" : `Cấp độ ${selectedLevel}`
                     : labels[filter]}
                 </Text>
               </View>
               <View style={styles.resultCountBadge}>
                 <Text style={styles.resultCount}>{loading ? "…" : words.length}</Text>
-                <Text style={styles.resultCountLabel}>từ</Text>
+                <Text style={styles.resultCountLabel}>{hasMore ? "đã tải" : "từ"}</Text>
               </View>
             </View>
           </>
         )}
-        ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={colors.primary} /> : <EmptyState title="Chưa tìm thấy từ" message="Thử Hanzi, pinyin không dấu, nghĩa tiếng Việt hoặc chọn cấp độ khác." />}
+        ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.primary} /> : <EmptyState title="Chưa tìm thấy từ" message={lessonBatch ? "Lô từ này hiện không có mục nào trong kho offline." : "Thử Hanzi, pinyin không dấu, nghĩa tiếng Việt hoặc chọn cấp độ khác."} />}
       />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  const colors = designColors(theme);
+  return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   header: { backgroundColor: colors.primary, paddingTop: 50, paddingHorizontal: spacing.lg, paddingBottom: 18, gap: spacing.sm },
   headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
   headerCopy: { flex: 1, gap: 3 },
   headerMark: { width: 46, height: 46, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.14)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
-  brand: { color: "#CFDAFF", fontWeight: "900", fontSize: 11, letterSpacing: 1.5 },
+  brand: { color: theme.onPrimary, fontWeight: "900", fontSize: 11, letterSpacing: 1.5 },
   title: { color: "#fff", fontSize: 28, lineHeight: 34, fontWeight: "900" },
   subtitle: { color: "#DCE4FF", fontSize: 13, marginBottom: spacing.xs },
   returnButton: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.16)" },
@@ -182,12 +246,12 @@ const styles = StyleSheet.create({
   summaryTitle: { color: colors.text, fontSize: 19, fontWeight: "900" },
   summaryMeta: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
   clearButton: { minHeight: 36, justifyContent: "center", paddingHorizontal: spacing.sm },
-  clear: { color: colors.primary, fontSize: 12, fontWeight: "900" },
+  clear: { color: colors.primaryText, fontSize: 12, fontWeight: "900" },
   resultHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md, paddingHorizontal: spacing.xs },
   resultEyebrow: { color: colors.textMuted, fontSize: 9, fontWeight: "900", letterSpacing: 1.2 },
   resultTitle: { color: colors.text, fontSize: 19, fontWeight: "900", marginTop: 2 },
   resultCountBadge: { minWidth: 52, height: 38, flexDirection: "row", alignItems: "baseline", justifyContent: "center", gap: 3, borderRadius: radius.pill, backgroundColor: colors.primarySoft },
-  resultCount: { color: colors.primary, fontSize: 16, fontWeight: "900" },
-  resultCountLabel: { color: colors.primary, fontSize: 10, fontWeight: "800" },
+  resultCount: { color: colors.primaryText, fontSize: 16, fontWeight: "900" },
+  resultCountLabel: { color: colors.primaryText, fontSize: 10, fontWeight: "800" },
   loader: { marginTop: 40 },
-});
+}); }

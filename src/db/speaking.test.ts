@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { exportLocalBackup, importLocalBackup } from './backup-repository';
 import { createLegacyDatabase, expoAdapter } from './fixtures/legacy_database';
-import { seedGrammarContent } from './grammar';
+import { grammarSeed, seedGrammarContent } from './grammar';
 import { migrateDatabaseSchema } from './migrations';
 import { getSpeakingSummary, listShadowingSentences, listToneWords, saveSpeakingPractice } from './speaking';
 
@@ -18,7 +18,12 @@ describe('speaking practice persistence is independent of SRS', () => {
       await seedGrammarContent(db, []);
       expect((await listToneWords(db)).map((word) => word.id)).toEqual(['hsk-1-ni']);
       const sentences = await listShadowingSentences(db);
-      expect(sentences).toHaveLength(14);
+      expect(sentences).toHaveLength(grammarSeed.filter(seed => !seed.id.startsWith('vn-')).reduce((total, seed) => total + seed.examples.length, 0));
+      await seedGrammarContent(db, [], { includePendingDrafts: true });
+      expect(await listShadowingSentences(db)).toEqual(sentences);
+      await expect(saveSpeakingPractice(db, { id: 'draft-attempt', kind: 'shadowing', targetId: 'sentence-v5-adjective-predicate-1' }))
+        .rejects.toThrow('SHADOWING_SENTENCE_NOT_PUBLISHED');
+      expect(sqlite.prepare("SELECT COUNT(*) AS n FROM speaking_practice WHERE id='draft-attempt'").get()).toEqual({ n: 0 });
       const input = { id: 'attempt-1', kind: 'tone' as const, targetId: 'hsk-1-ni', correct: false };
       await saveSpeakingPractice(db, input);
       await saveSpeakingPractice(db, input);

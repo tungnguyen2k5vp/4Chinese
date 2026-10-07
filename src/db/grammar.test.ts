@@ -18,15 +18,20 @@ describe('shared grammar and sentence graph', () => {
       await seedGrammarContent(db, knownWords);
       expect(await listGrammarPoints(db)).toHaveLength(grammarSeed.length);
       expect(await listGrammarExamples(db, 'gram-shi')).toHaveLength(2);
-      expect(sqlite.prepare('SELECT COUNT(*) AS n FROM sentences').get()).toEqual({ n: 14 });
+      expect((await listGrammarPoints(db)).find((item) => item.id === 'gram-shi')?.mastery_status).toBe('NEW');
+      expect(sqlite.prepare('SELECT COUNT(*) AS n FROM sentences').get()).toEqual({ n: grammarSeed.reduce((total, item) => total + item.examples.length, 0) });
       await recordGrammarAnswer(db, 'gram-shi', true);
       await recordGrammarAnswer(db, 'gram-shi', false);
+      await recordGrammarAnswer(db, 'gram-shi', true, { id: 'grammar-mastery-fill', exerciseType: 'grammar_fill_blank' });
+      await recordGrammarAnswer(db, 'gram-shi', true, { id: 'grammar-mastery-choice', exerciseType: 'grammar_choice' });
+      await recordGrammarAnswer(db, 'gram-shi', true, { id: 'grammar-mastery-reorder', exerciseType: 'grammar_reorder' });
+      expect((await listGrammarPoints(db)).find((item) => item.id === 'gram-shi')?.mastery_status).toBe('MASTERED');
       const backup = await exportLocalBackup(db, 'test');
       expect(backup.data.grammarProgress).toHaveLength(1);
       sqlite.exec('DELETE FROM grammar_progress');
       await importLocalBackup(db, backup);
       expect(sqlite.prepare("SELECT attempts,correct FROM grammar_progress WHERE grammar_id='gram-shi'").get())
-        .toEqual({ attempts: 2, correct: 1 });
+        .toEqual({ attempts: 5, correct: 4 });
       expect(sqlite.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     } finally { sqlite.close(); }
   });

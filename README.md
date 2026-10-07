@@ -151,7 +151,24 @@ Nguồn HSK và nghĩa từ được mô tả tại [`DATA_LICENSES.md`](./DATA_
 - Tên hiển thị app: **4Chinese**
 - Android package: `com.tungnguyen2k5vp.fourchinese`
 - iOS bundle identifier: `com.tungnguyen2k5vp.fourchinese`
-- Version hiện tại: `0.1.0`
+- Version cấu hình hiện tại: `0.1.25` (không đồng nghĩa đã cài bản V4 lên điện thoại).
+
+## V4 — bản đang phát triển
+
+Trạng thái chức năng, giới hạn dữ liệu HSK và các bước chưa hoàn tất: [V4_FINAL_REPORT.md](./docs/V4_FINAL_REPORT.md).
+Chưa có cấp nào được xác minh “HSK Exam Ready”; mini test là bài luyện gốc, không phải đề chính thức.
+
+Kiểm tra bản web riêng mà không ghi đè thư mục export Android:
+
+```bash
+npx expo export --platform web --output-dir dist-v4-web
+node scripts/serve-web.cjs 8084 dist-v4-web
+```
+
+Mở http://localhost:8084. Luyện tập và Thư viện gom các công cụ đang có; HSK → Ôn thi mở mini test, viết/dịch/nói và mức độ chuẩn bị.
+Thống kê nội dung từ source: `npx tsx scripts/audit-v4-content.ts`.
+Kiểm tra browser tùy chọn (cần Playwright và Edge trên máy): `node scripts/smoke-v4-web.cjs <đường-dẫn-module-playwright>`.
+Kết quả được ghi trong `docs/V4_WEB_SMOKE.json`, không dùng hồ sơ browser của người dùng hoặc gọi Gemini.
 
 ## License
 

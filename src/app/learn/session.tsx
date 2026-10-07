@@ -1,9 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { router, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
@@ -12,7 +11,8 @@ import { PinyinHanziComposer } from "@/components/PinyinHanziComposer";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { StudySettingsSheet } from "@/components/StudySettingsSheet";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
+import { radius, spacing, themedCard } from "@/constants/design";
 import {
   completeInitialLearning,
   getSettings,
@@ -25,8 +25,11 @@ import {
   speakChinese,
   stopChineseSpeech,
 } from "@/services/audio/chinese-speech";
+import { playFeedback } from "@/services/feedback/feedback-service";
+import { normalizeQuickSessionMinutes } from "@/services/learning/next-best-action";
 import type { PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
 import { useAppStore } from "@/stores/app-store";
+import { useTheme } from "@/theme/ThemeProvider";
 import type { UserSettings } from "@/types/models";
 
 function hidePinyinHints(value: string): string {
@@ -36,15 +39,22 @@ function hidePinyinHints(value: string): string {
     .trim();
 }
 
+function secondsSince(startedAt: number): number {
+  return Math.max(0, Math.min(43_200, Math.round((Date.now() - startedAt) / 1_000)));
+}
+
 /**
  * A NEW word is encoded in three passes: one guided copy followed by two
  * meaning-to-Hanzi recalls. SRS starts only after all three are correct.
  */
 export default function LearnSession() {
   const db = useSQLiteContext();
-  useStudySession(db);
-  const { deckId } = useLocalSearchParams<{ deckId?: string }>();
+  const theme = useTheme();
+  const styles = createStyles(theme);
+  const { deckId, quickSessionMinutes: requestedQuickMinutes, quickStartedAt } = useLocalSearchParams<{ deckId?: string; quickSessionMinutes?: string; quickStartedAt?: string }>();
+  const quickMinutes = normalizeQuickSessionMinutes(requestedQuickMinutes);
   const queue = useAppStore((state) => state.learnQueue);
+  const completeStudySession = useStudySession(db, queue.length ? "learning" : undefined);
   const clear = useAppStore((state) => state.clearSession);
   const setGlobalSettings = useAppStore((state) => state.setSettings);
   const [index, setIndex] = useState(0);
@@ -59,6 +69,8 @@ export default function LearnSession() {
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const sessionStartedAt = useRef(0);
+  useEffect(() => { sessionStartedAt.current = Date.now(); }, []);
   const word = queue[index];
 
   useEffect(() => {
@@ -93,13 +105,14 @@ export default function LearnSession() {
     nextKnown: number,
     nextSkipped: number,
   ) => {
+    completeStudySession();
     clear();
     if (deckId) {
       router.replace({ pathname: "/decks/[id]", params: { id: deckId } } as Href);
       return;
     }
     router.replace(
-      `/review/result?mode=learn&total=${queue.length}&correct=${nextCompleted}&known=${nextKnown}&skipped=${nextSkipped}`,
+      `/review/result?mode=learn&total=${queue.length}&correct=${nextCompleted}&known=${nextKnown}&skipped=${nextSkipped}&elapsedSeconds=${secondsSince(sessionStartedAt.current)}${quickMinutes == null ? "" : `&quickSessionMinutes=${quickMinutes}&quickStartedAt=${encodeURIComponent(quickStartedAt ?? "")}`}`,
     );
   };
 
@@ -119,12 +132,7 @@ export default function LearnSession() {
   };
 
   const feedbackHaptic = async (success: boolean) => {
-    if (!settings?.hapticEnabled) return;
-    await Haptics.notificationAsync(
-      success
-        ? Haptics.NotificationFeedbackType.Success
-        : Haptics.NotificationFeedbackType.Error,
-    );
+    await playFeedback(success ? 'success' : 'error', { hapticEnabled: settings?.hapticEnabled, soundEnabled: settings?.soundEnabled });
   };
 
   const confirmCopy = async () => {
@@ -235,13 +243,9 @@ export default function LearnSession() {
         <Text style={styles.counter}>
           {index + 1}/{queue.length}
         </Text>
-        <View style={styles.progressTrack}>
-          <View
-            style={[styles.progressFill, { width: `${progress * 100}%` }]}
-          />
-        </View>
-        <Pressable
-          accessibilityRole="button"
+        <AnimatedProgressBar progress={progress} color={theme.primary} trackColor={theme.border}
+          accessibilityLabel={"Ti\u1ebfn \u0111\u1ed9 bu\u1ed5i h\u1ecdc"} style={styles.progressTrack} />
+        <Pressable accessibilityRole="button"
           accessibilityLabel="Mở cài đặt học"
           onPress={() => setSettingsOpen(true)}
           hitSlop={10}
@@ -250,7 +254,7 @@ export default function LearnSession() {
           <Ionicons
             name="settings-outline"
             size={22}
-            color={colors.textMuted}
+            color={theme.textMuted}
           />
         </Pressable>
       </View>
@@ -258,7 +262,7 @@ export default function LearnSession() {
         Học từ mới · lượt {pass}/3 · {completed} đã hoàn tất
       </Text>
 
-      <View style={[card, styles.wordCard]}>
+      <View style={[themedCard(theme), styles.wordCard]}>
         <Text style={styles.encodingBadge}>
           {pass === 1
             ? "LƯỢT 1 · ĐÁP ÁN HIỂN THỊ"
@@ -292,7 +296,7 @@ export default function LearnSession() {
       </View>
 
       {example ? (
-        <View style={[card, styles.example]}>
+      <View style={[themedCard(theme), styles.example]}>
           <Text style={styles.exampleLabel}>VÍ DỤ NGỮ CẢNH</Text>
           {pass === 1 ? (
             <Text style={styles.exampleChinese}>{example.chinese}</Text>
@@ -308,7 +312,7 @@ export default function LearnSession() {
           ? "Quan sát đáp án rồi viết và chọn đúng chữ Hán một lần."
           : `Chỉ nhìn nghĩa tiếng Việt, tự viết chữ Hán ở lượt ${pass}/3.`}
       </Text>
-      <View style={[card, styles.padCard]}>
+      <View style={[themedCard(theme), styles.padCard]}>
         <HanziHandwritingPad
           key={`${word.id}-${pass}`}
           characterCount={
@@ -338,7 +342,7 @@ export default function LearnSession() {
           </View>
         ) : null}
       </View>
-      <View style={[card, styles.voiceCard]}>
+      <View style={[themedCard(theme), styles.voiceCard]}>
         <Text style={styles.voiceTitle}>KHÔNG TIỆN VIẾT? NÓI HOẶC NHẬP PINYIN</Text>
         <Text style={styles.voiceDescription}>
           Chạm nút mic, đọc từ tiếng Trung; app sẽ điền pinyin và gợi ý Hán tự để bạn chọn.
@@ -359,7 +363,7 @@ export default function LearnSession() {
           targetWord={word}
         />
       </View>
-      {feedback ? <Text style={styles.feedback}>{feedback}</Text> : null}
+      {feedback ? <View accessibilityLiveRegion="polite" style={[styles.feedback, recognizedCorrect ? styles.feedbackGood : styles.feedbackBad]}><Ionicons name={recognizedCorrect ? "checkmark-circle" : "information-circle"} size={18} color={recognizedCorrect ? theme.success : theme.error} /><Text style={[styles.feedbackText, recognizedCorrect ? styles.feedbackTextGood : styles.feedbackTextBad]}>{feedback}</Text></View> : null}
       <PrimaryButton
         label={
           pass < 3
@@ -397,7 +401,7 @@ export default function LearnSession() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
   top: {
     marginTop: spacing.lg,
     flexDirection: "row",
@@ -406,7 +410,7 @@ const styles = StyleSheet.create({
   },
   counter: {
     minWidth: 42,
-    color: colors.textMuted,
+    color: theme.textMuted,
     fontWeight: "800",
     fontSize: 12,
   },
@@ -415,12 +419,12 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 99,
     overflow: "hidden",
-    backgroundColor: colors.border,
+    backgroundColor: theme.border,
   },
   progressFill: {
     height: "100%",
     borderRadius: 99,
-    backgroundColor: colors.primary,
+    backgroundColor: theme.primary,
   },
   gear: {
     width: 38,
@@ -429,7 +433,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   progressLabel: {
-    color: colors.textMuted,
+    color: theme.textMuted,
     fontSize: 11,
     textAlign: "center",
     marginTop: -spacing.md,
@@ -440,34 +444,34 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
   },
   encodingBadge: {
-    color: colors.primary,
+    color: theme.primaryText,
     fontSize: 10,
     fontWeight: "900",
     letterSpacing: 0.8,
   },
-  hanzi: { fontSize: 68, fontWeight: "900", color: colors.text },
+  hanzi: { fontSize: 68, fontWeight: "900", color: theme.textPrimary },
   pronounce: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   pinyin: { fontSize: 22 },
   meaning: {
     fontSize: 21,
-    color: colors.text,
+    color: theme.textPrimary,
     fontWeight: "800",
     textAlign: "center",
   },
-  meta: { color: colors.textMuted, fontSize: 12 },
-  hiddenAnswer: { color: colors.textMuted, fontSize: 14, fontWeight: "700" },
+  meta: { color: theme.textMuted, fontSize: 12 },
+  hiddenAnswer: { color: theme.textMuted, fontSize: 14, fontWeight: "700" },
   image: { height: 150, width: "100%", borderRadius: radius.md },
   example: { gap: spacing.xs },
   exampleLabel: {
-    color: colors.primary,
+    color: theme.primaryText,
     fontSize: 10,
     fontWeight: "900",
     letterSpacing: 0.8,
   },
-  exampleChinese: { color: colors.text, fontSize: 19, fontWeight: "700" },
-  exampleVi: { color: colors.textMuted, lineHeight: 20 },
+  exampleChinese: { color: theme.textPrimary, fontSize: 19, fontWeight: "700" },
+  exampleVi: { color: theme.textMuted, lineHeight: 20 },
   instruction: {
-    color: colors.textMuted,
+    color: theme.textMuted,
     textAlign: "center",
     fontSize: 13,
     lineHeight: 20,
@@ -475,26 +479,25 @@ const styles = StyleSheet.create({
   padCard: { alignItems: "center", gap: spacing.md },
   voiceCard: { gap: spacing.sm },
   voiceTitle: {
-    color: colors.primary,
+    color: theme.primaryText,
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 0.7,
   },
-  voiceDescription: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
+  voiceDescription: { color: theme.textMuted, fontSize: 13, lineHeight: 19 },
   recognized: { alignItems: "center", gap: 3 },
   recognizedLabel: {
-    color: colors.textMuted,
+    color: theme.textMuted,
     fontSize: 10,
     fontWeight: "900",
     letterSpacing: 0.7,
   },
-  recognizedText: { color: colors.primary, fontSize: 34, fontWeight: "900" },
-  good: { color: colors.success, fontSize: 12, fontWeight: "700" },
-  bad: { color: colors.danger, fontSize: 12, fontWeight: "700" },
-  feedback: {
-    color: colors.danger,
-    textAlign: "center",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-});
+  recognizedText: { color: theme.primaryText, fontSize: 34, fontWeight: "900" },
+  good: { color: theme.success, fontSize: 12, fontWeight: "700" },
+  bad: { color: theme.error, fontSize: 12, fontWeight: "700" },
+  feedback: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, borderRadius: radius.md, padding: spacing.md },
+  feedbackGood: { backgroundColor: theme.successSoft },
+  feedbackBad: { backgroundColor: theme.errorSoft },
+  feedbackText: { flex: 1, fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  feedbackTextGood: { color: theme.success },
+  feedbackTextBad: { color: theme.error },}); }

@@ -2,51 +2,86 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
+import {
+  DailyQuestCard,
+  type DailyQuestItem,
+} from "@/components/DailyQuestCard";
 import { DueReviewCard } from "@/components/DueReviewCard";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing, typography } from "@/constants/design";
+import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
+import { MotionPressable } from "@/components/ui/MotionPressable";
+import { LearningGuide } from '@/components/visual/LearningGuide';
+import { LearningLandscape } from "@/components/visual/LearningLandscape";
+import { radius, spacing, typography } from "@/constants/design";
+import {
+  getGamificationSummary,
+  type GamificationSummary,
+} from "@/db/gamification";
+import { listLearningCourses, type LearningCourse } from "@/db/learning-path";
 import {
   getDashboardStats,
   getDailyVocabulary,
   getSettings,
+  getUnlearnedVocabulary,
 } from "@/db/repository";
+import { featureFlags } from "@/services/feature-flags/feature-flags";
+import {
+  getComebackPlan,
+  getHomeNextAction,
+} from "@/services/learning/next-best-action";
 import { toLocalDateKey } from "@/services/stats/calendar";
 import { useAppStore } from "@/stores/app-store";
+import { useTheme } from "@/theme/ThemeProvider";
 import type { DashboardStats, Vocabulary } from "@/types/models";
 
-const quick = [
+const primaryQuick = [
   ["Bộ từ riêng", "albums", "/decks"],
   ["Học từ mới", "add-circle", "/learn/setup"],
-  ["Ôn tập", "repeat", "/review"],
-  ["Từ cần củng cố", "alert-circle", "/review/weak"],
   ["HSK", "layers", "/(tabs)/hsk"],
   ["Lộ trình", "map-outline", "/path"],
-  ["Ngữ pháp", "book-outline", "/grammar"],
-  ["Truyện ngắn", "library-outline", "/stories"],
-  ["Sổ lỗi", "warning-outline", "/mistakes"],
-  ["Lịch ôn sắp tới", "time-outline", "/review/upcoming"],
-  ["Luyện viết", "brush", "/writing"],
-  ["Luyện nghe", "headset", "/review?mode=audio-meaning"],
-  ["Nghe & nói", "mic-outline", "/speaking"],
-  ["Đọc & tra từ", "book-outline", "/reader"],
+] as const;
+
+const toolHubs = [
+  [
+    "Luyện tập",
+    "fitness-outline",
+    "/practice",
+    "Ôn từ · nghe nói · viết · ngữ pháp",
+  ],
+  [
+    "Thư viện",
+    "library-outline",
+    "/library",
+    "Truyện · văn bản cá nhân · tra cứu",
+  ],
 ] as const;
 
 export default function Home() {
   const db = useSQLiteContext();
-  const setSettings = useAppStore((s) => s.setSettings);
+  const theme = useTheme();
+  const styles = createStyles(theme);
+  const setSettings = useAppStore((state) => state.setSettings);
+  const settings = useAppStore((state) => state.settings);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [daily, setDaily] = useState<Vocabulary | null>(null);
+  const [courses, setCourses] = useState<LearningCourse[]>([]);
+  const [gamification, setGamification] = useState<GamificationSummary | null>(
+    null,
+  );
+  const [hasUnlearnedWords, setHasUnlearnedWords] = useState(false);
   const [todayKey, setTodayKey] = useState(() => toLocalDateKey(new Date()));
 
   useEffect(() => {
     const timer = setInterval(() => {
       const nextKey = toLocalDateKey(new Date());
-      setTodayKey((currentKey) => (currentKey === nextKey ? currentKey : nextKey));
+      setTodayKey((currentKey) =>
+        currentKey === nextKey ? currentKey : nextKey,
+      );
     }, 30_000);
     return () => clearInterval(timer);
   }, []);
@@ -55,103 +90,305 @@ export default function Home() {
     useCallback(() => {
       let live = true;
       const refreshDateKey = todayKey;
-
       const refresh = async () => {
-        const settings = await getSettings(db);
-        const [next, dailyWord] = await Promise.all([
-          getDashboardStats(db, settings.selectedHskBands),
-          getDailyVocabulary(db, settings.selectedHskBands, refreshDateKey),
-        ]);
+        const currentSettings = await getSettings(db);
+        const [nextStats, dailyWord, nextCourses, nextGamification, unlearned] =
+          await Promise.all([
+            getDashboardStats(db, currentSettings.selectedHskBands),
+            getDailyVocabulary(
+              db,
+              currentSettings.selectedHskBands,
+              refreshDateKey,
+            ),
+            listLearningCourses(db),
+            getGamificationSummary(db, currentSettings.dailyStudyMinutes),
+            getUnlearnedVocabulary(db, currentSettings.selectedHskBands, 1),
+          ]);
         if (live && refreshDateKey === toLocalDateKey(new Date())) {
-          setStats(next);
+          setStats(nextStats);
           setDaily(dailyWord);
-          setSettings(settings);
+          setCourses(nextCourses);
+          setGamification(nextGamification);
+          setHasUnlearnedWords(unlearned.length > 0);
+          setSettings(currentSettings);
         }
       };
-
       void refresh();
       return () => {
         live = false;
       };
     }, [db, setSettings, todayKey]),
   );
-  const settings = useAppStore((s) => s.settings);
-  const progress = Math.min(
-    1,
-    (stats?.newToday ?? 0) / (settings?.dailyNewWordGoal ?? 10),
-  );
+
+  const newGoal = settings?.dailyNewWordGoal ?? 10;
   const studyGoalMinutes = settings?.dailyStudyMinutes ?? 30;
-  const studyProgress = Math.min(
-    1,
-    (stats?.studySeconds ?? 0) / (studyGoalMinutes * 60),
-  );
   const studyMinutes = Math.floor((stats?.studySeconds ?? 0) / 60);
+  const activeCourse =
+    courses.find(
+      (course) =>
+        course.completed_lessons > 0 &&
+        course.completed_lessons < course.total_lessons,
+    ) ??
+    courses.find((course) => course.completed_lessons < course.total_lessons) ??
+    null;
+  const courseProgress =
+    activeCourse && activeCourse.total_lessons > 0
+      ? activeCourse.completed_lessons / activeCourse.total_lessons
+      : 0;
+  const nextAction = getHomeNextAction({
+    dueCount: stats?.due ?? 0,
+    activeCourse: activeCourse
+      ? { id: activeCourse.id, title: activeCourse.title }
+      : null,
+    remainingNewWords: Math.max(0, newGoal - (stats?.newToday ?? 0)),
+    hasUnlearnedWords,
+    studiedMinutes: studyMinutes,
+    studyGoalMinutes,
+  });
+  const comeback = getComebackPlan(
+    stats?.lastStudyDate,
+    todayKey,
+    stats?.due ?? 0,
+  );
+  const heroTitle = nextAction.title;
+  const heroSubtitle =
+    nextAction.kind === "course" && activeCourse
+      ? `Bài ${Math.min(activeCourse.completed_lessons + 1, activeCourse.total_lessons)} · khoảng 15 phút · ${activeCourse.earned_xp} XP đã nhận`
+      : nextAction.subtitle;
+  const heroProgress =
+    nextAction.kind === "course"
+      ? courseProgress
+      : nextAction.kind === "review"
+        ? Math.min(
+            1,
+            (stats?.reviewedToday ?? 0) /
+              Math.max(1, (stats?.reviewedToday ?? 0) + (stats?.due ?? 0)),
+          )
+        : nextAction.kind === "new-words"
+          ? Math.min(1, (stats?.newToday ?? 0) / Math.max(1, newGoal))
+          : Math.min(1, studyMinutes / Math.max(1, studyGoalMinutes));
+  const heroProgressLabel =
+    nextAction.kind === "course" && activeCourse
+      ? `${activeCourse.completed_lessons}/${activeCourse.total_lessons} bài`
+      : nextAction.kind === "review"
+        ? `${stats?.due ?? 0} từ đang đến hạn`
+        : nextAction.kind === "new-words"
+          ? `${stats?.newToday ?? 0}/${newGoal} từ mới`
+          : `${studyMinutes}/${studyGoalMinutes} phút học`;
+  const heroAction = () => router.push(nextAction.href as Href);
+  const quests: DailyQuestItem[] = [
+    {
+      id: "review",
+      label: "Ôn theo lịch SRS",
+      detail:
+        (stats?.due ?? 0) > 0
+          ? `${stats?.due ?? 0} từ đang chờ ôn`
+          : "Không còn từ đến hạn",
+      complete: (stats?.due ?? 0) === 0,
+      icon: "repeat",
+      onPress: () => router.push("/review"),
+    },
+    {
+      id: "new-words",
+      label: "Học từ mới",
+      detail: `${stats?.newToday ?? 0}/${newGoal} từ hôm nay`,
+      complete: (stats?.newToday ?? 0) >= newGoal,
+      icon: "add-circle",
+      onPress: () => router.push("/daily" as Href),
+    },
+    {
+      id: "study-time",
+      label: "Giữ nhịp học",
+      detail: `${studyMinutes}/${studyGoalMinutes} phút tập trung`,
+      complete: studyMinutes >= studyGoalMinutes,
+      icon: "time",
+      onPress: () =>
+        router.push(
+          activeCourse
+            ? (`/path/${activeCourse.id}` as Href)
+            : ("/daily" as Href),
+        ),
+    },
+  ];
+
   return (
     <Screen>
       <View style={styles.top}>
         <View style={styles.topLine}>
-          <Text style={styles.hello}>Xin chào 👋</Text>
-          <View style={styles.streak}>
-            <Text>🔥</Text>
-            <Text style={styles.streakText}>{stats?.streak ?? 0} ngày</Text>
+          <Text style={styles.hello}>Xin chào</Text>
+          <View style={styles.rewardRow}>
+            <View style={styles.streak}>
+              <Text style={styles.streakText}>
+                🔥 {stats?.streak ?? 0} ngày
+              </Text>
+            </View>
+            <View style={styles.xp}>
+              <Text style={styles.xpText}>
+                +{gamification?.todayXp ?? 0} XP
+              </Text>
+            </View>
           </View>
         </View>
-        <Text style={styles.question}>Hôm nay bạn muốn học gì?</Text>
+        <Text style={styles.question}>Hôm nay, mình đi tiếp một bước nhé.</Text>
       </View>
-      <View style={[card, styles.focus]}>
-        <View style={styles.focusTop}>
-          <View style={styles.focusCopy}>
-            <Text style={styles.eyebrow}>TIẾN ĐỘ HÔM NAY</Text>
-            <Text style={styles.focusTitle}>
-              {stats?.newToday ?? 0} / {settings?.dailyNewWordGoal ?? 10} từ mới
-            </Text>
-            <Text style={styles.softText}>
-              {stats?.due ?? 0} từ đang chờ ôn
-            </Text>
-            <Text style={styles.studyText}>
-              {studyMinutes} / {studyGoalMinutes} phút học hôm nay
+
+      <View style={styles.hero}>
+        <View style={styles.heroScene}>
+          <LearningLandscape mood="journey" height={124} />
+          <View style={styles.sceneCaption}>
+            <Text style={styles.sceneCaptionChinese}>学</Text>
+            <Text style={styles.sceneCaptionText}>MỖI NGÀY MỘT BƯỚC</Text>
+          </View>
+        </View>
+        <View style={styles.heroContent}>
+          <View style={styles.heroTop}>
+            <View style={styles.heroCopy}>
+              <Text style={styles.eyebrow}>GỢI Ý CHO HÔM NAY</Text>
+              <Text style={styles.heroTitle}>{heroTitle}</Text>
+              <Text style={styles.heroSubtitle}>{heroSubtitle}</Text>
+            </View>
+            <View style={styles.heroSeal}>
+              <LearningGuide mood="welcome" size={55} />
+            </View>
+          </View>
+          <AnimatedProgressBar
+            progress={heroProgress}
+            color={theme.success}
+            trackColor={theme.backgroundSecondary}
+            accessibilityLabel="Tiến độ phiên học gợi ý"
+          />
+          <View style={styles.heroMeta}>
+            <Text style={styles.heroMetaText}>{heroProgressLabel}</Text>
+            <Text style={styles.heroMetaText}>
+              {studyMinutes}/{studyGoalMinutes} phút
             </Text>
           </View>
-          <Text style={styles.percent}>{Math.round(progress * 100)}%</Text>
+          <PrimaryButton
+            label={nextAction.kind === "stats" ? "Xem thống kê" : "Tiếp tục học"}
+            onPress={heroAction}
+          />
         </View>
-        <View style={styles.track}>
-          <View style={[styles.fill, { width: `${progress * 100}%` }]} />
+      </View>
+
+      {featureFlags.enabled("quickSessions") ? (
+        <View style={styles.quickSession}>
+          <View>
+            <Text style={styles.quickSessionTitle}>Phiên học nhanh</Text>
+            <Text style={styles.quickSessionCopy}>
+              Chọn thời lượng · ôn đến hạn trước · không đổi lịch SRS
+            </Text>
+          </View>
+          <View style={styles.quickSessionOptions}>
+            {([3, 5, 10] as const).map((minutes) => (
+              <MotionPressable
+                key={minutes}
+                haptic
+                accessibilityLabel={`Lập phiên học nhanh ${minutes} phút`}
+                onPress={() =>
+                  router.push({
+                    pathname: "/daily",
+                    params: { minutes: String(minutes) },
+                  } as Href)
+                }
+                style={styles.quickSessionOption}
+              >
+                <Text style={styles.quickSessionValue}>{minutes}</Text>
+                <Text style={styles.quickSessionUnit}>phút</Text>
+              </MotionPressable>
+            ))}
+          </View>
         </View>
-        <View style={styles.studyTrack}>
-          <View style={[styles.studyFill, { width: `${studyProgress * 100}%` }]} />
-        </View>
-        <PrimaryButton
-          label="Học hôm nay"
-          onPress={() => router.push("/daily" as Href)}
+      ) : null}
+
+      {featureFlags.enabled("comebackPrompt") && comeback ? (
+        <MotionPressable
+          haptic
+          accessibilityLabel={`${comeback.title}. ${comeback.message} Bắt đầu phiên ${comeback.minutes} phút.`}
+          onPress={() =>
+            router.push({
+              pathname: "/daily",
+              params: { minutes: String(comeback.minutes) },
+            } as Href)
+          }
+          style={styles.comeback}
+        >
+          <View style={styles.comebackCopy}>
+            <Text style={styles.comebackTitle}>
+              {comeback.title} · {comeback.daysAway} ngày
+            </Text>
+            <Text style={styles.comebackMessage}>
+              {comeback.message.trim()}
+            </Text>
+          </View>
+          <View style={styles.comebackAction}>
+            <Text style={styles.comebackActionText}>
+              {comeback.minutes} phút
+            </Text>
+          </View>
+        </MotionPressable>
+      ) : null}
+
+      {(stats?.due ?? 0) > 0 ? (
+        <DueReviewCard
+          count={stats?.due ?? 0}
+          onPress={() => router.push("/review")}
         />
-      </View>
-      <DueReviewCard
-        count={stats?.due ?? 0}
-        onPress={() => router.push("/review")}
-      />
+      ) : null}
+      <DailyQuestCard items={quests} />
+
       <View>
-        <Text style={styles.section}>Học nhanh</Text>
+        <Text style={styles.section}>Bắt đầu nhanh</Text>
         <View style={styles.quickGrid}>
-          {quick.map(([label, icon, href]) => (
-            <Pressable
+          {primaryQuick.map(([label, icon, href]) => (
+            <MotionPressable
               key={label}
+              haptic
+              accessibilityLabel={label}
               onPress={() => router.push(href as Href)}
               style={styles.quick}
             >
               <View style={styles.quickIcon}>
-                <Ionicons name={icon} size={22} color={colors.primary} />
+                <Ionicons name={icon} size={22} color={theme.primaryText} />
               </View>
               <Text style={styles.quickText}>{label}</Text>
-            </Pressable>
+            </MotionPressable>
+          ))}
+        </View>
+        <Text style={[styles.section, { marginTop: spacing.lg }]}>
+          Khám phá theo nhu cầu
+        </Text>
+        <View style={styles.toolGrid}>
+          {toolHubs.map(([label, icon, href, detail]) => (
+            <MotionPressable
+              key={label}
+              haptic
+              accessibilityLabel={`${label}. ${detail}`}
+              onPress={() => router.push(href as unknown as Href)}
+              style={styles.hub}
+            >
+              <Ionicons name={icon} size={23} color={theme.primaryText} />
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={styles.hubTitle}>{label}</Text>
+                <Text style={styles.hubDetail}>{detail}</Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={theme.textMuted}
+              />
+            </MotionPressable>
           ))}
         </View>
       </View>
+
       {daily ? (
         <View>
           <Text style={styles.section}>今日词汇 · Từ hôm nay</Text>
-          <Pressable
+          <MotionPressable
+            haptic
+            accessibilityLabel={`Mở từ hôm nay: ${daily.simplified}`}
             onPress={() => router.push(`/word/${daily.id}`)}
-            style={[card, styles.daily]}
+            style={styles.daily}
           >
             <View style={styles.dailyIcon}>
               <Text style={styles.dailyMark}>字</Text>
@@ -162,110 +399,212 @@ export default function Home() {
               <Text style={styles.muted}>{daily.primaryMeaningVi}</Text>
             </View>
             <AudioButton text={daily.simplified} />
-          </Pressable>
+          </MotionPressable>
         </View>
       ) : null}
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  top: {
-    paddingTop: spacing.xl,
-    gap: spacing.xs,
-  },
-  topLine: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  hello: { color: colors.textMuted, fontSize: 15 },
-  question: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: "900",
-  },
-  streak: {
-    flexDirection: "row",
-    gap: 4,
-    backgroundColor: "#FFF4DD",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: radius.pill,
-  },
-  streakText: { color: colors.warning, fontWeight: "800", flexShrink: 1 },
-  focus: { backgroundColor: colors.primary, gap: spacing.lg },
-  focusTop: { flexDirection: "row", justifyContent: "space-between" },
-  focusCopy: { flex: 1, minWidth: 0, gap: 5 },
-  eyebrow: {
-    color: "#C9D5FF",
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 1,
-  },
-  focusTitle: { color: "#fff", fontSize: 22, fontWeight: "900" },
-  softText: { color: "#D5DEFF", fontSize: 14 },
-  studyText: { color: "#D5DEFF", fontSize: 13, fontWeight: "700" },
-  percent: { color: "#fff", fontSize: 21, fontWeight: "900" },
-  track: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#FFFFFF33",
-    overflow: "hidden",
-  },
-  fill: { height: "100%", backgroundColor: colors.accent, borderRadius: 4 },
-  studyTrack: {
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: "#FFFFFF24",
-    overflow: "hidden",
-  },
-  studyFill: { height: "100%", backgroundColor: "#FFFFFF", borderRadius: 3 },
-  section: {
-    color: colors.text,
-    fontSize: typography.subtitle,
-    fontWeight: "800",
-    marginBottom: spacing.md,
-  },
-  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  quick: {
-    width: "30%",
-    flexGrow: 1,
-    minHeight: 104,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.sm,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.sm,
-  },
-  quickIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: colors.primarySoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  quickText: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: "700",
-    textAlign: "center",
-  },
-  daily: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  dailyIcon: {
-    width: 60,
-    height: 76,
-    borderRadius: radius.md,
-    backgroundColor: "#FFF2E4",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  dailyMark: { color: colors.warning, fontSize: 32, fontWeight: "700" },
-  dailyCopy: { flex: 1, gap: 2 },
-  dailyHanzi: { color: colors.text, fontSize: 29, fontWeight: "800" },
-  muted: { color: colors.textMuted, fontSize: 14 },
-});
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  return StyleSheet.create({
+    top: { paddingTop: spacing.xl, gap: spacing.xs },
+    topLine: {
+      alignItems: "center",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      gap: spacing.sm,
+    },
+    hello: { color: theme.textMuted, fontSize: 15, fontWeight: "700" },
+    rewardRow: { alignItems: "center", flexDirection: "row", gap: spacing.xs },
+    streak: {
+      backgroundColor: theme.warningSoft,
+      borderRadius: radius.pill,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+    },
+    streakText: { color: theme.warning, fontSize: 12, fontWeight: "900" },
+    xp: {
+      backgroundColor: theme.primarySoft,
+      borderRadius: radius.pill,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+    },
+    xpText: { color: theme.primaryText, fontSize: 12, fontWeight: "900" },
+    question: {
+      color: theme.textPrimary,
+      fontSize: 25,
+      fontWeight: "900",
+      letterSpacing: -0.4,
+    },
+    hero: { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1, borderRadius: radius.lg, overflow: "hidden", shadowColor: theme.shadow, shadowOpacity: 0.1, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 3 },
+    heroScene: { position: "relative" },
+    sceneCaption: { position: "absolute", left: spacing.md, bottom: spacing.md, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.86)" },
+    sceneCaptionChinese: { color: "#A94D45", fontSize: 16, fontWeight: "900" },
+    sceneCaptionText: { color: "#334239", fontSize: 10, letterSpacing: 0.8, fontWeight: "900" },
+    heroContent: { gap: spacing.md, padding: spacing.lg },
+    heroTop: {
+      flexDirection: "row",
+      gap: spacing.md,
+      justifyContent: "space-between",
+    },
+    heroCopy: { flex: 1, gap: spacing.xs },
+    eyebrow: {
+      color: theme.success,
+      fontSize: 10,
+      fontWeight: "900",
+      letterSpacing: 1,
+    },
+    heroTitle: {
+      color: theme.textPrimary,
+      fontSize: 21,
+      fontWeight: "900",
+      lineHeight: 27,
+    },
+    heroSubtitle: { color: theme.textSecondary, fontSize: 13, lineHeight: 19 },
+    heroSeal: { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, borderColor: "#A94D45", alignItems: "center", justifyContent: "center", transform: [{ rotate: "-7deg" }] },
+    heroSealText: { color: "#A94D45", fontSize: 13, fontWeight: "900", letterSpacing: -0.6 },
+    heroMeta: { flexDirection: "row", justifyContent: "space-between" },
+    heroMetaText: { color: theme.textSecondary, fontSize: 12, fontWeight: "800" },
+    quickSession: {
+      backgroundColor: theme.surface,
+      borderColor: theme.border,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      gap: spacing.md,
+      padding: spacing.lg,
+    },
+    quickSessionTitle: {
+      color: theme.textPrimary,
+      fontSize: 16,
+      fontWeight: "900",
+    },
+    quickSessionCopy: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      marginTop: 2,
+    },
+    quickSessionOptions: { flexDirection: "row", gap: spacing.sm },
+    quickSessionOption: {
+      alignItems: "center",
+      backgroundColor: theme.primarySoft,
+      borderRadius: radius.md,
+      flex: 1,
+      justifyContent: "center",
+      minHeight: 52,
+    },
+    quickSessionValue: {
+      color: theme.primaryText,
+      fontSize: 17,
+      fontWeight: "900",
+    },
+    quickSessionUnit: {
+      color: theme.textMuted,
+      fontSize: 10,
+      fontWeight: "700",
+    },
+    comeback: {
+      alignItems: "center",
+      backgroundColor: theme.infoSoft,
+      borderColor: theme.border,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      flexDirection: "row",
+      gap: spacing.sm,
+      padding: spacing.lg,
+    },
+    comebackCopy: { flex: 1, gap: spacing.xs },
+    comebackTitle: {
+      color: theme.textPrimary,
+      fontSize: 15,
+      fontWeight: "900",
+    },
+    comebackMessage: {
+      color: theme.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    comebackAction: {
+      backgroundColor: theme.surface,
+      borderRadius: radius.pill,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    comebackActionText: {
+      color: theme.primaryText,
+      fontSize: 12,
+      fontWeight: "900",
+    },
+    section: {
+      color: theme.textPrimary,
+      fontSize: typography.subtitle,
+      fontWeight: "800",
+      marginBottom: spacing.md,
+    },
+    quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+    quick: {
+      alignItems: "center",
+      backgroundColor: theme.surface,
+      borderColor: theme.border,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      flexGrow: 1,
+      gap: spacing.sm,
+      justifyContent: "center",
+      minHeight: 92,
+      padding: spacing.sm,
+      width: "45%",
+    },
+    quickIcon: {
+      alignItems: "center",
+      backgroundColor: theme.primarySoft,
+      borderRadius: 14,
+      height: 44,
+      justifyContent: "center",
+      width: 44,
+    },
+    quickText: {
+      color: theme.textPrimary,
+      fontSize: 11,
+      fontWeight: "700",
+      textAlign: "center",
+    },
+    toolGrid: { gap: spacing.sm },
+    hub: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.md,
+      minHeight: 80,
+      padding: spacing.md,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: radius.md,
+    },
+    hubTitle: { color: theme.textPrimary, fontSize: 17, fontWeight: "800" },
+    hubDetail: { color: theme.textMuted, fontSize: 13, lineHeight: 19 },
+    daily: {
+      alignItems: "center",
+      flexDirection: "row",
+      gap: spacing.md,
+      backgroundColor: theme.surface,
+      borderColor: theme.border,
+      borderWidth: 1,
+      borderRadius: radius.lg,
+      padding: spacing.lg,
+    },
+    dailyIcon: {
+      alignItems: "center",
+      backgroundColor: theme.warningSoft,
+      borderRadius: radius.md,
+      height: 76,
+      justifyContent: "center",
+      width: 60,
+    },
+    dailyMark: { color: theme.warning, fontSize: 32, fontWeight: "700" },
+    dailyCopy: { flex: 1, gap: 2 },
+    dailyHanzi: { color: theme.textPrimary, fontSize: 29, fontWeight: "800" },
+    muted: { color: theme.textMuted, fontSize: 14 },
+  });
+}

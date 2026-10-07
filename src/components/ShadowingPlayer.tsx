@@ -5,15 +5,18 @@ import { AppState, StyleSheet, Switch, Text, View } from 'react-native';
 import { LocalVoiceRecorder } from './LocalVoiceRecorder';
 import { PrimaryButton } from './PrimaryButton';
 
-import { card, colors, spacing } from '@/constants/design';
+import { spacing, themedCard } from '@/constants/design';
 import type { ShadowingSentence } from '@/db/speaking';
 import { speakChinese, stopChineseSpeech } from '@/services/audio/chinese-speech';
 import { nextShadowingIndex } from '@/services/speaking/tones';
+import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
 
 /** Shared sentences, local-only recordings. No acoustic score is inferred from replay. */
 export function ShadowingPlayer({ sentences, onPracticed }: {
   sentences: ShadowingSentence[]; onPracticed: (sentenceId: string, attemptId: string) => Promise<void>;
 }) {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   const [index, setIndex] = useState(0);
   const [rate, setRate] = useState(0.82);
   const [pause, setPause] = useState(3);
@@ -91,8 +94,9 @@ export function ShadowingPlayer({ sentences, onPracticed }: {
   if (!sentence) return <Text>Chưa có câu để luyện.</Text>;
   const select = (next: number) => { stop(); setIndex(next); setHeard(null); setReplayed(false); attempt.current = null; setNotice(null); };
   const completed = heard === sentence.id && replayed;
-  return <View style={[card, styles.content]}>
+  return <View style={[themedCard(theme), styles.content]}>
     <Text style={styles.title}>Câu {index + 1}/{sentences.length}</Text>
+    <Text style={styles.copy}>Dùng giọng đọc máy trên thiết bị, không phải bản thu người bản ngữ.</Text>
     {showHanzi ? <Text selectable style={styles.hanzi}>{sentence.hanzi}</Text> : null}
     {showPinyin ? <Text selectable style={styles.pinyin}>{sentence.pinyin}</Text> : null}
     {showTranslation ? <Text selectable style={styles.copy}>{sentence.translation_vi}</Text> : null}
@@ -125,6 +129,6 @@ export function ShadowingPlayer({ sentences, onPracticed }: {
   </View>;
 }
 
-const styles = StyleSheet.create({ content: { gap: spacing.sm }, title: { color: colors.primary, fontWeight: '800' },
-  hanzi: { color: colors.text, fontSize: 28, fontWeight: '800' }, pinyin: { color: colors.primary, fontSize: 18 },
-  copy: { color: colors.textMuted, fontSize: 13, lineHeight: 20 }, row: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center', justifyContent: 'space-between' }, flex: { flex: 1 } });
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({ content: { gap: spacing.sm }, title: { color: theme.primaryText, fontWeight: '800' },
+  hanzi: { color: theme.textPrimary, fontSize: 28, fontWeight: '800' }, pinyin: { color: theme.primaryText, fontSize: 18 },
+  copy: { color: theme.textMuted, fontSize: 13, lineHeight: 20 }, row: { flexDirection: 'row', gap: spacing.sm, alignItems: 'center', justifyContent: 'space-between' }, flex: { flex: 1 } }); }

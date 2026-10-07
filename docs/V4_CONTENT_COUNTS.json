@@ -1,0 +1,80 @@
+{
+  "generatedAt": "2026-10-01T08:32:27.567Z",
+  "vocabularyRows": 11330,
+  "officialReferenceVerified": false,
+  "officialCoveragePercent": null,
+  "grammarPoints": 40,
+  "vietnameseContrasts": 12,
+  "confusablePairs": 6,
+  "confusableQuestions": 12,
+  "miniTestProfiles": 7,
+  "miniTestQuestions": 28,
+  "writingTasks": 7,
+  "translationTasks": 7,
+  "speakingPrompts": 7,
+  "bands": [
+    {
+      "band": "1",
+      "vocabularyRows": 507,
+      "grammarPoints": 10,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    },
+    {
+      "band": "2",
+      "vocabularyRows": 750,
+      "grammarPoints": 8,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    },
+    {
+      "band": "3",
+      "vocabularyRows": 955,
+      "grammarPoints": 10,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    },
+    {
+      "band": "4",
+      "vocabularyRows": 979,
+      "grammarPoints": 6,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    },
+    {
+      "band": "5",
+      "vocabularyRows": 1078,
+      "grammarPoints": 3,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    },
+    {
+      "band": "6",
+      "vocabularyRows": 1154,
+      "grammarPoints": 3,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    },
+    {
+      "band": "7-9",
+      "vocabularyRows": 5907,
+      "grammarPoints": 0,
+      "miniTestQuestions": 4,
+      "writingTasks": 1,
+      "translationTasks": 1,
+      "speakingPrompts": 1
+    }
+  ]
+}

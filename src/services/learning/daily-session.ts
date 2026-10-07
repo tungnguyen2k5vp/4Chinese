@@ -26,6 +26,7 @@ export type DailySessionPlan = {
   skillPractices: DailySkillPractice[];
   primaryReviewMode: ReviewMode;
   remainingNewToday: number;
+  pacing: "steady" | "light";
 };
 
 export type DailySessionInput = {
@@ -37,8 +38,13 @@ export type DailySessionInput = {
   learnSessionSize: number;
   reviewSessionSize: number;
   studyTimeGoalMinutes: number;
+  /** Explicit short-session budget; when present it is independent of today's remaining goal. */
+  sessionDurationMinutes?: number;
   studiedSecondsToday?: number;
   recentMistakeCount?: number;
+  /** Incorrect answers among the five most recent resolved review attempts. */
+  recentWrongAttempts?: number;
+  mistakeFocusLabel?: string;
   totalDueCount?: number;
   skillStats: SkillMasteryMetric[];
 };
@@ -67,8 +73,10 @@ function uniqueWords(words: Vocabulary[], limit: number, excludedIds = new Set<s
  */
 export function buildDailySessionPlan(input: DailySessionInput): DailySessionPlan {
   const safeNumber = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0;
-  const remainingSeconds = Math.max(0, Math.floor(safeNumber(input.studyTimeGoalMinutes) * 60
-    - safeNumber(input.studiedSecondsToday ?? 0)));
+  const remainingSeconds = input.sessionDurationMinutes == null
+    ? Math.max(0, Math.floor(safeNumber(input.studyTimeGoalMinutes) * 60
+      - safeNumber(input.studiedSecondsToday ?? 0)))
+    : Math.floor(safeNumber(input.sessionDurationMinutes) * 60);
   let budget = remainingSeconds;
   // Estimates, not a promise of completion time. Never change a card's due date.
   const reviewSeconds = 45;
@@ -86,9 +94,11 @@ export function buildDailySessionPlan(input: DailySessionInput): DailySessionPla
     0,
     Math.trunc(input.dailyNewWordGoal) - Math.max(0, Math.trunc(input.learnedToday)),
   );
+  const wordCapacity = Math.min(Math.max(0, Math.trunc(input.learnSessionSize)), remainingNewToday, Math.floor(budget / newWordSeconds));
+  const pacing: DailySessionPlan["pacing"] = safeNumber(input.recentWrongAttempts ?? 0) >= 3 ? "light" : "steady";
   const newWords = uniqueWords(
     input.unlearnedWords,
-    Math.min(Math.max(0, Math.trunc(input.learnSessionSize)), remainingNewToday, Math.floor(budget / newWordSeconds)),
+    pacing === "light" ? Math.ceil(wordCapacity / 2) : wordCapacity,
     new Set(dueIds),
   );
   budget -= newWords.length * newWordSeconds;
@@ -123,7 +133,10 @@ export function buildDailySessionPlan(input: DailySessionInput): DailySessionPla
   const listening = input.skillStats.find((item) => item.skill === "listening");
   if (meaning?.accuracy != null && listening?.accuracy != null && meaning.accuracy - listening.accuracy > 20)
     recommendations.push("Khả năng nghe thấp hơn hiểu nghĩa trên 20 điểm; nên luyện nghe thêm.");
-  if ((input.recentMistakeCount ?? 0) > 0) recommendations.push("Mở sổ lỗi để xem các nội dung còn cần củng cố.");
+  if ((input.recentMistakeCount ?? 0) > 0) recommendations.push(input.mistakeFocusLabel
+    ? "Ưu tiên sổ lỗi " + input.mistakeFocusLabel + " trước khi học thêm từ mới."
+    : "Mở sổ lỗi để xem các nội dung còn cần củng cố.");
+  if (pacing === "light") recommendations.push("3 trong 5 lượt gần đây chưa đúng: phiên này giảm lượng từ mới; bạn có thể nghỉ ngắn giữa các lượt. Lịch SRS không thay đổi.");
 
   return {
     remainingSeconds,
@@ -137,5 +150,6 @@ export function buildDailySessionPlan(input: DailySessionInput): DailySessionPla
     skillPractices,
     primaryReviewMode,
     remainingNewToday,
+    pacing,
   };
 }

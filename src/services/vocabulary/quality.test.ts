@@ -66,4 +66,12 @@ describe("vocabulary quality corrections", () => {
     expect(cleanLearnerMeaning("rau (LT: 棵[ke1])")).toBe("rau");
     expect(cleanLearnerMeaning("siêu thị (viết tắt của 超级市场[chao1 ji2 shi4 chang3])")).toBe("siêu thị");
   });
+
+  it("does not merge distinct readings of a multi-reading CSV headword", () => {
+    const corrected = applyVocabularyQualityOverride({
+      ...word("\u4e3a"),
+      primaryMeaningVi: "bi\u1ebfn th\u1ec3 c\u1ee7a \u70ba|\u4e3a[wei2]",
+    });
+    expect(corrected.primaryMeaningVi).toBe("bi\u1ebfn th\u1ec3 c\u1ee7a \u70ba|\u4e3a[wei2]");
+  });
 });

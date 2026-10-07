@@ -3,13 +3,16 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { awardActivityXp } from './gamification';
 import { recordPracticeResult } from './mistakes';
 
+import { advancedGrammarSeed } from '@/data/grammar-hsk-advanced';
+import { grammarV5Expansion, validateGrammarV5DraftPack } from '@/data/grammar-v5-expansion';
+import { vietnameseContrasts } from '@/data/vietnamese-contrasts';
 import type { Vocabulary } from '@/types/models';
 
 type ExampleSeed = { hanzi: string; pinyin: string; vi: string; en: string; words: string[] };
 export type GrammarSeed = { id: string; title: string; pattern: string; explanation: string; hsk: string;
   quiz: string; answer: string; options: string[]; examples: ExampleSeed[] };
 
-export const grammarSeed: GrammarSeed[] = [
+const foundationGrammarSeed: GrammarSeed[] = [
   { id: 'gram-shi', title: 'Câu với 是', pattern: 'A + 是 + B', explanation: 'Dùng 是 để nói A là B (danh từ).', hsk: '1',
     quiz: '我___学生。', answer: '是', options: ['在', '是', '有', '不'], examples: [
       { hanzi: '我是学生。', pinyin: 'Wǒ shì xuésheng.', vi: 'Tôi là học sinh.', en: 'I am a student.', words: ['我', '是', '学生'] },
@@ -53,29 +56,37 @@ export const grammarSeed: GrammarSeed[] = [
     ] },
 ];
 
+export const grammarSeed: GrammarSeed[] = [...foundationGrammarSeed, ...advancedGrammarSeed, ...vietnameseContrasts.map((item) => item.seed)];
+
 export type GrammarPoint = { id: string; title: string; pattern: string; explanation_vi: string;
-  hsk_level: string; attempts: number; correct: number };
+  hsk_level: string; attempts: number; correct: number; distinct_exercise_types: number;
+  mastery_status: 'NEW' | 'PRACTICING' | 'MASTERED' };
 export type GrammarExample = { id: string; hanzi: string; pinyin: string; translation_vi: string;
   translation_en: string | null };
 
-export async function seedGrammarContent(db: SQLiteDatabase, vocabulary: Vocabulary[]): Promise<void> {
+/** Draft preview is an explicit editorial operation, not normal learner delivery. */
+export async function seedGrammarContent(db: SQLiteDatabase, vocabulary: Vocabulary[],
+  options: { includePendingDrafts?: boolean } = {}): Promise<void> {
+  const drafts = validateGrammarV5DraftPack(grammarV5Expansion);
   const wordIds = new Map<string, string>();
   for (const word of vocabulary) if (!wordIds.has(word.simplified)) wordIds.set(word.simplified, word.id);
   const existingIds = new Set((await db.getAllAsync<{ id: string }>('SELECT id FROM vocabulary')).map((row) => row.id));
   await db.withTransactionAsync(async () => {
-    for (const grammar of grammarSeed) {
+    for (const grammar of options.includePendingDrafts ? [...grammarSeed, ...drafts] : grammarSeed) {
+      const pendingV5 = grammar.id.startsWith('v5-');
+      const pending = pendingV5 || grammar.id.startsWith('vn-');
       await db.runAsync(`INSERT OR IGNORE INTO grammar_points
-        (id,title,pattern,explanation_vi,hsk_level,difficulty,created_at) VALUES(?,?,?,?,?,?,?)`,
-      grammar.id, grammar.title, grammar.pattern, grammar.explanation, grammar.hsk, 1, '2026-09-27T00:00:00.000Z');
+        (id,title,pattern,explanation_vi,hsk_level,difficulty,created_at,is_active) VALUES(?,?,?,?,?,?,?,?)`,
+      grammar.id, grammar.title, grammar.pattern, grammar.explanation, grammar.hsk, 1, '2026-09-27T00:00:00.000Z', pendingV5 ? 0 : 1);
       const grammarWord = wordIds.get(grammar.answer);
       if (grammarWord && existingIds.has(grammarWord)) await db.runAsync(`INSERT OR IGNORE INTO grammar_vocabulary_links(grammar_id,vocabulary_id) VALUES(?,?)`,
         grammar.id, grammarWord);
       for (const [index, example] of grammar.examples.entries()) {
         const id = `sentence-${grammar.id}-${index + 1}`;
         await db.runAsync(`INSERT OR IGNORE INTO sentences
-          (id,hanzi,pinyin,translation_vi,translation_en,hsk_level,difficulty,topic,source,created_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?)`, id, example.hanzi, example.pinyin, example.vi, example.en,
-        grammar.hsk, 1, 'grammar', '4Chinese curriculum v1', '2026-09-27T00:00:00.000Z');
+          (id,hanzi,pinyin,translation_vi,translation_en,hsk_level,difficulty,topic,source,created_at,review_status,is_active)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, example.hanzi, example.pinyin, example.vi, example.en,
+        grammar.hsk, 1, 'grammar', pendingV5 ? '4Chinese original Vietnamese-first V5 draft | AI_ASSISTED | PENDING' : grammar.id.startsWith('vn-') ? '4Chinese original contrasts v1 | CURATED | UNREVIEWED' : '4Chinese curriculum v1', '2026-09-27T00:00:00.000Z', pending ? 'PENDING' : 'REVIEWED', pendingV5 ? 0 : 1);
         await db.runAsync(`INSERT OR IGNORE INTO grammar_examples(grammar_id,sentence_id,sort_order) VALUES(?,?,?)`,
           grammar.id, id, index);
         await db.runAsync(`INSERT OR IGNORE INTO sentence_grammar(sentence_id,grammar_id) VALUES(?,?)`, id, grammar.id);
@@ -86,20 +97,40 @@ export async function seedGrammarContent(db: SQLiteDatabase, vocabulary: Vocabul
         }
       }
     }
+    // Repair rows staged by the partial implementation, even on a normal seed run.
+    // These exact IDs are reserved drafts, not a publication/update path. Keep content and learner data unchanged.
+    for (const draft of drafts) {
+      await db.runAsync('UPDATE grammar_points SET is_active=0 WHERE id=?', draft.id);
+      for (const index of draft.examples.keys()) {
+        await db.runAsync('UPDATE sentences SET is_active=0 WHERE id=?', `sentence-${draft.id}-${index + 1}`);
+      }
+    }
   });
 }
 
-export async function listGrammarPoints(db: SQLiteDatabase): Promise<GrammarPoint[]> {
+export async function listGrammarPoints(db: SQLiteDatabase, hskBand?: string): Promise<GrammarPoint[]> {
+  const bandClause = hskBand === '7-9'
+    ? `AND g.hsk_level IN ('7-9','7','8','9')`
+    : hskBand ? 'AND g.hsk_level=?' : '';
+  const params = hskBand && hskBand !== '7-9' ? [hskBand] : [];
   return db.getAllAsync<GrammarPoint>(`SELECT g.id,g.title,g.pattern,g.explanation_vi,g.hsk_level,
-    COALESCE(p.attempts,0) AS attempts,COALESCE(p.correct,0) AS correct
+    COALESCE(p.attempts,0) AS attempts,COALESCE(p.correct,0) AS correct,
+    COALESCE((SELECT COUNT(DISTINCT a.exercise_type) FROM grammar_attempts a WHERE a.grammar_id=g.id),0) AS distinct_exercise_types,
+    CASE WHEN COALESCE(p.attempts,0) >= 3
+      AND COALESCE(p.correct,0) * 100 >= COALESCE(p.attempts,0) * 80
+      AND COALESCE((SELECT COUNT(DISTINCT a.exercise_type) FROM grammar_attempts a WHERE a.grammar_id=g.id),0) >= 2
+      THEN 'MASTERED'
+      WHEN COALESCE(p.attempts,0) > 0 THEN 'PRACTICING'
+      ELSE 'NEW' END AS mastery_status
     FROM grammar_points g LEFT JOIN grammar_progress p ON p.grammar_id=g.id
-    ORDER BY CAST(g.hsk_level AS INTEGER),g.difficulty,g.id`);
+    WHERE g.is_active=1 AND g.id NOT GLOB 'v5-*'
+    ${bandClause} ORDER BY CAST(g.hsk_level AS INTEGER),g.difficulty,g.id`, ...params);
 }
 
 export async function listGrammarExamples(db: SQLiteDatabase, grammarId: string): Promise<GrammarExample[]> {
   return db.getAllAsync<GrammarExample>(`SELECT s.id,s.hanzi,s.pinyin,s.translation_vi,s.translation_en
-    FROM grammar_examples e JOIN sentences s ON s.id=e.sentence_id
-    WHERE e.grammar_id=? ORDER BY e.sort_order,s.id`, grammarId);
+    FROM grammar_examples e JOIN sentences s ON s.id=e.sentence_id JOIN grammar_points g ON g.id=e.grammar_id
+    WHERE e.grammar_id=? AND g.is_active=1 AND s.is_active=1 AND e.grammar_id NOT GLOB 'v5-*' ORDER BY e.sort_order,s.id`, grammarId);
 }
 
 export async function recordGrammarAnswer(db: SQLiteDatabase, grammarId: string, correct: boolean,
@@ -109,6 +140,8 @@ export async function recordGrammarAnswer(db: SQLiteDatabase, grammarId: string,
   const exerciseType = attempt?.exerciseType ?? 'grammar_fill_blank';
   if (!attemptId || !/^grammar_(choice|fill_blank|reorder|translation|correction)$/.test(exerciseType)) throw new Error('INVALID_GRAMMAR_ATTEMPT');
   await db.withTransactionAsync(async () => {
+    const visible = await db.getFirstAsync<{ id: string }>("SELECT id FROM grammar_points WHERE id=? AND is_active=1 AND id NOT GLOB 'v5-*'", grammarId);
+    if (!visible) throw new Error('GRAMMAR_NOT_LEARNER_VISIBLE');
     const inserted = await db.runAsync('INSERT OR IGNORE INTO grammar_attempts(id,grammar_id,exercise_type,correct,created_at) VALUES(?,?,?,?,?)',
       attemptId, grammarId, exerciseType, correct ? 1 : 0, now);
     if (!inserted.changes) return;

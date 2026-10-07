@@ -18,7 +18,8 @@ export async function listToneWords(db: SQLiteDatabase): Promise<ToneWord[]> {
 
 export async function listShadowingSentences(db: SQLiteDatabase): Promise<ShadowingSentence[]> {
   return db.getAllAsync<ShadowingSentence>(`SELECT id,hanzi,pinyin,translation_vi FROM sentences
-    WHERE length(hanzi)<=120 ORDER BY CAST(hsk_level AS INTEGER),difficulty,id LIMIT 100`);
+    WHERE is_active=1 AND review_status='REVIEWED' AND id NOT GLOB 'sentence-v5-*'
+    AND length(hanzi)<=120 ORDER BY CAST(hsk_level AS INTEGER),difficulty,id LIMIT 100`);
 }
 
 export async function getSpeakingSummary(db: SQLiteDatabase): Promise<SpeakingSummary> {
@@ -36,6 +37,11 @@ export async function saveSpeakingPractice(db: SQLiteDatabase, input: {
     throw new Error('INVALID_SPEAKING_PRACTICE');
   }
   await db.withTransactionAsync(async () => {
+    if (input.kind === 'shadowing') {
+      const allowed = await db.getFirstAsync<{ id: string }>(`SELECT id FROM sentences WHERE id=?
+        AND is_active=1 AND review_status='REVIEWED' AND id NOT GLOB 'sentence-v5-*'`, input.targetId);
+      if (!allowed) throw new Error('SHADOWING_SENTENCE_NOT_PUBLISHED');
+    }
     const result = await db.runAsync(`INSERT OR IGNORE INTO speaking_practice
       (id,kind,vocabulary_id,sentence_id,correct,created_at) VALUES(?,?,?,?,?,?)`, input.id, input.kind,
     input.kind === 'tone' ? input.targetId : null, input.kind === 'shadowing' ? input.targetId : null,

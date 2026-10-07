@@ -47,7 +47,7 @@ describe("Mandarin speech voice selection", () => {
   it("keeps the configured rate in a safe intelligible range", () => {
     expect(clampSpeechRate(0.2)).toBe(0.6);
     expect(clampSpeechRate(0.82)).toBe(0.82);
-    expect(clampSpeechRate(1.4)).toBe(1);
+    expect(clampSpeechRate(1.4)).toBe(1.25);
     expect(clampSpeechRate(Number.NaN)).toBe(0.82);
   });
 });

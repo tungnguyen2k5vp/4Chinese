@@ -1,5 +1,4 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -7,12 +6,15 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
 import { HanziHandwritingPad } from "@/components/HanziHandwritingPad";
+import { PersonalContextCard } from '@/components/PersonalContextCard';
 import { PinyinHanziComposer } from "@/components/PinyinHanziComposer";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { StudySettingsSheet } from "@/components/StudySettingsSheet";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
+import { radius, spacing, themedCard } from "@/constants/design";
+import { recordLessonActivityEvidence } from '@/db/learning-path';
 import {
   getProgress,
   getSettings,
@@ -25,6 +27,8 @@ import {
   speakChinese,
   stopChineseSpeech,
 } from "@/services/audio/chinese-speech";
+import { playFeedback } from "@/services/feedback/feedback-service";
+import { normalizeQuickSessionMinutes } from "@/services/learning/next-best-action";
 import type { PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
 import { evaluateComposeAnswer } from "@/services/pinyin-ime/composeAnswer";
 import { exerciseForReviewMode } from "@/services/review/exercise";
@@ -39,6 +43,9 @@ import {
 import { resolveReviewMode } from "@/services/review/review-mode";
 import { applyReview, formatDueInterval } from "@/services/srs/scheduler";
 import { useAppStore } from "@/stores/app-store";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
+import { visualModePresentation } from "@/theme/visual-modes";
 import type {
   ProgressRow,
   ReviewMode,
@@ -46,12 +53,21 @@ import type {
   UserSettings,
 } from "@/types/models";
 
-const ratingMeta: [ReviewRating, string, string][] = [
-  ["again", "Quên", colors.danger],
-  ["hard", "Khó", colors.warning],
-  ["good", "Nhớ", colors.success],
-  ["easy", "Dễ", colors.primary],
+const ratingMeta: [ReviewRating, string][] = [
+  ["again", "Quên"],
+  ["hard", "Khó"],
+  ["good", "Nhớ"],
+  ["easy", "Dễ"],
 ];
+
+function ratingColor(theme: ThemeTokens, rating: ReviewRating) {
+  switch (rating) {
+    case "again": return theme.error;
+    case "hard": return theme.warning;
+    case "good": return theme.success;
+    case "easy": return theme.primaryText;
+  }
+}
 
 const writingModes = new Set<ReviewMode>([
   "meaning-hanzi",
@@ -61,11 +77,18 @@ const writingModes = new Set<ReviewMode>([
   "cloze",
 ]);
 
+function secondsSince(startedAt: number): number {
+  return Math.max(0, Math.min(43_200, Math.round((Date.now() - startedAt) / 1_000)));
+}
+
 export default function ReviewSession() {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   const db = useSQLiteContext();
-  const { mode: requestedMode } = useLocalSearchParams<{ mode?: string }>();
-  useStudySession(db);
+  const { mode: requestedMode, lessonActivityId, quickSessionMinutes: requestedQuickMinutes, quickStartedAt } = useLocalSearchParams<{ mode?: string; lessonActivityId?: string; quickSessionMinutes?: string; quickStartedAt?: string }>();
+  const quickMinutes = normalizeQuickSessionMinutes(requestedQuickMinutes);
   const source = useAppStore((state) => state.reviewQueue);
+  const completeStudySession = useStudySession(db, source.length ? "review" : undefined);
   const clear = useAppStore((state) => state.clearSession);
   const setLastReviewedWord = useAppStore((state) => state.setLastReviewedWord);
   const [queue] = useState(() => buildInterleavedReviewQueue(source));
@@ -105,6 +128,8 @@ export default function ReviewSession() {
   });
   const [wrongInSession, setWrongInSession] = useState(0);
   const started = useRef(0);
+  const sessionStartedAt = useRef(0);
+  useEffect(() => { sessionStartedAt.current = Date.now(); }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const setGlobalSettings = useAppStore((state) => state.setSettings);
   const entry = queue[index];
@@ -130,6 +155,7 @@ export default function ReviewSession() {
   // meaning prompt as if it were a contextual fill-in-the-blank.
   const mode = requested === "cloze" && !word?.examples.some((item) => item.chinese.includes(word.simplified))
     ? "meaning-hanzi" : requested;
+  const visualMode = visualModePresentation(theme, "REVIEW");
   const exercise = exerciseForReviewMode(mode);
   const needsWriting = writingModes.has(mode);
 
@@ -322,6 +348,7 @@ export default function ReviewSession() {
         setSaving(false);
         return;
       }
+      if (lessonActivityId) void recordLessonActivityEvidence(db, lessonActivityId, "REVIEW_ATTEMPT_RECORDED", word.id).catch(() => undefined);
       nextStats = {
         correct: stats.correct + (passedWord ? 1 : 0),
         wrong: stats.wrong + (passedWord ? 0 : 1),
@@ -334,18 +361,13 @@ export default function ReviewSession() {
       };
       setStats(nextStats);
     }
-    if (settings?.hapticEnabled) {
-      void Haptics.notificationAsync(
-        passedAttempt
-          ? Haptics.NotificationFeedbackType.Success
-          : Haptics.NotificationFeedbackType.Error,
-      );
-    }
+    void playFeedback(passedAttempt ? 'success' : 'error', { hapticEnabled: settings?.hapticEnabled, soundEnabled: settings?.soundEnabled });
     if (index >= queue.length - 1) {
       setLastReviewedWord(word, expectedScript);
+      completeStudySession();
       clear();
       router.replace(
-        `/review/result?total=${source.length}&correct=${nextStats.correct}&wrong=${nextStats.wrong}&up=${nextStats.up}&same=${nextStats.same}&down=${nextStats.down}&deep=${nextStats.deep}`,
+        `/review/result?total=${source.length}&correct=${nextStats.correct}&wrong=${nextStats.wrong}&up=${nextStats.up}&same=${nextStats.same}&down=${nextStats.down}&deep=${nextStats.deep}&elapsedSeconds=${secondsSince(sessionStartedAt.current)}${quickMinutes == null ? "" : `&quickSessionMinutes=${quickMinutes}&quickStartedAt=${encodeURIComponent(quickStartedAt ?? "")}`}`,
       );
       return;
     }
@@ -414,13 +436,7 @@ export default function ReviewSession() {
           : "Chính xác! Bạn đã chọn đúng chữ Hán."
         : "Chưa đúng. Đáp án đã hiện để bạn ghi nhớ và ôn lại sớm hơn.",
     );
-    if (settings?.hapticEnabled) {
-      void Haptics.notificationAsync(
-        outcome !== "FAIL"
-          ? Haptics.NotificationFeedbackType.Success
-          : Haptics.NotificationFeedbackType.Error,
-      );
-    }
+    void playFeedback(outcome !== "FAIL" ? 'success' : 'error', { hapticEnabled: settings?.hapticEnabled, soundEnabled: settings?.soundEnabled });
   };
 
   const revealAnswer = () => {
@@ -459,14 +475,7 @@ export default function ReviewSession() {
         <Text style={styles.counter}>
           {index + 1} / {queue.length}
         </Text>
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              { width: `${sessionProgress * 100}%` },
-            ]}
-          />
-        </View>
+        <AnimatedProgressBar progress={sessionProgress} color={visualMode.accent} trackColor={theme.border} accessibilityLabel={"Ti\u1ebfn \u0111\u1ed9 bu\u1ed5i \u00f4n"} style={styles.progressTrack} />
         <Text style={styles.level}>Cấp {progress?.memoryLevel ?? 1}</Text>
         <Pressable
           accessibilityRole="button"
@@ -478,7 +487,7 @@ export default function ReviewSession() {
           <Ionicons
             name="settings-outline"
             size={21}
-            color={colors.textMuted}
+            color={theme.textMuted}
           />
         </Pressable>
       </View>
@@ -487,7 +496,7 @@ export default function ReviewSession() {
         sẽ hạ cấp
       </Text>
 
-      <View style={[card, styles.challengeHeader]}>
+      <View style={[themedCard(theme), styles.challengeHeader]}>
         <Text style={styles.challengeLabel}>
           ÔN TẬP · LƯỢT {entry.pass}/3 · {exercise.label}
         </Text>
@@ -520,9 +529,13 @@ export default function ReviewSession() {
         <Text style={styles.challengeHint}>{exercise.prompt}</Text>
       </View>
 
+      <PersonalContextCard key={`${word.id}:${index}`} vocabularyId={word.id}
+        answers={[word.simplified,word.traditional]} reveal={showAnswer}
+        onHint={() => setUsedHint(true)} />
+
       {mode === "hanzi-recall-pinyin-compose" ? (
         <>
-          <View style={[card, styles.composeCard]}>
+          <View style={[themedCard(theme), styles.composeCard]}>
             <Text style={styles.composeInstruction}>
               Hãy nhớ cách đọc và gõ Pinyin:
             </Text>
@@ -533,7 +546,7 @@ export default function ReviewSession() {
               </View>
             ) : null}
           </View>
-          <View style={[card, styles.composerCard]}>
+          <View style={[themedCard(theme), styles.composerCard]}>
             <PinyinHanziComposer
               db={db}
               disabled={composeSubmitted || saving}
@@ -558,7 +571,7 @@ export default function ReviewSession() {
             />
           </View>
           {composeSubmitted ? (
-            <View style={[card, styles.composeResult]}>
+            <View style={[themedCard(theme), styles.composeResult]}>
               <Text
                 style={answerCorrect ? styles.feedbackGood : styles.feedbackBad}
               >
@@ -582,10 +595,12 @@ export default function ReviewSession() {
       ) : null}
 
       {needsWriting ? (
-        <View style={[card, styles.methodCard]}>
+        <View style={[themedCard(theme), styles.methodCard]}>
           <Text style={styles.challengeLabel}>CHỌN CÁCH TRẢ LỜI</Text>
           <View style={styles.methodRow}>
             <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ selected: answerMethod === "handwriting" }}
               onPress={() => {
                 setAnswerMethod("handwriting");
                 setSelectedHanzi("");
@@ -600,7 +615,7 @@ export default function ReviewSession() {
               <Ionicons
                 name="brush-outline"
                 size={19}
-                color={answerMethod === "handwriting" ? "#fff" : colors.primary}
+                color={answerMethod === "handwriting" ? theme.onPrimary : theme.primaryText}
               />
               <Text
                 style={[
@@ -612,6 +627,8 @@ export default function ReviewSession() {
               </Text>
             </Pressable>
             <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ selected: answerMethod === "pinyin" }}
               onPress={() => {
                 setAnswerMethod("pinyin");
                 setRecognizedHanzi("");
@@ -625,7 +642,7 @@ export default function ReviewSession() {
               <Ionicons
                 name="keypad-outline"
                 size={19}
-                color={answerMethod === "pinyin" ? "#fff" : colors.primary}
+                color={answerMethod === "pinyin" ? theme.onPrimary : theme.primaryText}
               />
               <Text
                 style={[
@@ -641,7 +658,7 @@ export default function ReviewSession() {
       ) : null}
 
       {needsWriting && answerMethod === "handwriting" ? (
-        <View style={[card, styles.padCard]}>
+        <View style={[themedCard(theme), styles.padCard]}>
           <HanziHandwritingPad
             key={`${word.id}-${mode}-${entry.pass}`}
             characterCount={Array.from(expectedHanzi).length}
@@ -685,7 +702,7 @@ export default function ReviewSession() {
       ) : null}
 
       {needsWriting && answerMethod === "pinyin" ? (
-        <View style={[card, styles.composerCard]}>
+        <View style={[themedCard(theme), styles.composerCard]}>
           <Text style={styles.optionHint}>
             Gõ pinyin để chọn ứng viên của app, hoặc bật bàn phím Pinyin tiếng
             Trung và chọn Hán tự ngay trên bàn phím.
@@ -788,7 +805,7 @@ export default function ReviewSession() {
 
       {feedback ? <Text style={styles.feedbackMessage}>{feedback}</Text> : null}
       {responseComplete ? (
-        <View style={[card, styles.ratingsCard]}>
+        <View style={[themedCard(theme), styles.ratingsCard]}>
           {answerCorrect ? (
             <>
               <Text style={styles.ratingTitle}>
@@ -819,14 +836,15 @@ export default function ReviewSession() {
                 </View>
               ) : (
                 <View style={styles.ratings}>
-                  {ratingMeta.slice(1).map(([rating, label, color], i) => (
+                  {ratingMeta.slice(1).map(([rating, label], i) => (
                     <Pressable
+                      accessibilityRole="button"
                       disabled={saving}
                       key={rating}
                       onPress={() => void rate(rating)}
-                      style={[styles.rating, { borderColor: color }]}
+                      style={[styles.rating, { borderColor: ratingColor(theme, rating) }]}
                     >
-                      <Text style={[styles.ratingLabel, { color }]}>
+                      <Text style={[styles.ratingLabel, { color: ratingColor(theme, rating) }]}>
                         {label}
                       </Text>
                       <Text style={styles.interval}>
@@ -887,12 +905,17 @@ function OptionCard({
   correctValue: string;
   correct: boolean;
 }) {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
-    <View style={[card, styles.challengeSection]}>
+    <View style={[themedCard(theme), styles.challengeSection]}>
       <Text style={styles.challengeLabel}>{label}</Text>
       <View style={pinyin ? styles.pinyinOptions : styles.challengeOptions}>
         {options.map((option) => (
           <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: selected === option }}
+            accessibilityLabel={option}
             key={option}
             onPress={() => onSelect(option)}
             style={[
@@ -922,167 +945,169 @@ function elapsedMs(start: number): number {
   return Math.max(0, Date.now() - start);
 }
 
-const styles = StyleSheet.create({
-  top: {
-    marginTop: spacing.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.sm,
-  },
-  counter: { color: colors.textMuted, fontWeight: "700", minWidth: 40 },
-  progressTrack: {
-    flex: 1,
-    height: 8,
-    borderRadius: 99,
-    backgroundColor: colors.border,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: 99,
-    backgroundColor: colors.primary,
-  },
-  level: { color: colors.warning, fontWeight: "900" },
-  gear: {
-    width: 34,
-    height: 34,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  progressLabel: {
-    color: colors.textMuted,
-    fontSize: 11,
-    textAlign: "center",
-    marginTop: -spacing.md,
-  },
-  challengeHeader: { alignItems: "center", gap: spacing.sm },
-  composeCard: { alignItems: "center", gap: spacing.sm },
-  composeInstruction: {
-    color: colors.textMuted,
-    fontSize: 14,
-    textAlign: "center",
-    lineHeight: 20,
-  },
-  revealedPinyin: { alignItems: "center", gap: spacing.xs },
-  composerCard: { gap: spacing.md },
-  composeResult: { alignItems: "center", gap: spacing.xs },
-  methodCard: { gap: spacing.sm },
-  methodRow: { flexDirection: "row", gap: spacing.sm },
-  methodButton: {
-    flex: 1,
-    minHeight: 52,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    backgroundColor: colors.surface,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: spacing.xs,
-  },
-  methodButtonActive: { backgroundColor: colors.primary },
-  methodText: { color: colors.primary, fontSize: 12, fontWeight: "900" },
-  methodTextActive: { color: "#fff" },
-  resultHanzi: { color: colors.text, fontSize: 42, fontWeight: "900" },
-  resultPinyin: { fontSize: 24 },
-  resultMeaning: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  challengeLabel: {
-    color: colors.primary,
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.8,
-    textAlign: "center",
-  },
-  challengePrompt: {
-    color: colors.text,
-    fontSize: 25,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  sourceHanzi: {
-    color: colors.text,
-    fontSize: 54,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  sourcePinyin: { fontSize: 25 },
-  challengeHint: {
-    color: colors.textMuted,
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center",
-  },
-  padCard: { alignItems: "center", gap: spacing.sm },
-  answerCheck: { alignItems: "center", gap: spacing.sm },
-  answerPinyin: { fontSize: 24 },
-  recognizedHanzi: {
-    color: colors.text,
-    fontSize: 48,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  challengeStatus: { fontSize: 13, lineHeight: 19, textAlign: "center" },
-  feedbackGood: { color: colors.success },
-  feedbackBad: { color: colors.danger },
-  challengeSection: { gap: spacing.sm },
-  challengeOptions: { gap: spacing.sm },
-  pinyinOptions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  pinyinOption: {
-    flexBasis: "47%",
-    flexGrow: 1,
-    minWidth: 130,
-    paddingHorizontal: spacing.sm,
-  },
-  challengeOption: {
-    minHeight: 50,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.md,
-  },
-  challengeOptionActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primarySoft,
-  },
-  optionText: { color: colors.text, fontSize: 15, fontWeight: "600" },
-  optionHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  correct: { borderColor: colors.success, backgroundColor: "#E7F6F0" },
-  wrong: { borderColor: colors.danger, backgroundColor: "#FDECEC" },
-  actions: { gap: spacing.sm },
-  feedbackMessage: {
-    color: colors.danger,
-    textAlign: "center",
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  selectedSummary: { alignItems: "center" },
-  ratingsCard: { gap: spacing.sm },
-  ratingTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  autoRatings: { flexDirection: "row", gap: spacing.sm },
-  autoButton: { flex: 1 },
-  ratings: { flexDirection: "row", gap: spacing.xs },
-  rating: {
-    flex: 1,
-    minHeight: 72,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    backgroundColor: colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ratingLabel: { fontSize: 12, fontWeight: "900" },
-  interval: {
-    color: colors.textMuted,
-    fontSize: 10,
-    marginTop: 3,
-    textAlign: "center",
-  },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    top: {
+      marginTop: spacing.lg,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+    },
+    counter: { color: theme.textMuted, fontWeight: "700", minWidth: 40 },
+    progressTrack: {
+      flex: 1,
+      height: 8,
+      borderRadius: 99,
+      backgroundColor: theme.border,
+      overflow: "hidden",
+    },
+    progressFill: {
+      height: "100%",
+      borderRadius: 99,
+      backgroundColor: theme.primary,
+    },
+    level: { color: theme.warning, fontWeight: "900" },
+    gear: {
+      width: 44,
+      height: 44,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    progressLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      textAlign: "center",
+      marginTop: -spacing.md,
+    },
+    challengeHeader: { alignItems: "center", gap: spacing.sm },
+    composeCard: { alignItems: "center", gap: spacing.sm },
+    composeInstruction: {
+      color: theme.textSecondary,
+      fontSize: 14,
+      textAlign: "center",
+      lineHeight: 20,
+    },
+    revealedPinyin: { alignItems: "center", gap: spacing.xs },
+    composerCard: { gap: spacing.md },
+    composeResult: { alignItems: "center", gap: spacing.xs },
+    methodCard: { gap: spacing.sm },
+    methodRow: { flexDirection: "row", gap: spacing.sm },
+    methodButton: {
+      flex: 1,
+      minHeight: 52,
+      borderRadius: radius.md,
+      borderWidth: 1.5,
+      borderColor: theme.primaryText,
+      backgroundColor: theme.surface,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: spacing.xs,
+    },
+    methodButtonActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+    methodText: { color: theme.primaryText, fontSize: 12, fontWeight: "900" },
+    methodTextActive: { color: theme.onPrimary },
+    resultHanzi: { color: theme.textPrimary, fontSize: 42, fontWeight: "900" },
+    resultPinyin: { fontSize: 24 },
+    resultMeaning: { color: theme.textPrimary, fontSize: 18, fontWeight: "700" },
+    challengeLabel: {
+      color: theme.primaryText,
+      fontSize: 10,
+      fontWeight: "900",
+      letterSpacing: 0.8,
+      textAlign: "center",
+    },
+    challengePrompt: {
+      color: theme.textPrimary,
+      fontSize: 25,
+      fontWeight: "900",
+      textAlign: "center",
+    },
+    sourceHanzi: {
+      color: theme.textPrimary,
+      fontSize: 54,
+      fontWeight: "900",
+      textAlign: "center",
+    },
+    sourcePinyin: { fontSize: 25 },
+    challengeHint: {
+      color: theme.textMuted,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: "center",
+    },
+    padCard: { alignItems: "center", gap: spacing.sm },
+    answerCheck: { alignItems: "center", gap: spacing.sm },
+    answerPinyin: { fontSize: 24 },
+    recognizedHanzi: {
+      color: theme.textPrimary,
+      fontSize: 48,
+      fontWeight: "900",
+      textAlign: "center",
+    },
+    challengeStatus: { fontSize: 13, lineHeight: 19, textAlign: "center" },
+    feedbackGood: { color: theme.success },
+    feedbackBad: { color: theme.error },
+    challengeSection: { gap: spacing.sm },
+    challengeOptions: { gap: spacing.sm },
+    pinyinOptions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+    pinyinOption: {
+      flexBasis: "47%",
+      flexGrow: 1,
+      minWidth: 130,
+      paddingHorizontal: spacing.sm,
+    },
+    challengeOption: {
+      minHeight: 50,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: radius.md,
+      backgroundColor: theme.surface,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: spacing.md,
+    },
+    challengeOptionActive: {
+      borderColor: theme.primaryText,
+      backgroundColor: theme.primarySoft,
+    },
+    optionText: { color: theme.textPrimary, fontSize: 15, fontWeight: "600" },
+    optionHint: { color: theme.textMuted, fontSize: 12, lineHeight: 18 },
+    correct: { borderColor: theme.success, backgroundColor: theme.successSoft },
+    wrong: { borderColor: theme.error, backgroundColor: theme.errorSoft },
+    actions: { gap: spacing.sm },
+    feedbackMessage: {
+      color: theme.textSecondary,
+      textAlign: "center",
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    selectedSummary: { alignItems: "center" },
+    ratingsCard: { gap: spacing.sm },
+    ratingTitle: {
+      color: theme.textPrimary,
+      fontSize: 17,
+      fontWeight: "900",
+      textAlign: "center",
+    },
+    autoRatings: { flexDirection: "row", gap: spacing.sm },
+    autoButton: { flex: 1 },
+    ratings: { flexDirection: "row", gap: spacing.xs },
+    rating: {
+      flex: 1,
+      minHeight: 72,
+      borderRadius: radius.md,
+      borderWidth: 1.5,
+      backgroundColor: theme.surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    ratingLabel: { fontSize: 12, fontWeight: "900" },
+    interval: {
+      color: theme.textMuted,
+      fontSize: 10,
+      marginTop: 3,
+      textAlign: "center",
+    },
+  });
+}

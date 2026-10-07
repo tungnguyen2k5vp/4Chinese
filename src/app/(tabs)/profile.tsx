@@ -1,28 +1,34 @@
-import Constants from "expo-constants";
 import { router, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { exportLocalBackup, importLocalBackup } from "@/db/backup-repository";
 import { getSettings, saveSettings } from "@/db/repository";
+import { AnalyticsEvent, track } from "@/services/analytics/analytics-service";
+import { getAppVersion, getAppVersionLabel } from '@/services/app/app-version';
 import { createDeviceBackupArchive, hasArchiveRestorePoint, materializeArchiveImages, pickBackup, readRestorePointArchive,
   shareBackupArchive, validateLegacyImageUris, writeBackupArchiveFile, writeRestorePointArchive,
   type PickedBackup } from "@/services/backup/device-archive";
 import { hasRestorePoint, readRestorePointText } from "@/services/backup/file";
 import { parseLocalBackup } from "@/services/backup/format";
+import { getDailyStudyReminderPermission, syncDailyStudyReminder, type ReminderPermissionState } from "@/services/notifications/daily-study-reminder";
 import { useAppStore } from "@/stores/app-store";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { UserSettings } from "@/types/models";
 
 export default function ProfileScreen() {
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   const global = useAppStore((s) => s.settings);
   const setGlobal = useAppStore((s) => s.setSettings);
   const [settings, setSettings] = useState<UserSettings | null>(global);
   const [backupAction, setBackupAction] = useState<"export" | "import" | null>(null);
-  const [restorePointAvailable, setRestorePointAvailable] = useState(() => hasArchiveRestorePoint() || hasRestorePoint());
+  const [reminderPermission, setReminderPermission] = useState<ReminderPermissionState>("checking");
+  const [restorePointAvailable, setRestorePointAvailable] = useState(() => Platform.OS !== 'web' && (hasArchiveRestorePoint() || hasRestorePoint()));
   useEffect(() => {
     if (!settings)
       getSettings(db).then((value) => {
@@ -30,6 +36,11 @@ export default function ProfileScreen() {
         setGlobal(value);
       });
   }, [db, setGlobal, settings]);
+  useEffect(() => {
+    let live = true;
+    void getDailyStudyReminderPermission().then((permission) => { if (live) setReminderPermission(permission); });
+    return () => { live = false; };
+  }, []);
   const update = async (patch: Partial<UserSettings>) => {
     if (!settings) return;
     const next = { ...settings, ...patch };
@@ -37,10 +48,55 @@ export default function ProfileScreen() {
     setGlobal(next);
     await saveSettings(db, next);
   };
+  const updateReminder = async (
+    patch: Partial<Pick<UserSettings, "dailyReminderEnabled" | "dailyReminderHour" | "dailyReminderMinute">>,
+    requestPermission = false,
+  ) => {
+    if (!settings) return;
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    setGlobal(next);
+    try {
+      await saveSettings(db, next);
+      const result = await syncDailyStudyReminder(next, { requestPermission });
+      if (result.status === "scheduled") {
+        setReminderPermission("granted");
+        if (patch.dailyReminderEnabled === true) track(AnalyticsEvent.DAILY_REMINDER_ENABLED);
+        return;
+      }
+      if (result.status === "disabled") {
+        if (patch.dailyReminderEnabled === false) track(AnalyticsEvent.DAILY_REMINDER_DISABLED);
+        setReminderPermission(await getDailyStudyReminderPermission());
+        return;
+      }
+      if (requestPermission) {
+        const disabled = { ...next, dailyReminderEnabled: false };
+        setSettings(disabled);
+        setGlobal(disabled);
+        await saveSettings(db, disabled);
+      }
+      setReminderPermission(result.status === "permission-required" ? "denied" : "unavailable");
+      const message = result.status === "permission-required"
+        ? "Bạn chưa cấp quyền thông báo. Hãy cho phép 4Chinese trong Cài đặt hệ thống rồi bật lại nhắc học."
+        : result.status === "unsupported"
+          ? "Nhắc học cục bộ hiện chỉ hỗ trợ trên Android và iOS."
+          : "Chưa thể lên lịch nhắc học. Hãy thử lại sau.";
+      Alert.alert("Chưa bật được nhắc học", message);
+    } catch {
+      if (requestPermission) {
+        const disabled = { ...next, dailyReminderEnabled: false };
+        setSettings(disabled);
+        setGlobal(disabled);
+        await saveSettings(db, disabled).catch(() => undefined);
+      }
+      setReminderPermission("unavailable");
+      Alert.alert("Chưa bật được nhắc học", "Đã có lỗi khi cập nhật lịch thông báo. Bạn có thể tiếp tục học bình thường.");
+    }
+  };
   const exportBackup = async () => {
     setBackupAction("export");
     try {
-      const backup = await exportLocalBackup(db, Constants.expoConfig?.version ?? "unknown");
+      const backup = await exportLocalBackup(db, getAppVersion());
       const bytes = await createDeviceBackupArchive(backup);
       const file = writeBackupArchiveFile(bytes);
       await shareBackupArchive(file);
@@ -53,7 +109,7 @@ export default function ProfileScreen() {
   const restoreBackup = async (picked: PickedBackup) => {
     setBackupAction("import");
     try {
-      const currentState = await exportLocalBackup(db, Constants.expoConfig?.version ?? "unknown");
+      const currentState = await exportLocalBackup(db, getAppVersion());
       const pointBytes = await createDeviceBackupArchive(currentState);
       await writeRestorePointArchive(pointBytes);
       setRestorePointAvailable(true);
@@ -108,7 +164,7 @@ export default function ProfileScreen() {
       title="Tài khoản & Cài đặt"
       subtitle="Dữ liệu học đang được lưu cục bộ trên thiết bị."
     >
-      <View style={[card, styles.profile]}>
+      <View style={[themedCard(theme), styles.profile]}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>学</Text>
         </View>
@@ -119,13 +175,16 @@ export default function ProfileScreen() {
           </Text>
         </View>
       </View>
-      <View style={card}>
+      <View style={themedCard(theme)}>
         <Text style={styles.section}>Mục tiêu hằng ngày</Text>
         <Text style={styles.label}>Từ mới mỗi ngày</Text>
         <View style={styles.choiceRow}>
-          {[5, 10, 15, 20, 30].map((value) => (
+          {[5, 10, 15, 20, 30, 50, 75, 100].map((value) => (
             <Pressable
               key={value}
+              accessibilityRole="radio"
+              aria-checked={settings.dailyNewWordGoal === value}
+              accessibilityState={{ checked: settings.dailyNewWordGoal === value }}
               onPress={() => void update({ dailyNewWordGoal: value })}
               style={[
                 styles.choice,
@@ -141,6 +200,14 @@ export default function ProfileScreen() {
               >
                 {value}
               </Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.label}>Từ tối đa mỗi buổi học</Text>
+        <View style={styles.choiceRow}>
+          {([5, 10, 15, 20, 30, 50, 75, 100] as const).map((value) => (
+            <Pressable key={value} accessibilityRole="radio" aria-checked={settings.learnSessionSize === value} accessibilityState={{ checked: settings.learnSessionSize === value }} onPress={() => void update({ learnSessionSize: value })} style={[styles.choice, settings.learnSessionSize === value && styles.choiceActive]}>
+              <Text style={[styles.choiceText, settings.learnSessionSize === value && styles.choiceTextActive]}>{value}</Text>
             </Pressable>
           ))}
         </View>
@@ -202,7 +269,39 @@ export default function ProfileScreen() {
           </Pressable>
         </View>
       </View>
-      <View style={card}>
+      <View style={themedCard(theme)}>
+        <Text style={styles.section}>Nhắc học hằng ngày</Text>
+        <Setting
+          label="Nhắc tôi học mỗi ngày"
+          value={settings.dailyReminderEnabled}
+          onChange={(value) => void updateReminder({ dailyReminderEnabled: value }, value)}
+        />
+        <Text style={styles.copy}>
+          {reminderPermission === "denied"
+            ? "Quyền thông báo đang tắt trong cài đặt hệ thống."
+            : "Thông báo được lên lịch ngay trên thiết bị; không gửi giờ học hay dữ liệu từ vựng lên máy chủ."}
+        </Text>
+        {settings.dailyReminderEnabled ? <>
+          <Text style={styles.label}>Giờ nhắc mỗi ngày</Text>
+          <View style={styles.choiceRow} accessibilityRole="radiogroup" accessibilityLabel="Chọn giờ nhắc học">
+            {[18, 19, 20, 21].map((hour) => {
+              const selected = settings.dailyReminderHour === hour && settings.dailyReminderMinute === 0;
+              return <Pressable
+                key={hour}
+                accessibilityRole="radio"
+                accessibilityLabel={`Nhắc lúc ${String(hour).padStart(2, "0")}:00`}
+                accessibilityState={{ selected }}
+                onPress={() => void updateReminder({ dailyReminderHour: hour, dailyReminderMinute: 0 })}
+                style={[styles.choice, selected && styles.choiceActive]}
+              >
+                <Text style={[styles.choiceText, selected && styles.choiceTextActive]}>{String(hour).padStart(2, "0")}:00</Text>
+              </Pressable>;
+            })}
+          </View>
+          <Text style={styles.copy}>Android có thể giao thông báo trễ khi bật chế độ tiết kiệm pin.</Text>
+        </> : null}
+      </View>
+      <View style={themedCard(theme)}>
         <Text style={styles.section}>Trải nghiệm học</Text>
         <Setting
           label="Hiện Pinyin"
@@ -243,16 +342,38 @@ export default function ProfileScreen() {
           value={settings.hapticEnabled}
           onChange={(value) => void update({ hapticEnabled: value })}
         />
+        <Text style={styles.label}>Giao diện</Text>
+        <View style={styles.choiceRow} accessibilityRole="radiogroup">
+          {([
+            ["system", "Theo hệ thống"],
+            ["light", "Sáng"],
+            ["dark", "Tối"],
+          ] as const).map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected: settings.themeMode === value }}
+            onPress={() => void update({ themeMode: value })} style={[styles.choice, settings.themeMode === value && styles.choiceActive]}>
+            <Text style={[styles.choiceText, settings.themeMode === value && styles.choiceTextActive]}>{label}</Text>
+          </Pressable>)}
+        </View>
+        <Text style={styles.label}>Hiệu ứng động</Text>
+        <View style={styles.choiceRow} accessibilityRole="radiogroup">
+          {([
+            ["full", "Đầy đủ"],
+            ["reduced", "Giảm"],
+            ["off", "Tắt"],
+          ] as const).map(([value, label]) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected: settings.motionMode === value }}
+            onPress={() => void update({ motionMode: value })} style={[styles.choice, settings.motionMode === value && styles.choiceActive]}>
+            <Text style={[styles.choiceText, settings.motionMode === value && styles.choiceTextActive]}>{label}</Text>
+          </Pressable>)}
+        </View>
       </View>
-      <View style={card}>
+      <View style={themedCard(theme)}>
         <Text style={styles.section}>Dữ liệu & nguồn</Text>
         <Text style={styles.copy}>
           SQLite lưu từ vựng, lịch cấp nhớ, ghi chú và thống kê. Chỉ tải bản sao
           lưu lên máy chủ khi bạn chủ động chọn.
         </Text>
-        <Text style={styles.version}>4Chinese · MVP 0.1.0</Text>
+        <Text style={styles.version}>{getAppVersionLabel()}</Text>
       </View>
-      <View style={[card, styles.backupCard]}>
+      <View style={[themedCard(theme), styles.backupCard]}>
         <Text style={styles.section}>Sao lưu dữ liệu</Text>
         <Text style={styles.copy}>
           Xuất bộ từ riêng, ảnh, tiến độ, lịch ôn, ghi chú và thống kê vào một tệp ZIP.
@@ -297,19 +418,26 @@ function Setting({
   value: boolean;
   onChange: (value: boolean) => void;
 }) {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   return (
     <View style={styles.setting}>
       <Text style={styles.settingText}>{label}</Text>
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ true: colors.primarySoft }}
-        thumbColor={value ? colors.primary : undefined}
+        accessibilityRole="switch"
+        accessibilityLabel={label}
+        accessibilityState={{ checked: value }}
+        trackColor={{ true: theme.primarySoft }}
+        thumbColor={value ? theme.primary : undefined}
       />
     </View>
   );
 }
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) {
+  const colors = designColors(theme);
+  return StyleSheet.create({
   profile: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   avatar: {
     width: 58,
@@ -361,7 +489,7 @@ const styles = StyleSheet.create({
   settingText: { color: colors.text, fontSize: 15 },
   copy: { color: colors.textMuted, lineHeight: 21 },
   version: {
-    color: colors.primary,
+    color: colors.primaryText,
     fontWeight: "700",
     fontSize: 12,
     marginTop: spacing.md,
@@ -387,6 +515,6 @@ const styles = StyleSheet.create({
   },
   backupButtonDisabled: { opacity: 0.55 },
   backupButtonText: { color: "#fff", fontWeight: "800" },
-  restoreButtonText: { color: colors.primary, fontWeight: "800" },
+  restoreButtonText: { color: colors.primaryText, fontWeight: "800" },
   backupHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: spacing.xs },
-});
+}); }

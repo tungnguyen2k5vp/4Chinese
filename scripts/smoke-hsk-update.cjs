@@ -1,0 +1,58 @@
+const assert = require('node:assert/strict');
+const { chromium } = require(process.argv[2] || 'playwright');
+const origin = 'http://localhost:8091';
+(async () => {
+  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  const errors = [];
+  const consoleErrors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+  try {
+    await page.goto(`${origin}/exam`);
+    await page.getByText('Một bài ngắn mỗi ngày', { exact: true }).waitFor({ timeout: 120000 });
+    await page.screenshot({ path: 'docs/hsk-update-exam.png', fullPage: true });
+    await page.getByRole('radio', { name: 'Từ vựng', exact: true }).click();
+    await page.getByRole('button', { name: 'Bắt đầu luyện HSK 1', exact: true }).click();
+    await page.waitForURL(/\/exam\/session/, { timeout: 30000 });
+    await page.getByText('Câu 1/10', { exact: false }).waitFor();
+    await page.getByRole('radio').first().click();
+    await page.reload();
+    await page.getByText('Câu 1/10', { exact: false }).waitFor();
+    await page.getByRole('button', { name: 'Nộp bài', exact: true }).click();
+    await page.getByRole('button', { name: 'Xác nhận nộp bài', exact: true }).click();
+    await page.waitForURL(/\/exam\/result/, { timeout: 30000 });
+    await page.getByRole('heading', { name: 'Kết quả bài luyện', exact: true }).waitFor();
+    await page.goto(`${origin}/vocabulary`);
+    await page.getByRole('button', { name: 'Chọn cấp độ: Tất cả cấp HSK' }).click();
+    await page.getByRole('radio', { name: 'HSK 3', exact: true }).click();
+    await page.getByText('Kho từ vựng · HSK 3', { exact: true }).waitFor();
+    await page.screenshot({ path: 'docs/hsk-update-vocabulary.png', fullPage: true });
+    await page.goto(`${origin}/hsk/syllabus?band=1`);
+    await page.getByText('Nội dung syllabus', { exact: true }).waitFor();
+    await page.getByRole('button', { name: /爱.*ài/ }).first().waitFor({ timeout: 30000 });
+    await page.screenshot({ path: 'docs/hsk-update-syllabus.png', fullPage: true });
+    await page.getByRole('tab', { name: 'Ngữ pháp', exact: true }).click();
+    await page.getByText('Trang 386 · nguyên văn tài liệu', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, 'Horizontal overflow');
+    await page.goto(`${origin}/profile`);
+    const hundreds = page.getByText('100', { exact: true });
+    await hundreds.nth(0).click();
+    await hundreds.nth(1).click();
+    await page.reload();
+    await page.getByText('Từ tối đa mỗi buổi học', { exact: true }).waitFor({ timeout: 60000 });
+    assert.equal(await page.getByText('100', { exact: true }).count(), 2);
+    const selectedHundreds = page.getByRole('radio', { name: '100', exact: true });
+    assert.equal(await selectedHundreds.nth(0).getAttribute('aria-checked'), 'true');
+    assert.equal(await selectedHundreds.nth(1).getAttribute('aria-checked'), 'true');
+    assert.deepEqual(errors, []);
+    console.log('PASS: exam snapshot/reload, HSK selection, syllabus/grammar, 100-word settings and no browser crash at 390px');
+  } catch (error) {
+    await page.screenshot({ path: 'docs/hsk-update-smoke-failure.png', fullPage: true });
+    console.error(error);
+    console.error(consoleErrors);
+    console.error((await page.locator('body').innerText()).slice(0, 5000));
+    process.exitCode = 1;
+  } finally { await browser.close(); }
+})();

@@ -2,15 +2,19 @@ import { Ionicons } from "@expo/vector-icons";
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from "expo-audio";
 import { File } from "expo-file-system";
 import { useFocusEffect } from "expo-router";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { card, colors, radius, spacing } from "@/constants/design";
+import { radius, spacing, themedCard } from "@/constants/design";
 import { PronunciationScoreError, scorePronunciationAudio, type PronunciationScore } from "@/services/pronunciation/ai-pronunciation";
+import { useTheme } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 import type { Vocabulary } from "@/types/models";
 
 /** Optional cloud evaluation. Standard practice never depends on this panel. */
 export function AiPronunciationPanel({ word }: { word: Vocabulary }) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [recording, setRecording] = useState(false);
   const [scoring, setScoring] = useState(false);
@@ -117,22 +121,24 @@ export function AiPronunciationPanel({ word }: { word: Vocabulary }) {
   };
 
   return (
-    <View style={[card, styles.card]}>
+    <View style={styles.card}>
       <Text style={styles.title}>Phản hồi AI nâng cao (tùy chọn)</Text>
       <Text style={styles.hint}>Tối đa 20 giây. Bấm dừng sẽ gửi âm thanh lên máy chủ để nhận phản hồi nhận diện từ, không chấm chất lượng thanh điệu.</Text>
       <Pressable
         accessibilityLabel={recording ? "Dừng ghi âm để nhận phản hồi AI" : "Bắt đầu phản hồi AI nâng cao"}
+        accessibilityHint={recording ? "Dừng ghi âm và gửi bản ghi để nhận kết quả." : "Bắt đầu ghi âm tối đa 20 giây; phần gửi lên máy chủ chỉ diễn ra sau khi bạn dừng."}
         accessibilityRole="button"
+        accessibilityState={{ disabled: scoring, busy: scoring, selected: recording }}
         disabled={scoring}
         onPress={() => void (recording ? stopAndScore() : startRecording())}
         style={({ pressed }) => [styles.button, recording && styles.recording, scoring && styles.disabled, pressed && !scoring && styles.pressed]}
       >
-        {scoring ? <ActivityIndicator color="#FFFFFF" /> : <Ionicons color="#FFFFFF" name={recording ? "stop" : "mic"} size={20} />}
-        <Text style={styles.buttonText}>{recording ? "Dừng và gửi" : scoring ? "Đang nhận phản hồi" : "Nhận phản hồi AI"}</Text>
+        {scoring ? <ActivityIndicator color={theme.onPrimary} /> : <Ionicons color={recording ? theme.onError : theme.onPrimary} name={recording ? "stop" : "mic"} size={20} />}
+        <Text style={[styles.buttonText, recording && styles.recordingText]}>{recording ? "Dừng và gửi" : scoring ? "Đang nhận phản hồi" : "Nhận phản hồi AI"}</Text>
       </Pressable>
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
       {result ? (
-        <View style={styles.result}>
+        <View accessibilityLiveRegion="polite" style={styles.result}>
           <Text style={styles.resultLabel}>MỨC KHỚP TỪ NHẬN DIỆN · KHÔNG PHẢI ĐIỂM THANH ĐIỆU</Text>
           <Text style={styles.score}>{result.score}/100</Text>
           <Text style={styles.transcript}>AI nghe: {result.transcript || "(không rõ)"}</Text>
@@ -143,19 +149,22 @@ export function AiPronunciationPanel({ word }: { word: Vocabulary }) {
   );
 }
 
-const styles = StyleSheet.create({
-  card: { gap: spacing.sm },
-  title: { color: colors.text, fontSize: 16, fontWeight: "900" },
-  hint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  button: { minHeight: 52, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.sm, borderRadius: radius.md, backgroundColor: colors.text, paddingHorizontal: spacing.md },
-  recording: { backgroundColor: colors.danger },
-  disabled: { opacity: 0.55 },
-  pressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
-  buttonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "900" },
-  notice: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
-  result: { gap: 4, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
-  resultLabel: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
-  score: { color: colors.primary, fontSize: 28, fontWeight: "900" },
-  transcript: { color: colors.text, fontSize: 14, fontWeight: "700" },
-  feedback: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
-});
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    card: { ...themedCard(theme), gap: spacing.sm, borderWidth: 1, borderColor: theme.border },
+    title: { color: theme.textPrimary, fontSize: 16, fontWeight: "900" },
+    hint: { color: theme.textMuted, fontSize: 12, lineHeight: 18 },
+    button: { minHeight: 52, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.sm, borderRadius: radius.md, backgroundColor: theme.primary, paddingHorizontal: spacing.md },
+    recording: { backgroundColor: theme.error },
+    disabled: { opacity: 0.55 },
+    pressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
+    buttonText: { color: theme.onPrimary, fontSize: 15, fontWeight: "900" },
+    recordingText: { color: theme.onError },
+    notice: { color: theme.textMuted, fontSize: 12, lineHeight: 18 },
+    result: { gap: 4, borderTopWidth: 1, borderTopColor: theme.divider, paddingTop: spacing.sm },
+    resultLabel: { color: theme.primaryText, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
+    score: { color: theme.primaryText, fontSize: 28, fontWeight: "900" },
+    transcript: { color: theme.textPrimary, fontSize: 14, fontWeight: "700" },
+    feedback: { color: theme.textMuted, fontSize: 13, lineHeight: 19 },
+  });
+}

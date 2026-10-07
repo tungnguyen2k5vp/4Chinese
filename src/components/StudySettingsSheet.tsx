@@ -1,7 +1,8 @@
 import { Modal, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { card, radius, spacing, themedCard } from "@/constants/design";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { UserSettings } from "@/types/models";
 
 export function StudySettingsSheet({
@@ -17,13 +18,15 @@ export function StudySettingsSheet({
   onClose: () => void;
   onChange: (patch: Partial<UserSettings>) => void;
 }) {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   if (!settings) return null;
   const count = mode === "learn" ? settings.learnSessionSize : settings.reviewSessionSize;
-  const counts = mode === "learn" ? [5, 10, 15, 20] : [10, 20, 30, 50];
+  const counts = mode === "learn" ? [5, 10, 15, 20, 30, 50, 75, 100] : [10, 20, 30, 50];
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={[card, styles.sheet]}>
+        <View style={[card, themedCard(theme), styles.sheet]}>
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Cài đặt phiên {mode === "learn" ? "học" : "ôn"}</Text>
@@ -57,9 +60,9 @@ export function StudySettingsSheet({
               </Pressable>
             ))}
           </View>
-          <Setting label="Tự phát âm khi ôn" value={settings.autoPlayAudio} onChange={(autoPlayAudio) => onChange({ autoPlayAudio })} />
-          <Setting label="Rung khi đúng/sai" value={settings.hapticEnabled} onChange={(hapticEnabled) => onChange({ hapticEnabled })} />
-          {mode === "review" ? <Setting label="Tự chấm 4 mức" value={settings.reviewStyle === "self-rating"} onChange={(selfRating) => onChange({ reviewStyle: selfRating ? "self-rating" : "automatic" })} /> : null}
+          <Setting label="Tự phát âm khi ôn" value={settings.autoPlayAudio} onChange={(autoPlayAudio) => onChange({ autoPlayAudio })} theme={theme} styles={styles} />
+          <Setting label="Rung khi đúng/sai" value={settings.hapticEnabled} onChange={(hapticEnabled) => onChange({ hapticEnabled })} theme={theme} styles={styles} />
+          {mode === "review" ? <Setting label="Tự chấm 4 mức" value={settings.reviewStyle === "self-rating"} onChange={(selfRating) => onChange({ reviewStyle: selfRating ? "self-rating" : "automatic" })} theme={theme} styles={styles} /> : null}
           <Text style={styles.note}>Lần đầu chép một lần để lưu Cấp 1. Mỗi lượt ôn được chấm ngay; trả lời sai sẽ hạ cấp theo quy tắc và nhắc lại sớm hơn.</Text>
           <PrimaryButton label="Xong" onPress={onClose} />
         </View>
@@ -68,24 +71,24 @@ export function StudySettingsSheet({
   );
 }
 
-function Setting({ label, value, onChange }: { label: string; value: boolean; onChange: (value: boolean) => void }) {
-  return <View style={styles.setting}><Text style={styles.settingText}>{label}</Text><Switch value={value} onValueChange={onChange} trackColor={{ true: colors.primarySoft }} thumbColor={value ? colors.primary : undefined} /></View>;
+function Setting({ label, value, onChange, theme, styles }: { label: string; value: boolean; onChange: (value: boolean) => void; theme: ReturnType<typeof useTheme>; styles: ReturnType<typeof createStyles> }) {
+  return <View style={styles.setting}><Text style={styles.settingText}>{label}</Text><Switch value={value} onValueChange={onChange} trackColor={{ true: theme.primarySoft }} thumbColor={value ? theme.primary : undefined} /></View>;
 }
 
-const styles = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "#17203388", padding: spacing.md },
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
+  overlay: { flex: 1, justifyContent: "flex-end", backgroundColor: theme.overlay, padding: spacing.md },
   sheet: { gap: spacing.md, paddingBottom: spacing.xl },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.md },
-  title: { fontSize: 20, color: colors.text, fontWeight: "900" },
-  subtitle: { marginTop: 3, color: colors.textMuted, fontSize: 12 },
-  close: { color: colors.textMuted, fontSize: 32, lineHeight: 32 },
-  label: { color: colors.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
-  choices: { flexDirection: "row", gap: spacing.sm },
-  choice: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
-  choiceActive: { backgroundColor: colors.primary, borderColor: colors.primary },
-  choiceText: { fontWeight: "800", color: colors.textMuted },
-  choiceTextActive: { color: "#fff" },
-  setting: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", minHeight: 48, borderTopWidth: 1, borderTopColor: colors.border },
-  settingText: { color: colors.text, fontSize: 15, flex: 1 },
-  note: { color: colors.textMuted, fontSize: 12, lineHeight: 18, backgroundColor: colors.primarySoft, borderRadius: radius.md, padding: spacing.md },
-});
+  title: { fontSize: 20, color: theme.textPrimary, fontWeight: "900" },
+  subtitle: { marginTop: 3, color: theme.textMuted, fontSize: 12 },
+  close: { color: theme.textMuted, fontSize: 32, lineHeight: 32 },
+  label: { color: theme.textMuted, fontSize: 10, fontWeight: "900", letterSpacing: 0.8 },
+  choices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  choice: { minWidth: 54, minHeight: 44, paddingHorizontal: 10, alignItems: "center", justifyContent: "center", borderRadius: radius.md, borderWidth: 1, borderColor: theme.border },
+  choiceActive: { backgroundColor: theme.primary, borderColor: theme.primary },
+  choiceText: { fontWeight: "800", color: theme.textMuted },
+  choiceTextActive: { color: theme.onPrimary },
+  setting: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", minHeight: 48, borderTopWidth: 1, borderTopColor: theme.border },
+  settingText: { color: theme.textPrimary, fontSize: 15, flex: 1 },
+  note: { color: theme.textMuted, fontSize: 12, lineHeight: 18, backgroundColor: theme.primarySoft, borderRadius: radius.md, padding: spacing.md },
+}); }

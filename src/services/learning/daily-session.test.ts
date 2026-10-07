@@ -34,6 +34,35 @@ describe("buildDailySessionPlan", () => {
     expect(plan.remainingNewToday).toBe(10);
     expect(plan.estimatedSeconds).toBe(0);
   });
+  it("keeps a quick-session budget independent of the already-used daily study time", () => {
+    const plan = buildDailySessionPlan({
+      ...budgetInput,
+      studyTimeGoalMinutes: 5,
+      studiedSecondsToday: 3_600,
+      sessionDurationMinutes: 3,
+    });
+    expect(plan.remainingSeconds).toBe(180);
+    expect(plan.dueWords).toHaveLength(2);
+    expect(plan.newWords).toHaveLength(1);
+    expect(plan.estimatedSeconds).toBe(180);
+  });
+  it("reduces only optional new words after repeated recent errors and preserves all due cards", () => {
+    const dueWords = [word("due-1"), word("due-2")];
+    const unlearnedWords = [word("new-1"), word("new-2"), word("new-3"), word("new-4"), word("new-5"), word("new-6"), word("new-7"), word("new-8")];
+    const plan = buildDailySessionPlan({
+      ...budgetInput,
+      dueWords,
+      unlearnedWords,
+      studyTimeGoalMinutes: 20,
+      reviewSessionSize: 20,
+      learnSessionSize: 10,
+      recentWrongAttempts: 3,
+    });
+    expect(plan.pacing).toBe("light");
+    expect(plan.dueWords.map((item) => item.id)).toEqual(["due-1", "due-2"]);
+    expect(plan.newWords).toHaveLength(5);
+    expect(plan.recommendations.some((item) => item.includes("Lịch SRS không thay đổi"))).toBe(true);
+  });
   it("deduplicates cards and allocates available minutes to mistakes and reading", () => {
     const plan = buildDailySessionPlan({ ...budgetInput, studyTimeGoalMinutes: 15,
       dueWords: [word("due-1"), word("due-1")], unlearnedWords: [], recentMistakeCount: 2 });

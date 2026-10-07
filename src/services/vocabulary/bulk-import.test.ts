@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseBulkVocabularyInput,
   rankBulkCandidates,
+  removeBulkVocabularyResult,
   resolveBulkVocabulary,
 } from "./bulk-import";
 
@@ -82,6 +83,13 @@ describe("parseBulkVocabularyInput", () => {
       "quân",
       "学习",
     ]);
+  });
+
+  it("removes only the selected result before a batch save", () => {
+    const keep = { input: "học", word: candidate("learn", "学", "học", 1, 1), alternatives: [] };
+    const remove = { input: "nghĩa không phù hợp", word: candidate("wrong", "想", "muốn", 1, 2), alternatives: [] };
+    expect(removeBulkVocabularyResult([keep, remove], remove.input)).toEqual([keep]);
+    expect(removeBulkVocabularyResult([remove], remove.input)).toEqual([]);
   });
 
   it("prefers the whole country phrase over an unrelated frequent word", () => {
@@ -166,7 +174,7 @@ describe("parseBulkVocabularyInput", () => {
   });
 
   it("fetches only a bounded candidate set after the lightweight index scan", async () => {
-    const country = dbRow(candidate("country", "中国", "Trung Quốc", 1, 20));
+    const country = dbRow(candidate("country", "中国", "mốc kiểm thử", 1, 20));
     const person = dbRow(candidate("person", "你", "bạn", 1, 1));
     const rows = [country, person];
     const calls: string[] = [];
@@ -174,12 +182,12 @@ describe("parseBulkVocabularyInput", () => {
       getAllAsync: vi.fn(async (sql: string, ...values: unknown[]) => {
         calls.push(sql);
         if (sql.includes("SELECT id,simplified")) return [];
-        if (sql.includes("v.search_text LIKE")) return [country];
+        if (sql.includes("vocabulary_search_fts")) return [{ id: country.id }];
         return rows.filter((row) => values.includes(row.id));
       }),
     } as unknown as SQLiteDatabase;
 
-    const result = await findBulkLookupCandidates(db, [{ value: "trung quốc" }]);
+    const result = await findBulkLookupCandidates(db, [{ value: "mốc kiểm thử" }]);
 
     expect(result.map((word) => word.id)).toContain("country");
     expect(result.map((word) => word.id)).not.toContain("person");

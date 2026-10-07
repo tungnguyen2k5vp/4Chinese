@@ -1,213 +1,326 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, InteractionManager, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
-import { getDeckVocabulary, getSettings, listPersonalDecks } from "@/db/repository";
+import { radius, spacing, themedCard } from "@/constants/design";
+import { getDueVocabulary, getSettings, getUnlearnedVocabulary, getDeckVocabulary, listPersonalDecks, listVocabulary } from "@/db/repository";
 import { useStudySession } from "@/hooks/use-study-session";
 import { speakChinese, stopChineseSpeech } from "@/services/audio/chinese-speech";
-import { buildDeckListeningSession, type DeckListeningQuestion } from "@/services/listening/deck-listening";
+import { buildListeningMatchRounds, type ListeningMatchRound } from "@/services/listening/deck-listening";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
+import type { ThemeTokens } from "@/theme/tokens";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
-const LISTENING_BATCH_SIZE = 10;
+const MATCHES_PER_ROUND = 4;
+const POOL_LIMIT = 32;
+
+type Mismatch = { audioId: string; meaningId: string };
 
 export default function DeckListeningScreen() {
   const { deckId = "" } = useLocalSearchParams<{ deckId?: string }>();
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   useStudySession(db);
-  const [deckName, setDeckName] = useState("Bộ từ riêng");
-  const [deckWords, setDeckWords] = useState<Vocabulary[]>([]);
-  const [questions, setQuestions] = useState<DeckListeningQuestion[]>([]);
+  const [deckName, setDeckName] = useState("Từ đang học");
+  const [rounds, setRounds] = useState<ListeningMatchRound[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
-  const [index, setIndex] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [correct, setCorrect] = useState(0);
+  const [loadError, setLoadError] = useState(false);
+  const [roundIndex, setRoundIndex] = useState(0);
+  const [selectedAudioId, setSelectedAudioId] = useState<string | null>(null);
+  const [matchedIds, setMatchedIds] = useState<Set<string>>(() => new Set());
+  const [mismatch, setMismatch] = useState<Mismatch | null>(null);
+  const [mistakes, setMistakes] = useState(0);
+  const [correctPairs, setCorrectPairs] = useState(0);
+  const [roundComplete, setRoundComplete] = useState(false);
   const [finished, setFinished] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const mismatchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(() => {
     let active = true;
     setLoading(true);
-    void Promise.all([getDeckVocabulary(db, deckId), listPersonalDecks(db), getSettings(db)])
-      .then(([words, decks, nextSettings]) => {
-        if (!active) return;
-        setDeckName(decks.find((deck) => deck.id === deckId)?.name ?? "Bộ từ riêng");
-        setDeckWords(words);
-        setQuestions(buildDeckListeningSession(words, words.length));
-        setSettings(nextSettings);
-        setIndex(0);
-        setSelectedId(null);
-        setCorrect(0);
-        setFinished(false);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
+    setLoadError(false);
+    void (async () => {
+      const userSettings = await getSettings(db);
+      let pool: Vocabulary[] = [];
+      let nextDeckName = "Từ đã học · ưu tiên từ đến hạn";
+
+      if (deckId) {
+        const [deckWords, decks] = await Promise.all([getDeckVocabulary(db, deckId), listPersonalDecks(db)]);
+        pool = deckWords;
+        nextDeckName = decks.find((deck) => deck.id === deckId)?.name ?? "Bộ từ riêng";
+      } else {
+        const due = await getDueVocabulary(db, POOL_LIMIT, userSettings.selectedHskBands);
+        pool = uniqueWords(due);
+        if (pool.length < MATCHES_PER_ROUND * 2) {
+          const learnedByBand = await Promise.all(userSettings.selectedHskBands.map((band) =>
+            listVocabulary(db, { filter: "learned", band, limit: POOL_LIMIT }),
+          ));
+          pool = uniqueWords([...pool, ...learnedByBand.flat()]).slice(0, POOL_LIMIT);
+        }
+        if (pool.length < 2) {
+          pool = uniqueWords([...pool, ...await getUnlearnedVocabulary(db, userSettings.selectedHskBands, POOL_LIMIT)]).slice(0, POOL_LIMIT);
+          nextDeckName = "Từ HSK trong lộ trình đã chọn";
+        }
+      }
+
+      if (!active) return;
+      setSettings(userSettings);
+      setDeckName(nextDeckName);
+      setRounds(buildListeningMatchRounds(pool, MATCHES_PER_ROUND));
+      setRoundIndex(0);
+      setSelectedAudioId(null);
+      setMatchedIds(new Set());
+      setMismatch(null);
+      setMistakes(0);
+      setCorrectPairs(0);
+      setRoundComplete(false);
+      setFinished(false);
+      setNotice(null);
+    })()
+      .catch(() => { if (active) setLoadError(true); })
+      .finally(() => { if (active) setLoading(false); });
+
+    return () => {
+      active = false;
+      if (mismatchTimer.current) clearTimeout(mismatchTimer.current);
+      void stopChineseSpeech();
+    };
   }, [db, deckId]);
 
   useFocusEffect(load);
 
-  const question = questions[index];
-  const playQuestion = useCallback(() => {
-    if (!question) return;
-    void speakChinese(question.target.simplified, { rate: settings?.speechRate ?? 0.82 });
-  }, [question, settings?.speechRate]);
+  const round = rounds[roundIndex];
+  const wordsById = useMemo(() => new Map((round?.pairs ?? []).map((word) => [word.id, word])), [round]);
+  const totalPairs = useMemo(() => rounds.reduce((sum, item) => sum + item.pairs.length, 0), [rounds]);
 
-  useEffect(() => {
-    if (!question || finished || !settings?.soundEnabled || !settings.autoPlayAudio) return undefined;
-    const task = InteractionManager.runAfterInteractions(() => {
-      playQuestion();
-    });
-    return () => {
-      task.cancel();
-      void stopChineseSpeech();
-    };
-  }, [finished, playQuestion, question, settings?.autoPlayAudio, settings?.soundEnabled]);
-
-  const choose = (choiceId: string) => {
-    if (!question || selectedId) return;
-    setSelectedId(choiceId);
-    if (choiceId === question.target.id) setCorrect((value) => value + 1);
+  const reset = () => {
+    if (mismatchTimer.current) clearTimeout(mismatchTimer.current);
+    setRoundIndex(0);
+    setSelectedAudioId(null);
+    setMatchedIds(new Set());
+    setMismatch(null);
+    setMistakes(0);
+    setCorrectPairs(0);
+    setRoundComplete(false);
+    setFinished(false);
+    setNotice(null);
   };
 
-  const next = () => {
-    if (!selectedId) return;
-    if (index >= questions.length - 1) {
+  const playAudio = async (id: string) => {
+    const word = wordsById.get(id);
+    if (!word) return;
+    setSelectedAudioId(id);
+    setNotice(null);
+    const result = await speakChinese(word.simplified, { rate: settings?.speechRate ?? 0.82 });
+    if (!result.ok && result.reason === "missing-mandarin-voice") {
+      setNotice("Thiết bị chưa có giọng Mandarin. Bạn có thể cài giọng tiếng Trung trong cài đặt hệ thống.");
+    } else if (!result.ok && result.reason !== "cancelled") {
+      setNotice("Chưa phát được âm thanh. Hãy thử chạm loa lần nữa.");
+    }
+  };
+
+  const chooseMeaning = (meaningId: string) => {
+    if (!round || roundComplete || matchedIds.has(meaningId)) return;
+    if (!selectedAudioId) {
+      setNotice("Hãy chạm một biểu tượng loa để nghe từ trước.");
+      return;
+    }
+
+    if (selectedAudioId === meaningId) {
+      const nextMatched = new Set(matchedIds);
+      nextMatched.add(meaningId);
+      setMatchedIds(nextMatched);
+      setSelectedAudioId(null);
+      setMismatch(null);
+      setCorrectPairs((value) => value + 1);
+      setNotice("Ghép đúng. Tiếp tục với cặp còn lại.");
+      if (nextMatched.size === round.pairs.length) {
+        setRoundComplete(true);
+        setNotice("Đã ghép đủ các cặp trong lượt này.");
+      }
+      return;
+    }
+
+    if (mismatchTimer.current) clearTimeout(mismatchTimer.current);
+    setMismatch({ audioId: selectedAudioId, meaningId });
+    setMistakes((value) => value + 1);
+    setNotice("Chưa khớp. Hãy giữ lựa chọn loa và thử nghĩa khác.");
+    mismatchTimer.current = setTimeout(() => setMismatch(null), 700);
+  };
+
+  const nextRound = () => {
+    if (!roundComplete) return;
+    if (roundIndex >= rounds.length - 1) {
       setFinished(true);
       void stopChineseSpeech();
       return;
     }
-    setIndex((value) => value + 1);
-    setSelectedId(null);
-  };
-
-  const restart = () => {
-    setQuestions(buildDeckListeningSession(deckWords, deckWords.length));
-    setIndex(0);
-    setSelectedId(null);
-    setCorrect(0);
-    setFinished(false);
+    setRoundIndex((value) => value + 1);
+    setSelectedAudioId(null);
+    setMatchedIds(new Set());
+    setMismatch(null);
+    setRoundComplete(false);
+    setNotice(null);
   };
 
   if (loading) {
-    return <Screen title="Luyện nghe trong bộ"><ActivityIndicator color={colors.primary} size="large" /></Screen>;
+    return <Screen title="Luyện nghe"><ActivityIndicator accessibilityLabel="Đang tải từ luyện nghe" color={theme.primary} size="large" /></Screen>;
   }
 
-  if (!questions.length) {
+  if (loadError) {
+    return <Screen title="Luyện nghe"><EmptyState icon="!" title="Chưa tải được danh sách từ" message="Dữ liệu học vẫn được giữ nguyên. Hãy thử tải lại." /><PrimaryButton label="Tải lại" onPress={() => router.replace(deckId ? { pathname: "/decks/listening", params: { deckId } } : "/decks/listening")} /><PrimaryButton label="Quay lại" variant="secondary" onPress={() => router.back()} /></Screen>;
+  }
+
+  if (!rounds.length) {
     return (
-      <Screen title="Luyện nghe trong bộ" subtitle={deckName}>
-        <EmptyState icon="♫" title="Cần ít nhất 2 từ" message="Hãy thêm ít nhất hai từ vào bộ để app có thể phát âm và tạo các lựa chọn Hán tự từ chính bộ này." />
-        <PrimaryButton label="Quay lại bộ từ" variant="secondary" onPress={() => router.back()} />
+      <Screen title="Luyện nghe" subtitle={deckName}>
+        <EmptyState icon="♫" variant="listening" scene="recordings" title="Cần ít nhất 2 từ" message={deckId ? "Hãy thêm ít nhất hai từ vào bộ này để bắt đầu bài ghép âm thanh với nghĩa." : "Chưa có từ trong lộ trình đã chọn. Hãy học vài từ HSK hoặc mở một bộ từ riêng có ít nhất hai từ."} />
+        <PrimaryButton label={deckId ? "Quay lại bộ từ" : "Mở kho từ"} variant="secondary" onPress={() => router.back()} />
       </Screen>
     );
   }
 
   if (finished) {
-    const percentage = Math.round((correct / questions.length) * 100);
+    const accuracy = correctPairs + mistakes > 0 ? Math.round((correctPairs / (correctPairs + mistakes)) * 100) : 100;
     return (
       <Screen title="Hoàn thành luyện nghe" subtitle={deckName}>
-        <View style={[card, styles.resultCard]}>
-          <Text style={styles.eyebrow}>KẾT QUẢ LẦN LUYỆN</Text>
-          <Text style={styles.resultNumber}>{correct}/{questions.length}</Text>
-          <Text style={styles.resultCopy}>{percentage}% câu nghe và chọn đúng Hán tự.</Text>
-          <Text style={styles.resultHint}>Luyện lại sau một lúc để củng cố những từ bạn còn phân vân.</Text>
+        <View style={[styles.card, styles.resultCard]}>
+          <Text style={styles.eyebrow}>KẾT QUẢ GHÉP CẶP</Text>
+          <Text style={styles.resultNumber}>{correctPairs}/{totalPairs}</Text>
+          <Text style={styles.resultCopy}>{accuracy}% chính xác · {mistakes} lần ghép chưa khớp.</Text>
+          <Text style={styles.resultHint}>Bài luyện này không thay đổi cấp nhớ hay lịch ôn SRS.</Text>
         </View>
-        <PrimaryButton icon="↻" label="Luyện lại" onPress={restart} />
-        <PrimaryButton label="Quay lại bộ từ" variant="secondary" onPress={() => router.back()} />
+        <PrimaryButton label="Luyện lại" onPress={reset} />
+        <PrimaryButton label={deckId ? "Quay lại bộ từ" : "Về trang trước"} variant="secondary" onPress={() => router.back()} />
       </Screen>
     );
   }
 
-  if (!question) {
-    return <Screen title="Luyện nghe trong bộ"><ActivityIndicator color={colors.primary} size="large" /></Screen>;
-  }
+  if (!round) return <Screen title="Luyện nghe"><ActivityIndicator color={theme.primary} size="large" /></Screen>;
+  const matchedTotal = rounds.slice(0, roundIndex).reduce((sum, item) => sum + item.pairs.length, 0) + matchedIds.size;
+  const progress = Math.round((matchedTotal / Math.max(1, totalPairs)) * 100);
 
-  const isCorrect = selectedId === question.target.id;
-  const batchNumber = Math.floor(index / LISTENING_BATCH_SIZE) + 1;
-  const batchCount = Math.ceil(questions.length / LISTENING_BATCH_SIZE);
-  const batchQuestionNumber = (index % LISTENING_BATCH_SIZE) + 1;
-  const batchLength = Math.min(LISTENING_BATCH_SIZE, questions.length - (batchNumber - 1) * LISTENING_BATCH_SIZE);
-  const isBatchEnd = (index + 1) % LISTENING_BATCH_SIZE === 0;
   return (
-    <Screen title="Luyện nghe trong bộ" subtitle={`${deckName} · Lượt ${batchNumber}/${batchCount} · Câu ${batchQuestionNumber}/${batchLength}`}>
-      <View style={[card, styles.listenCard]}>
-        <Text style={styles.eyebrow}>NGHE VÀ CHỌN HÁN TỰ</Text>
-        <Text style={styles.listenPrompt}>Nghe rồi chọn Hán tự.</Text>
-        <Pressable accessibilityLabel="Nghe lại từ tiếng Trung" accessibilityRole="button" onPress={playQuestion} style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
-          <Ionicons color="#FFFFFF" name="volume-high" size={35} />
-          <Text style={styles.playButtonText}>Nghe lại</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.choiceList}>
-        {question.choices.map((choice, choiceIndex) => {
-          const chosen = selectedId === choice.id;
-          const correctChoice = selectedId !== null && choice.id === question.target.id;
-          const wrongChoice = chosen && choice.id !== question.target.id;
-          return (
-            <Pressable
-              accessibilityRole="button"
-              disabled={selectedId !== null}
-              key={choice.id}
-              onPress={() => choose(choice.id)}
-              style={({ pressed }) => [styles.choice, correctChoice && styles.choiceCorrect, wrongChoice && styles.choiceWrong, pressed && !selectedId && styles.pressed]}
-            >
-              <Text style={styles.choiceLetter}>{String.fromCharCode(65 + choiceIndex)}</Text>
-              <Text style={[styles.choiceHanzi, (correctChoice || wrongChoice) && styles.choiceHanziAnswered]}>{choice.simplified}</Text>
-              {correctChoice ? <Ionicons color={colors.success} name="checkmark-circle" size={23} /> : null}
-              {wrongChoice ? <Ionicons color={colors.danger} name="close-circle" size={23} /> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {selectedId ? (
-        <View style={[card, styles.feedbackCard, isCorrect ? styles.feedbackCorrect : styles.feedbackWrong]}>
-          <Text style={[styles.feedbackTitle, isCorrect ? styles.feedbackTitleCorrect : styles.feedbackTitleWrong]}>{isCorrect ? "Chính xác" : "Chưa đúng"}</Text>
-          <Text style={styles.answerHanzi}>{question.target.simplified}</Text>
-          <Text style={styles.answerPinyin}>{question.target.pinyin}</Text>
-          <Text style={styles.answerMeaning}>{question.target.primaryMeaningVi}</Text>
+    <Screen title="Luyện nghe" subtitle={`${deckName} · Lượt ${roundIndex + 1}/${rounds.length}`}>
+      <View style={[styles.card, styles.introCard]}>
+        <View style={styles.progressHeader}>
+          <Text style={styles.eyebrow}>NGHE VÀ GHÉP NGHĨA</Text>
+          <Text style={styles.progressText}>{matchedTotal}/{totalPairs} cặp</Text>
         </View>
-      ) : null}
+        <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: progress }} style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${progress}%` }]} />
+        </View>
+        <Text style={styles.prompt}>Chạm loa để nghe từ tiếng Trung, rồi chạm nghĩa tiếng Việt tương ứng.</Text>
+      </View>
 
-      <PrimaryButton disabled={!selectedId} label={index === questions.length - 1 ? "Xem kết quả" : isBatchEnd ? "Sang lượt tiếp theo" : "Từ tiếp theo"} onPress={next} />
-      <Text style={styles.sessionHint}>Không ảnh hưởng lịch SRS.</Text>
+      <View style={styles.columnLabels}>
+        <Text style={styles.columnLabel}>NGHE TỪ</Text>
+        <Text style={styles.columnLabel}>CHỌN NGHĨA</Text>
+      </View>
+      <View style={styles.matchColumns}>
+        <View style={styles.column}>
+          {round.audioOrder.map((id, index) => {
+            const word = wordsById.get(id);
+            if (!word) return null;
+            const matched = matchedIds.has(id);
+            const selected = selectedAudioId === id;
+            const wrong = mismatch?.audioId === id;
+            return (
+              <Pressable
+                key={id}
+                accessibilityRole="button"
+                accessibilityLabel={`Phát âm thanh ${index + 1}`}
+                accessibilityHint="Nghe từ tiếng Trung rồi chọn nghĩa tương ứng ở cột bên phải."
+                accessibilityState={{ disabled: matched, selected }}
+                disabled={matched}
+                onPress={() => void playAudio(id)}
+                style={({ pressed }) => [styles.audioTile, selected && styles.tileSelected, matched && styles.tileMatched, wrong && styles.tileWrong, pressed && !matched && styles.pressed]}
+              >
+                <Ionicons color={matched ? theme.success : wrong ? theme.error : theme.primaryText} name={matched ? "checkmark-circle" : "volume-high"} size={29} />
+                <Text style={[styles.tileCaption, matched && styles.matchedText]}>Âm thanh {index + 1}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={styles.column}>
+          {round.meaningOrder.map((id, index) => {
+            const word = wordsById.get(id);
+            if (!word) return null;
+            const matched = matchedIds.has(id);
+            const selected = selectedAudioId === id;
+            const wrong = mismatch?.meaningId === id;
+            return (
+              <Pressable
+                key={id}
+                accessibilityRole="button"
+                accessibilityLabel={`Nghĩa ${index + 1}: ${word.primaryMeaningVi}`}
+                accessibilityState={{ disabled: matched, selected }}
+                disabled={matched}
+                onPress={() => chooseMeaning(id)}
+                style={({ pressed }) => [styles.meaningTile, selected && styles.tileSelected, matched && styles.tileMatched, wrong && styles.tileWrong, pressed && !matched && styles.pressed]}
+              >
+                <Text numberOfLines={4} style={[styles.meaningText, matched && styles.matchedText]}>{word.primaryMeaningVi}</Text>
+                {matched ? <Ionicons color={theme.success} name="checkmark-circle" size={19} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      {notice ? <Text accessibilityLiveRegion="polite" style={[styles.notice, mismatch && styles.noticeWrong]}>{notice}</Text> : null}
+      <PrimaryButton disabled={!roundComplete} label={roundIndex === rounds.length - 1 ? "Xem kết quả" : "Lượt tiếp theo"} onPress={nextRound} />
+      <Text style={styles.sessionHint}>Bài ghép cặp chỉ luyện nghe, không ghi nhận điểm SRS.</Text>
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  listenCard: { alignItems: "center", gap: spacing.md, paddingVertical: spacing.xl },
-  eyebrow: { color: colors.primary, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
-  listenPrompt: { color: colors.textMuted, fontSize: 15, lineHeight: 22, textAlign: "center" },
-  playButton: { alignItems: "center", backgroundColor: colors.primary, borderRadius: radius.lg, gap: 6, minWidth: 154, paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  playButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "900" },
-  pressed: { opacity: 0.82, transform: [{ scale: 0.985 }] },
-  choiceList: { gap: spacing.sm },
-  choice: { alignItems: "center", backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1.5, flexDirection: "row", minHeight: 72, paddingHorizontal: spacing.md },
-  choiceCorrect: { backgroundColor: "#E9F9F0", borderColor: colors.success },
-  choiceWrong: { backgroundColor: "#FDECEC", borderColor: colors.danger },
-  choiceLetter: { backgroundColor: colors.primarySoft, borderRadius: 99, color: colors.primary, fontSize: 13, fontWeight: "900", height: 28, lineHeight: 28, marginRight: spacing.md, textAlign: "center", width: 28 },
-  choiceHanzi: { color: colors.text, flex: 1, fontSize: 34, fontWeight: "900" },
-  choiceHanziAnswered: { fontSize: 36 },
-  feedbackCard: { alignItems: "center", gap: 4, paddingVertical: spacing.lg },
-  feedbackCorrect: { backgroundColor: "#E9F9F0" },
-  feedbackWrong: { backgroundColor: "#FFF4F4" },
-  feedbackTitle: { fontSize: 18, fontWeight: "900" },
-  feedbackTitleCorrect: { color: colors.success },
-  feedbackTitleWrong: { color: colors.danger },
-  answerHanzi: { color: colors.text, fontSize: 48, fontWeight: "900", marginTop: spacing.xs },
-  answerPinyin: { color: colors.primary, fontSize: 19, fontWeight: "800" },
-  answerMeaning: { color: colors.textMuted, fontSize: 16 },
-  sessionHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
-  resultCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xxl },
-  resultNumber: { color: colors.primary, fontSize: 56, fontWeight: "900" },
-  resultCopy: { color: colors.text, fontSize: 17, fontWeight: "800", textAlign: "center" },
-  resultHint: { color: colors.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" },
-});
+function uniqueWords(words: Vocabulary[]): Vocabulary[] {
+  const ids = new Set<string>();
+  const hanzi = new Set<string>();
+  return words.filter((word) => {
+    if (ids.has(word.id) || hanzi.has(word.simplified)) return false;
+    ids.add(word.id);
+    hanzi.add(word.simplified);
+    return true;
+  });
+}
+
+function createStyles(theme: ThemeTokens) {
+  return StyleSheet.create({
+    card: { ...themedCard(theme), borderWidth: 1, borderColor: theme.border },
+    introCard: { gap: spacing.sm },
+    progressHeader: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
+    eyebrow: { color: theme.primaryText, fontSize: 11, fontWeight: "900", letterSpacing: 0.8 },
+    progressText: { color: theme.textPrimary, fontSize: 13, fontWeight: "800" },
+    progressTrack: { backgroundColor: theme.backgroundSecondary, borderRadius: radius.pill, height: 8, overflow: "hidden" },
+    progressFill: { backgroundColor: theme.accent, borderRadius: radius.pill, height: "100%" },
+    prompt: { color: theme.textMuted, fontSize: 14, lineHeight: 21 },
+    columnLabels: { flexDirection: "row", gap: spacing.sm },
+    columnLabel: { color: theme.textMuted, flex: 1, fontSize: 11, fontWeight: "900", letterSpacing: 0.6, textAlign: "center" },
+    matchColumns: { flexDirection: "row", gap: spacing.sm, alignItems: "stretch" },
+    column: { flex: 1, gap: spacing.sm },
+    audioTile: { alignItems: "center", backgroundColor: theme.surface, borderColor: theme.border, borderRadius: radius.md, borderWidth: 1.5, justifyContent: "center", minHeight: 96, padding: spacing.sm },
+    meaningTile: { alignItems: "center", backgroundColor: theme.surface, borderColor: theme.border, borderRadius: radius.md, borderWidth: 1.5, flex: 1, flexDirection: "row", gap: spacing.xs, justifyContent: "center", minHeight: 96, paddingHorizontal: spacing.sm, paddingVertical: spacing.md },
+    tileSelected: { backgroundColor: theme.primarySoft, borderColor: theme.primary, borderWidth: 2 },
+    tileMatched: { backgroundColor: theme.successSoft, borderColor: theme.success },
+    tileWrong: { backgroundColor: theme.errorSoft, borderColor: theme.error },
+    tileCaption: { color: theme.textSecondary, fontSize: 12, fontWeight: "700", marginTop: spacing.xs, textAlign: "center" },
+    meaningText: { color: theme.textPrimary, flex: 1, fontSize: 14, fontWeight: "700", textAlign: "center" },
+    matchedText: { color: theme.success },
+    pressed: { opacity: 0.8, transform: [{ scale: 0.98 }] },
+    notice: { color: theme.primaryText, fontSize: 13, fontWeight: "700", textAlign: "center" },
+    noticeWrong: { color: theme.error },
+    sessionHint: { color: theme.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
+    resultCard: { alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xxl },
+    resultNumber: { color: theme.primaryText, fontSize: 54, fontWeight: "900" },
+    resultCopy: { color: theme.textPrimary, fontSize: 17, fontWeight: "800", textAlign: "center" },
+    resultHint: { color: theme.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" },
+  });
+}

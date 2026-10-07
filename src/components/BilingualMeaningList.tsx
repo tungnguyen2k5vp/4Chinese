@@ -1,7 +1,8 @@
 import { StyleSheet, Text, View } from "react-native";
 
-import { colors, radius, spacing } from "@/constants/design";
+import { radius, spacing } from "@/constants/design";
 import { pairBilingualMeanings } from "@/services/vocabulary/bilingual-meanings";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 
 export function BilingualMeaningList({
   meaningsVi,
@@ -14,6 +15,7 @@ export function BilingualMeaningList({
   primaryMeaningVi?: string;
   compact?: boolean;
 }) {
+  const styles = useThemeStyles(createStyles);
   const pairs = pairBilingualMeanings(meaningsVi, meaningsEn, primaryMeaningVi);
   return (
     <View style={[styles.table, compact && styles.tableCompact]}>
@@ -31,14 +33,14 @@ export function BilingualMeaningList({
   );
 }
 
-const styles = StyleSheet.create({
-  table: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, overflow: "hidden" },
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
+  table: { borderWidth: 1, borderColor: theme.border, borderRadius: radius.md, overflow: "hidden" },
   tableCompact: { marginTop: spacing.xs },
-  header: { flexDirection: "row", backgroundColor: colors.primarySoft, paddingHorizontal: spacing.sm, paddingVertical: 7, gap: spacing.sm },
-  headerText: { flex: 1, color: colors.primary, fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
-  row: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, backgroundColor: colors.surface },
-  rowBorder: { borderTopWidth: 1, borderTopColor: colors.border },
-  meaning: { flex: 1, color: colors.text, fontSize: 14, lineHeight: 20 },
+  header: { flexDirection: "row", backgroundColor: theme.primarySoft, paddingHorizontal: spacing.sm, paddingVertical: 7, gap: spacing.sm },
+  headerText: { flex: 1, color: theme.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.5 },
+  row: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, backgroundColor: theme.surface },
+  rowBorder: { borderTopWidth: 1, borderTopColor: theme.border },
+  meaning: { flex: 1, color: theme.textPrimary, fontSize: 14, lineHeight: 20 },
   meaningCompact: { fontSize: 12, lineHeight: 17 },
-  english: { color: colors.textMuted },
-});
+  english: { color: theme.textMuted },
+}); }

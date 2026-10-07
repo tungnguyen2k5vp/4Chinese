@@ -16,7 +16,7 @@ import {
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
-import { card, colors, radius, spacing } from "@/constants/design";
+import { radius, spacing, themedCard } from "@/constants/design";
 import {
   createPersonalDeck,
   deletePersonalDeck,
@@ -25,10 +25,14 @@ import {
   listPersonalDecks,
 } from "@/db/repository";
 import { fetchSharedDeck, ShortDeckShareError } from "@/services/decks/short-share";
+import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { PersonalDeck } from "@/types/models";
 
 export default function Decks() {
   const db = useSQLiteContext();
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const cardStyle = themedCard(theme);
   const [decks, setDecks] = useState<PersonalDeck[]>([]);
   const [deletedCount, setDeletedCount] = useState(0);
   const [name, setName] = useState("");
@@ -116,13 +120,13 @@ export default function Decks() {
       title="Bộ từ riêng"
       subtitle="Tự chọn từ cần học, sửa nghĩa theo ngữ cảnh của bạn và ôn bằng lịch cấp nhớ."
     >
-      <View style={[card, styles.create]}>
+      <View style={[cardStyle, styles.create]}>
         <Text style={styles.label}>TẠO BỘ TỪ MỚI</Text>
         <TextInput
           value={name}
           onChangeText={setName}
           placeholder="Ví dụ: Tiếng Trung công việc"
-          placeholderTextColor={colors.textMuted}
+          placeholderTextColor={theme.textMuted}
           style={styles.input}
         />
         <PrimaryButton
@@ -145,7 +149,7 @@ export default function Decks() {
       />
       {decks.length ? (
         decks.map((deck) => (
-          <View key={deck.id} style={[card, styles.deck]}>
+          <View key={deck.id} style={[cardStyle, styles.deck]}>
             <Pressable
               style={styles.deckMain}
               onPress={() => router.push(`/decks/${deck.id}` as Href)}
@@ -164,7 +168,7 @@ export default function Decks() {
               <Ionicons
                 name="chevron-forward"
                 size={20}
-                color={colors.textMuted}
+                color={theme.textMuted}
               />
             </Pressable>
             <Pressable
@@ -179,9 +183,9 @@ export default function Decks() {
               ]}
             >
               {deletingId === deck.id ? (
-                <ActivityIndicator color={colors.danger} size="small" />
+                <ActivityIndicator color={theme.error} size="small" />
               ) : (
-                <Ionicons name="trash-outline" size={19} color={colors.danger} />
+                <Ionicons name="trash-outline" size={19} color={theme.error} />
               )}
             </Pressable>
           </View>
@@ -189,6 +193,8 @@ export default function Decks() {
       ) : (
         <EmptyState
           icon="册"
+          variant="vocabulary"
+          scene="deck"
           title="Chưa có bộ từ riêng"
           message="Tạo bộ đầu tiên rồi thêm những từ thực sự hữu ích với bạn."
         />
@@ -200,7 +206,7 @@ export default function Decks() {
         onRequestClose={() => setFriendModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={[card, styles.modalCard]}>
+          <View style={[cardStyle, styles.modalCard]}>
             <Text style={styles.modalTitle}>Nhập mã bộ từ</Text>
             <Text style={styles.modalDescription}>
               Nhập mã 8 ký tự mới hoặc dán mã HZD1 cũ từ nút “Chia sẻ bộ từ”.
@@ -213,7 +219,7 @@ export default function Decks() {
               value={friendCode}
               onChangeText={setFriendCode}
               placeholder="Ví dụ: K7M9X2QF hoặc HZD1.…"
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor={theme.textMuted}
               style={styles.modalInput}
             />
             <View style={styles.modalActions}>
@@ -237,22 +243,22 @@ export default function Decks() {
     </Screen>
   );
 }
-const styles = StyleSheet.create({
+function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
   create: { gap: spacing.md },
   label: {
     fontSize: 11,
     fontWeight: "900",
     letterSpacing: 1,
-    color: colors.primary,
+    color: theme.primaryText,
   },
   input: {
     minHeight: 50,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: theme.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
-    color: colors.text,
-    backgroundColor: colors.background,
+    color: theme.textPrimary,
+    backgroundColor: theme.background,
   },
   deck: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   deckMain: {
@@ -269,23 +275,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   copy: { flex: 1 },
-  name: { fontSize: 17, fontWeight: "800", color: colors.text },
-  meta: { fontSize: 12, color: colors.textMuted, marginTop: 4 },
+  name: { fontSize: 17, fontWeight: "800", color: theme.textPrimary },
+  meta: { fontSize: 12, color: theme.textMuted, marginTop: 4 },
   deleteButton: {
     width: 40,
     height: 40,
     borderRadius: radius.sm,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#FDECEC",
+    backgroundColor: theme.errorSoft,
   },
   deletePressed: { opacity: 0.72 },
   deleteDisabled: { opacity: 0.45 },
-  modalBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: "rgba(15,23,42,0.45)" },
-  modalCard: { gap: spacing.md, borderRadius: radius.lg, backgroundColor: colors.surface },
-  modalTitle: { color: colors.text, fontSize: 23, fontWeight: "900" },
-  modalDescription: { color: colors.textMuted, fontSize: 14, lineHeight: 21 },
-  modalInput: { minHeight: 92, borderWidth: 1.5, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, color: colors.text, backgroundColor: colors.background, fontSize: 14, textAlignVertical: "top" },
+  modalBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: theme.overlay },
+  modalCard: { gap: spacing.md, borderRadius: radius.lg, backgroundColor: theme.surfaceElevated },
+  modalTitle: { color: theme.textPrimary, fontSize: 23, fontWeight: "900" },
+  modalDescription: { color: theme.textMuted, fontSize: 14, lineHeight: 21 },
+  modalInput: { minHeight: 92, borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, padding: spacing.md, color: theme.textPrimary, backgroundColor: theme.background, fontSize: 14, textAlignVertical: "top" },
   modalActions: { flexDirection: "row", gap: spacing.sm },
   modalAction: { flex: 1 },
-});
+}); }
