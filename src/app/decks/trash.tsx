@@ -4,9 +4,9 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { radius, spacing, themedCard } from "@/constants/design";
 import {
   listDeletedPersonalDecks,

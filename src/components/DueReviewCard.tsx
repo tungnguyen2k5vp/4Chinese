@@ -8,9 +8,9 @@ export function DueReviewCard({ count, onPress }: { count: number; onPress: () =
   const theme = useTheme();
   const styles = createStyles(theme);
   return <View style={styles.card}><View style={styles.copy}>
-    <Text style={styles.eyebrow}>{count > 0 ? "ĐÃ ĐẾN LÚC ÔN TẬP" : "HOÀN THÀNH HÔM NAY"}</Text>
-    {count > 0 ? <><Text style={styles.count}>{count} từ</Text><Text style={styles.caption}>Một lượt ngắn để giữ trí nhớ bền lâu.</Text></> : <Text style={styles.complete}>Tuyệt vời! Bạn đã hoàn thành toàn bộ lượt ôn hôm nay.</Text>}
-  </View>{count > 0 ? <PrimaryButton label="Ôn tập ngay" onPress={onPress} style={styles.button} /> : null}</View>;
+    <Text style={styles.eyebrow}>{count > 0 ? "ĐÃ ĐẾN LÚC ÔN TẬP" : "CHƯA CÓ TỪ ĐẾN HẠN"}</Text>
+    {count > 0 ? <><Text style={styles.count}>{count} từ đến hạn</Text><Text style={styles.caption}>Tổng tất cả cấp HSK và bộ từ đang dùng · mỗi lượt tối đa 10 từ.</Text></> : <Text style={styles.complete}>Hiện không có từ đến hạn trong các cấp HSK và bộ từ đang dùng.</Text>}
+  </View>{count > 0 ? <PrimaryButton label={`Ôn ${Math.min(10, count)} từ ngay`} onPress={onPress} style={styles.button} /> : null}</View>;
 }
 
 function createStyles(theme: ReturnType<typeof useTheme>) {

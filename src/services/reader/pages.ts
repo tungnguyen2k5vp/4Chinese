@@ -10,7 +10,23 @@ const CHARACTER_POSITION_TAG = 1_000_000_000;
 
 export type ReaderChunk = { chunk_index: number; content: string; char_start: number; char_end: number };
 export type LocatedReaderToken = ReaderToken & { charStart: number; charEnd: number };
+export type ReaderTextSegment = { text: string; token?: LocatedReaderToken };
 export type ReaderResume = { characterOffset: number | null; legacyTokenIndex: number };
+
+/** Split exact reader text around recognized words, preserving punctuation and whitespace. */
+export function splitReaderTextWithTokens(text: string, tokens: LocatedReaderToken[]): ReaderTextSegment[] {
+  const characters = Array.from(text);
+  const segments: ReaderTextSegment[] = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    if (token.charStart < cursor || token.charEnd <= token.charStart || token.charEnd > characters.length) continue;
+    if (token.charStart > cursor) segments.push({ text: characters.slice(cursor, token.charStart).join('') });
+    segments.push({ text: characters.slice(token.charStart, token.charEnd).join(''), token });
+    cursor = token.charEnd;
+  }
+  if (cursor < characters.length) segments.push({ text: characters.slice(cursor).join('') });
+  return segments;
+}
 
 /** No normalization here: offsets refer to the exact stored Unicode code points. */
 export function splitReaderChunks(text: string): ReaderChunk[] {

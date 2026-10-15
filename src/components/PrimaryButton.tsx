@@ -11,7 +11,9 @@ export function PrimaryButton({ label, onPress, variant = 'primary', icon, loadi
   const theme = useTheme();
   const motionDisabled = useReducedMotion();
   const styles = createStyles(theme);
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} disabled={disabled || loading} onPress={onPress}
+  return <Pressable accessibilityRole="button" accessibilityLabel={label}
+    accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
+    disabled={disabled || loading} onPress={onPress}
     style={({ pressed }) => [styles.base, styles[variant], pressed && !motionDisabled && styles.pressed, (disabled || loading) && styles.disabled, style]}>
     {loading ? <ActivityIndicator color={variant === 'primary' ? theme.onPrimary : theme.primaryText} /> : <Text style={[styles.text, variant !== 'primary' && styles.altText, variant === 'danger' && styles.dangerText]}>{icon ? `${icon}  ` : ''}{label}</Text>}
   </Pressable>;

@@ -18,7 +18,7 @@ describe('V5.1 word sense metadata migration', () => {
         { vocabulary_id: 'custom-1', sense_id: 'primary', frequency_order: null },
       ]);
       expect(sqlite.prepare('PRAGMA user_version').get()).toEqual({ user_version: 41 });
-      expect(DATABASE_VERSION).toBe(43);
+      expect(DATABASE_VERSION).toBe(45);
       expect(sqlite.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' });
     } finally {
       sqlite.close();

@@ -12,9 +12,9 @@ import {
 } from "react-native";
 
 import { BilingualMeaningList } from "@/components/BilingualMeaningList";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { HanziHandwritingPad } from "@/components/HanziHandwritingPad";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import {
   findHanziCandidates,
@@ -367,7 +367,7 @@ export default function WordEditor() {
               label="PHỒN THỂ"
               value={traditional}
               onChangeText={setTraditional}
-              placeholder="學習"
+              placeholder="学习"
             />
             <Field
               label="PINYIN *"

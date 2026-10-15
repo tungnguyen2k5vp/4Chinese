@@ -2,18 +2,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { HanziHandwritingPad } from "@/components/HanziHandwritingPad";
 import { PersonalContextCard } from '@/components/PersonalContextCard';
 import { PinyinHanziComposer } from "@/components/PinyinHanziComposer";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { StudySettingsSheet } from "@/components/StudySettingsSheet";
+import { resolveReviewSelection, reviewModeForTurn } from "@/components/review/review-selection";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { radius, spacing, themedCard } from "@/constants/design";
+import { getOfflineVocabulary } from "@/db/database";
 import { recordLessonActivityEvidence } from '@/db/learning-path';
 import {
   getProgress,
@@ -22,6 +24,7 @@ import {
   reviewWord,
   saveSettings,
 } from "@/db/repository";
+import { contextCloze, listVocabularyContexts } from '@/db/vocabulary-context';
 import { useStudySession } from "@/hooks/use-study-session";
 import {
   speakChinese,
@@ -31,6 +34,7 @@ import { playFeedback } from "@/services/feedback/feedback-service";
 import { normalizeQuickSessionMinutes } from "@/services/learning/next-best-action";
 import type { PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
 import { evaluateComposeAnswer } from "@/services/pinyin-ime/composeAnswer";
+import { contextualReviewPrompt } from "@/services/review/contextual-prompt";
 import { exerciseForReviewMode } from "@/services/review/exercise";
 import { normalizeReviewAttempt } from "@/services/review/exercise-attempt";
 import {
@@ -40,7 +44,8 @@ import {
   recordReviewAttempt,
   type WordReviewState,
 } from "@/services/review/interleaved-session";
-import { resolveReviewMode } from "@/services/review/review-mode";
+import { buildReviewMeaningOptions, buildReviewPinyinOptions, type ReviewChoiceCandidate } from "@/services/review/meaning-options";
+import type { ReviewLevelChange } from "@/services/review/result-summary";
 import { applyReview, formatDueInterval } from "@/services/srs/scheduler";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
@@ -115,6 +120,7 @@ export default function ReviewSession() {
     number | null
   >(null);
   const [progress, setProgress] = useState<ProgressRow | null>(null);
+  const [personalContextState,setPersonalContextState] = useState<{wordId:string;ready:boolean;sentence:string|null}|null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -126,6 +132,13 @@ export default function ReviewSession() {
     down: 0,
     deep: 0,
   });
+  const [meaningDistractorPool, setMeaningDistractorPool] = useState<ReviewChoiceCandidate[]>([]);
+  // Immutable bundled vocabulary supplies real distractors even if a custom
+  // deck is tiny or the SQLite lookup is temporarily unavailable.
+  const offlineChoiceCatalog = useMemo(() => getOfflineVocabulary().map(({ id, primaryMeaningVi, pinyin, hskBand }) => ({ id, primaryMeaningVi, pinyin, hskBand })), []);
+  const choiceCatalog = useMemo(() => [...meaningDistractorPool, ...offlineChoiceCatalog], [meaningDistractorPool, offlineChoiceCatalog]);
+  const [meaningPoolBand, setMeaningPoolBand] = useState<string | null>(null);
+  const [levelChanges, setLevelChanges] = useState<ReviewLevelChange[]>([]);
   const [wrongInSession, setWrongInSession] = useState(0);
   const started = useRef(0);
   const sessionStartedAt = useRef(0);
@@ -150,20 +163,68 @@ export default function ReviewSession() {
     );
   }, [db, index, setGlobalSettings, word]);
 
-  const requested = resolveReviewMode(requestedMode);
-  // Cloze requires a real sentence containing the target. Never grade a
-  // meaning prompt as if it were a contextual fill-in-the-blank.
-  const mode = requested === "cloze" && !word?.examples.some((item) => item.chinese.includes(word.simplified))
+  useEffect(() => {
+    if (!word) return;
+    let active = true;
+    void listVocabularyContexts(db,word.id,20).then(rows => {
+      const selected = rows.find(row => contextCloze(row.sentence,[word.simplified,word.traditional]) !== null);
+      if (active) setPersonalContextState({wordId:word.id,ready:true,sentence:selected?.sentence ?? null});
+    }).catch(() => {
+      // A local context lookup failure safely falls back to the bundled example.
+      if (active) setPersonalContextState({wordId:word.id,ready:true,sentence:null});
+    });
+    return () => { active = false; };
+  },[db,index,word]);
+
+  const selection = resolveReviewSelection(requestedMode);
+  const requested = reviewModeForTurn(selection, source.findIndex(item => item.id === word?.id), entry?.pass ?? 1);
+  const personalContextReady = !!word && personalContextState?.wordId === word.id && personalContextState.ready;
+  const contextualPrompt = word && personalContextReady
+    ? contextualReviewPrompt(personalContextState?.sentence ?? null,word.examples.map(item=>item.chinese),[word.simplified,word.traditional])
+    : null;
+  // Contextual review uses a user-selected local encounter first, then an
+  // existing bundled sentence, and otherwise falls back to the normal prompt.
+  const hasContextualPrompt = contextualPrompt?.source !== 'FALLBACK';
+  const mode = requested === "cloze" && personalContextReady && !hasContextualPrompt
     ? "meaning-hanzi" : requested;
   const visualMode = visualModePresentation(theme, "REVIEW");
   const exercise = exerciseForReviewMode(mode);
   const needsWriting = writingModes.has(mode);
+  const meaningBand = word ? String(word.hskBand) : null;
+
+  useEffect(() => {
+    if (meaningBand === null) return;
+    const band = meaningBand;
+    if (meaningPoolBand === band) return;
+    let active = true;
+    void db.getAllAsync<ReviewChoiceCandidate>(
+      `SELECT v.id,v.primary_meaning_vi AS primaryMeaningVi,v.pinyin,v.hsk_band AS hskBand
+       FROM vocabulary v
+       WHERE trim(v.primary_meaning_vi)<>''
+         AND (v.deck_id IS NULL OR EXISTS (
+           SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+         ))
+       ORDER BY CASE WHEN v.hsk_band=? THEN 0 ELSE 1 END,
+         COALESCE(v.frequency_rank,999999),v.pinyin_numeric,v.id
+       LIMIT 160`,
+      band,
+    ).then(rows => {
+      if (!active) return;
+      setMeaningDistractorPool(rows);
+      setMeaningPoolBand(band);
+    }).catch(() => {
+      if (!active) return;
+      setMeaningDistractorPool([]);
+      setMeaningPoolBand(band);
+    });
+    return () => { active = false; };
+  }, [db, meaningBand, meaningPoolBand, mode]);
 
   useEffect(() => {
     if (!word || !settings) return;
     if (
       mode !== "hanzi-recall-pinyin-compose" &&
-      settings.soundEnabled && (exercise.playsAudio || settings.autoPlayAudio)
+      settings.soundEnabled && (exercise.playsAudio || (selection !== "mixed" && mode !== "hanzi-pinyin" && settings.autoPlayAudio))
     ) {
       // Audio is intentionally played only when the card changes, not on each
       // render, so the session remains responsive and quiet while choosing.
@@ -172,29 +233,22 @@ export default function ReviewSession() {
         void stopChineseSpeech();
       };
     }
-  }, [exercise.playsAudio, mode, settings, word]);
+  }, [exercise.playsAudio, mode, selection, settings, word]);
 
   const pinyinOptions = useMemo(() => {
     if (!word) return [];
-    const distractors = queue
-      .map((item) => item.word)
-      .filter((item) => item.id !== word.id && item.hskBand === word.hskBand)
-      .map((item) => item.pinyin);
-    return Array.from(new Set([word.pinyin, ...distractors.slice(0, 3)])).sort(
-      (a, b) => a.localeCompare(b),
-    );
-  }, [queue, word]);
+    return buildReviewPinyinOptions(word, queue.map(item => item.word), choiceCatalog);
+  }, [choiceCatalog, queue, word]);
 
   const meaningOptions = useMemo(() => {
     if (!word) return [];
-    const distractors = queue
-      .map((item) => item.word)
-      .filter((item) => item.id !== word.id && item.hskBand === word.hskBand)
-      .map((item) => item.primaryMeaningVi);
-    return Array.from(
-      new Set([word.primaryMeaningVi, ...distractors.slice(0, 3)]),
-    ).sort((a, b) => a.localeCompare(b));
-  }, [queue, word]);
+    return buildReviewMeaningOptions(
+      word,
+      queue.map(item => item.word),
+      choiceCatalog,
+    );
+  }, [choiceCatalog, queue, word]);
+  const meaningOptionsLoading = Boolean(meaningBand && meaningPoolBand !== meaningBand);
 
   const intervals = useMemo(
     () =>
@@ -231,8 +285,8 @@ export default function ReviewSession() {
   const hanziCorrect =
     hanziComplete &&
     (normalizedHanzi === expectedHanzi || normalizedHanzi === traditionalHanzi);
-  const pinyinCorrect = practicePinyin === word.pinyin;
-  const meaningCorrect = practiceMeaning === word.primaryMeaningVi;
+  const pinyinCorrect = practicePinyin === word.pinyin.trim();
+  const meaningCorrect = practiceMeaning === word.primaryMeaningVi.trim();
   const composeOutcome = composeSubmitted
     ? evaluateComposeAnswer(expectedScript, selectedHanzi, usedHint)
     : null;
@@ -313,6 +367,7 @@ export default function ReviewSession() {
     if (!passedAttempt) setWrongInSession((value) => value + 1);
 
     let nextStats = stats;
+    let nextLevelChanges = levelChanges;
     if (nextWordState.attempts >= 3) {
       const passedWord = hasPassedWord(nextWordState);
       const normalizedAttempt = normalizeReviewAttempt({
@@ -360,6 +415,20 @@ export default function ReviewSession() {
           (result.memoryLevel === 6 && result.levelBefore < 6 ? 1 : 0),
       };
       setStats(nextStats);
+      nextLevelChanges = [
+        ...levelChanges,
+        {
+          id: word.id,
+          hanzi: expectedScript,
+          pinyin: word.pinyin,
+          meaning: word.primaryMeaningVi,
+          levelBefore: result.levelBefore,
+          levelAfter: result.memoryLevel,
+          nextReviewAt: result.nextReviewAt,
+          direction: result.direction,
+        },
+      ];
+      setLevelChanges(nextLevelChanges);
     }
     void playFeedback(passedAttempt ? 'success' : 'error', { hapticEnabled: settings?.hapticEnabled, soundEnabled: settings?.soundEnabled });
     if (index >= queue.length - 1) {
@@ -367,7 +436,7 @@ export default function ReviewSession() {
       completeStudySession();
       clear();
       router.replace(
-        `/review/result?total=${source.length}&correct=${nextStats.correct}&wrong=${nextStats.wrong}&up=${nextStats.up}&same=${nextStats.same}&down=${nextStats.down}&deep=${nextStats.deep}&elapsedSeconds=${secondsSince(sessionStartedAt.current)}${quickMinutes == null ? "" : `&quickSessionMinutes=${quickMinutes}&quickStartedAt=${encodeURIComponent(quickStartedAt ?? "")}`}`,
+        `/review/result?total=${source.length}&correct=${nextStats.correct}&wrong=${nextStats.wrong}&up=${nextStats.up}&same=${nextStats.same}&down=${nextStats.down}&deep=${nextStats.deep}&elapsedSeconds=${secondsSince(sessionStartedAt.current)}&changes=${encodeURIComponent(JSON.stringify(nextLevelChanges))}${quickMinutes == null ? "" : `&quickSessionMinutes=${quickMinutes}&quickStartedAt=${encodeURIComponent(quickStartedAt ?? "")}`}`,
       );
       return;
     }
@@ -469,6 +538,10 @@ export default function ReviewSession() {
   );
   const example = word.examples[0];
 
+  if (requested === 'cloze' && !personalContextReady) return <Screen title="Đang chuẩn bị câu ôn" subtitle="Đang kiểm tra ngữ cảnh riêng lưu trên thiết bị.">
+    <View style={themedCard(theme)}><ActivityIndicator color={theme.primary}/></View>
+  </Screen>;
+
   return (
     <Screen>
       <View style={styles.top}>
@@ -501,7 +574,12 @@ export default function ReviewSession() {
           ÔN TẬP · LƯỢT {entry.pass}/3 · {exercise.label}
         </Text>
         {mode === "hanzi-meaning" ? (
-          <Text style={styles.sourceHanzi}>{word.simplified}</Text>
+          <>
+            <Text style={styles.sourceHanzi}>{word.simplified}</Text>
+            {meaningCorrect && !showAnswer ? (
+              <PinyinText value={word.pinyin} visible style={styles.answerPinyin} />
+            ) : null}
+          </>
         ) : mode === "pinyin-hanzi" ? (
           <PinyinText value={word.pinyin} visible style={styles.sourcePinyin} />
         ) : mode === "hanzi-recall-pinyin-compose" ? (
@@ -515,7 +593,7 @@ export default function ReviewSession() {
           <Text style={styles.sourceHanzi}>{word.simplified}</Text>
         ) : mode === "cloze" ? (
           <Text style={styles.challengePrompt}>
-            {example?.chinese?.replace(word.simplified, "＿＿＿＿") ??
+            {contextualPrompt?.prompt ?? example?.chinese?.replace(word.simplified, "＿＿＿＿") ??
               "Điền từ còn thiếu vào câu"}
           </Text>
         ) : (
@@ -741,12 +819,13 @@ export default function ReviewSession() {
         <OptionCard
           label="CHỌN NGHĨA ĐÚNG"
           options={meaningOptions}
+          loading={meaningOptionsLoading}
           selected={practiceMeaning}
           onSelect={(value) => {
             setPracticeMeaning(value);
             setFeedback(null);
           }}
-          correctValue={word.primaryMeaningVi}
+          correctValue={word.primaryMeaningVi.trim()}
           correct={meaningCorrect}
         />
       ) : null}
@@ -760,7 +839,8 @@ export default function ReviewSession() {
             setFeedback(null);
           }}
           pinyin
-          correctValue={word.pinyin}
+          correctValue={word.pinyin.trim()}
+          loading={meaningOptionsLoading}
           correct={pinyinCorrect}
         />
       ) : null}
@@ -896,6 +976,7 @@ function OptionCard({
   pinyin = false,
   correctValue,
   correct,
+  loading = false,
 }: {
   label: string;
   options: string[];
@@ -904,6 +985,7 @@ function OptionCard({
   pinyin?: boolean;
   correctValue: string;
   correct: boolean;
+  loading?: boolean;
 }) {
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
@@ -911,7 +993,16 @@ function OptionCard({
     <View style={[themedCard(theme), styles.challengeSection]}>
       <Text style={styles.challengeLabel}>{label}</Text>
       <View style={pinyin ? styles.pinyinOptions : styles.challengeOptions}>
-        {options.map((option) => (
+        {loading ? (
+          <View style={styles.optionLoading}>
+            <ActivityIndicator color={theme.primary} />
+            <Text style={styles.optionHint}>Đang chuẩn bị đủ 4 đáp án…</Text>
+          </View>
+        ) : options.length !== 4 ? (
+          <Text style={styles.optionHint}>
+            Chưa đủ dữ liệu để tạo 4 đáp án riêng biệt. Hãy xem đáp án để tiếp tục.
+          </Text>
+        ) : options.map((option) => (
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ selected: selected === option }}
@@ -1050,6 +1141,7 @@ function createStyles(theme: ThemeTokens) {
     feedbackBad: { color: theme.error },
     challengeSection: { gap: spacing.sm },
     challengeOptions: { gap: spacing.sm },
+    optionLoading: { minHeight: 120, alignItems: "center", justifyContent: "center", gap: spacing.sm },
     pinyinOptions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
     pinyinOption: {
       flexBasis: "47%",

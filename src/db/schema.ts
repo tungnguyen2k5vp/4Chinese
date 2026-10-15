@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 43;
+export const DATABASE_VERSION = 45;
 
 /**
  * Sentence provenance is additive: existing authored curriculum sentences

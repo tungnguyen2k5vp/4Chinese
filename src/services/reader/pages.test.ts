@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { decodeReaderPosition, encodeReaderCharacterPosition, locateReaderTokens, readerTokenPage,
-  sentenceAtCharacter, splitReaderChunks } from './pages';
+  sentenceAtCharacter, splitReaderChunks, splitReaderTextWithTokens } from './pages';
 
 import type { Vocabulary } from '@/types/models';
 
@@ -31,6 +31,15 @@ describe('bounded reader pages and stable locations', () => {
     expect(tokens.map(({ charStart, charEnd }) => Array.from(text).slice(charStart, charEnd).join(''))).toEqual(['你好', '你好']);
     expect(tokens.map(({ charStart }) => charStart)).toEqual([5, 9]);
     expect(sentenceAtCharacter(text, tokens[1]!.charStart).sentence).toBe('你好。');
+  });
+  it('splits reading text into inline tappable words without losing punctuation or Unicode', () => {
+    const word = { id: 'nihao', simplified: '你好', traditional: '你好' } as Vocabulary;
+    const text = '👋 你好！';
+    const tokens = locateReaderTokens(text, [word]);
+    const segments = splitReaderTextWithTokens(text, tokens);
+    expect(segments.map((segment) => segment.text).join('')).toBe(text);
+    expect(segments.filter((segment) => segment.token).map((segment) => segment.text)).toEqual(['你好']);
+    expect(segments.filter((segment) => segment.token).map((segment) => segment.token?.vocabulary?.id)).toEqual(['nihao']);
   });
   it('resumes the exact bounded token page even when longest-match vocabulary changes', () => {
     const tokens = locateReaderTokens('你'.repeat(2000), []);

@@ -45,4 +45,9 @@ export const standardReviewModes = [
   "hanzi-meaning",
   "pinyin-hanzi",
   "audio-hanzi",
+  "hanzi-pinyin",
+  "audio-meaning",
+  "cloze",
+  "writing",
+  "hanzi-recall-pinyin-compose",
 ] as const satisfies readonly ReviewMode[];

@@ -2,7 +2,7 @@ import { validateConfusableAttempt } from '@/data/confusable-words';
 import { ROLEPLAY_HISTORY_LIMIT, validateRoleplayAiLimits, validateRoleplayHistoryRecord } from '@/db/roleplay-history';
 import { DATABASE_VERSION } from "@/db/schema";
 import { validateSpeakingAttemptBackupRecord } from '@/db/speaking-attempts';
-import { validateContextRecord } from '@/db/vocabulary-context';
+import { validateContextRecord, validatePersonalContextMemoryRecord } from '@/db/vocabulary-context';
 import { validateWordContextRecord } from '@/db/word-contexts';
 import { validateExamBackupRecord } from '@/services/exam/session';
 import { validateWrittenBackupRecord } from '@/services/exam/written-practice';
@@ -42,6 +42,8 @@ export type LocalBackupData = {
   confusableAttempts?: BackupRecord[];
   personalVocabularyContexts?: BackupRecord[];
   wordContexts?: BackupRecord[];
+  personalContextMemory?: BackupRecord[];
+  practiceAttemptDaily?: BackupRecord[];
   timedSpeakingAttempts?: BackupRecord[];
   /** Minimized metadata only; no transcript notes, audio, provider feedback or quota usage. */
   roleplayHistory?: BackupRecord[];
@@ -126,7 +128,7 @@ export function createLocalBackup(data: LocalBackupData, appVersion: string): Lo
       readingProgress: data.readingProgress ?? [], readingVocabulary: data.readingVocabulary ?? [],
       readingDocumentChunks: data.readingDocumentChunks ?? [], storyProgress: data.storyProgress ?? [],
       mistakes: data.mistakes ?? [], skillMastery: data.skillMastery ?? [], speakingPractice: data.speakingPractice ?? [],
-      xpEvents: data.xpEvents ?? [], userAchievements: data.userAchievements ?? [], learningGoals: data.learningGoals ?? [], grammarAttempts: data.grammarAttempts ?? [], examAttempts: data.examAttempts ?? [], writtenPractice: data.writtenPractice ?? [], confusableAttempts: data.confusableAttempts ?? [], personalVocabularyContexts: data.personalVocabularyContexts ?? [], wordContexts: data.wordContexts ?? [] },
+      xpEvents: data.xpEvents ?? [], userAchievements: data.userAchievements ?? [], learningGoals: data.learningGoals ?? [], grammarAttempts: data.grammarAttempts ?? [], examAttempts: data.examAttempts ?? [], writtenPractice: data.writtenPractice ?? [], confusableAttempts: data.confusableAttempts ?? [], personalVocabularyContexts: data.personalVocabularyContexts ?? [], wordContexts: data.wordContexts ?? [], personalContextMemory: data.personalContextMemory ?? [], practiceAttemptDaily: data.practiceAttemptDaily ?? [] },
   };
 }
 
@@ -234,6 +236,22 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     if (!Array.isArray(contexts) || !contexts.every(isRecord)) fail('Ngữ cảnh chuẩn hóa không hợp lệ.');
     try { contexts.forEach(validateWordContextRecord); } catch { fail('Ngữ cảnh chuẩn hóa trong tệp sao lưu không hợp lệ.'); }
     data.wordContexts = contexts;
+  }
+  if (candidate.data.personalContextMemory !== undefined) {
+    const contexts = candidate.data.personalContextMemory;
+    if (!Array.isArray(contexts) || !contexts.every(isRecord)) fail('Bộ nhớ ngữ cảnh cá nhân không hợp lệ.');
+    try { contexts.forEach(validatePersonalContextMemoryRecord); } catch { fail('Bộ nhớ ngữ cảnh cá nhân không hợp lệ.'); }
+    data.personalContextMemory = contexts;
+  }
+  if (candidate.data.practiceAttemptDaily !== undefined) {
+    const rows = candidate.data.practiceAttemptDaily;
+    if (!Array.isArray(rows) || !rows.every(row => isRecord(row) &&
+      typeof row.mistake_id === 'string' && typeof row.skill_type === 'string' && typeof row.exercise_type === 'string' &&
+      typeof row.utc_day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.utc_day) &&
+      Number.isSafeInteger(row.attempt_count) && (row.attempt_count as number) > 0 &&
+      Number.isSafeInteger(row.error_count) && (row.error_count as number) >= 0 &&
+      (row.error_count as number) <= (row.attempt_count as number))) fail('Bằng chứng lượt luyện gần đây không hợp lệ.');
+    data.practiceAttemptDaily = rows;
   }
   if (candidate.data.timedSpeakingAttempts !== undefined) {
     const attempts = candidate.data.timedSpeakingAttempts;

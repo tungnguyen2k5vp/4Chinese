@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { AudioButton } from '@/components/AudioButton';
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { LocalVoiceRecorder } from '@/components/LocalVoiceRecorder';
 import { PinyinText } from '@/components/PinyinText';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
 import { AnimatedProgressBar } from '@/components/ui/AnimatedProgressBar';
 import { themedCard } from '@/constants/design';
 import { pronunciationPairs } from '@/data/pronunciation-pairs';

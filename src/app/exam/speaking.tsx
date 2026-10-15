@@ -3,18 +3,21 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Platform, Pressable, Text, TextInput, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
+import { HskBandSelect } from "@/components/HskBandSelect";
 import { LocalVoiceRecorder } from "@/components/LocalVoiceRecorder";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { themedCard } from "@/constants/design";
 import { timedSpeakingPrompts } from "@/data/speaking-practice";
 import { deleteSpeakingAttempt, listSpeakingAttempts, saveSpeakingAttempt, SpeakingRecordingEvidence, SPEAKING_HISTORY_LIMIT, type SpeakingAttempt } from "@/db/speaking-attempts";
 import { useTheme } from "@/theme/ThemeProvider";
+import type { HskBand } from "@/types/models";
 
 export default function TimedSpeaking() {
   const db = useSQLiteContext();
   const theme = useTheme();
   const [index, setIndex] = useState(0);
+  const [level, setLevel] = useState<HskBand>(1);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [ready, setReady] = useState(false);
   const [replayed, setReplayed] = useState(false);
@@ -23,7 +26,10 @@ export default function TimedSpeaking() {
   const [checked, setChecked] = useState<string[]>([]);
   const deadline = useRef<number | null>(null);
   const [notice, setNotice] = useState("");
-  const prompt = timedSpeakingPrompts[index]!;
+  const levelKey = String(level);
+  const firstLevelIndex = timedSpeakingPrompts.findIndex((item) => item.level === levelKey);
+  const currentIndex = timedSpeakingPrompts[index]?.level === levelKey ? index : Math.max(0, firstLevelIndex);
+  const prompt = timedSpeakingPrompts[currentIndex]!;
   const [selfReview, setSelfReview] = useState("");
   const [transcriptOptIn, setTranscriptOptIn] = useState(false);
   const [transcript, setTranscript] = useState("");
@@ -193,14 +199,24 @@ export default function TimedSpeaking() {
         Lưu âm thanh: chỉ trong phiên (mặc định). Giữ âm thanh 7/30 ngày hoặc đến khi xóa thủ công chưa hỗ trợ.
         Lịch sử chỉ giữ thông tin của {SPEAKING_HISTORY_LIMIT} lượt gần nhất; không có âm thanh để nghe lại sau khi rời phiên.
       </Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-        {timedSpeakingPrompts.map((item, i) => (
+      <HskBandSelect value={level} allowAll={false} disabled={micBusy || saving} onChange={(value) => {
+        if (value === "all") return;
+        const nextIndex = timedSpeakingPrompts.findIndex((item) => item.level === String(value));
+        if (nextIndex < 0) return;
+        reset();
+        setNotice("");
+        setLevel(value);
+        setIndex(nextIndex);
+      }} />
+      <Text style={{ color: theme.textPrimary, fontWeight: "800", fontSize: 18 }}>Chọn đề luyện nói</Text>
+      <View style={{ gap: 8 }}>
+        {timedSpeakingPrompts.map((item, i) => item.level === levelKey ? (
           <Pressable
             key={item.id}
             accessibilityRole="button"
-            aria-pressed={i === index}
+            aria-pressed={i === currentIndex}
             aria-disabled={micBusy || saving}
-            accessibilityState={{ selected: i === index, disabled: micBusy || saving }}
+            accessibilityState={{ selected: i === currentIndex, disabled: micBusy || saving }}
             disabled={micBusy || saving}
             onPress={() => {
               reset();
@@ -211,18 +227,23 @@ export default function TimedSpeaking() {
               minHeight: 48,
               padding: 12,
               borderRadius: 14,
-              backgroundColor: index === i ? theme.primary : theme.surface,
+              backgroundColor: currentIndex === i ? theme.primarySoft : theme.surface,
+              borderWidth: 1,
+              borderColor: currentIndex === i ? theme.primary : theme.border,
+              gap: 4,
             }}
           >
             <Text
               style={{
-                color: index === i ? theme.onPrimary : theme.textPrimary,
+                color: theme.textPrimary,
+                fontWeight: "800",
               }}
             >
-              {item.level}
+              {item.title}
             </Text>
+            <Text style={{ color: theme.textMuted, lineHeight: 21 }} numberOfLines={2}>{item.prompt}</Text>
           </Pressable>
-        ))}
+        ) : null)}
       </View>
       <View style={[themedCard(theme), { gap: 12 }]}>
         <Text

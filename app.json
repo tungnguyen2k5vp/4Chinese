@@ -2,7 +2,7 @@
   "expo": {
     "name": "4Chinese",
     "slug": "4chinese",
-    "version": "0.1.34",
+    "version": "0.1.50",
     "orientation": "portrait",
     "icon": "./assets/images/hanzi-icon.png",
     "scheme": "4chinese",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.tungnguyen2k5vp.fourchinese",
-      "versionCode": 36,
+      "versionCode": 52,
       "permissions": [
         "android.permission.RECORD_AUDIO"
       ],

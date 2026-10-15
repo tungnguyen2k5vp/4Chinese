@@ -8,6 +8,20 @@ export function parseTones(numeric: string): number[] {
   return [...compact.matchAll(/[1-5]/g)].map((match) => Number(match[0]));
 }
 
+const toneMarkBase: Record<string, string> = {
+  ā: 'a', á: 'a', ǎ: 'a', à: 'a', Ā: 'A', Á: 'A', Ǎ: 'A', À: 'A',
+  ē: 'e', é: 'e', ě: 'e', è: 'e', Ē: 'E', É: 'E', Ě: 'E', È: 'E',
+  ī: 'i', í: 'i', ǐ: 'i', ì: 'i', Ī: 'I', Í: 'I', Ǐ: 'I', Ì: 'I',
+  ō: 'o', ó: 'o', ǒ: 'o', ò: 'o', Ō: 'O', Ó: 'O', Ǒ: 'O', Ò: 'O',
+  ū: 'u', ú: 'u', ǔ: 'u', ù: 'u', Ū: 'U', Ú: 'U', Ǔ: 'U', Ù: 'U',
+  ǖ: 'ü', ǘ: 'ü', ǚ: 'ü', ǜ: 'ü', Ǖ: 'Ü', Ǘ: 'Ü', Ǚ: 'Ü', Ǜ: 'Ü',
+};
+
+/** Keep syllable spelling visible while withholding tone marks until the learner answers. */
+export function withoutPinyinToneMarks(pinyin: string): string {
+  return [...pinyin].map((character) => toneMarkBase[character] ?? character).join('').replace(/[1-5]/g, '');
+}
+
 export function buildToneSamples(words: ToneWord[], pair: boolean): ToneSample[] {
   const buckets = new Map<string, ToneSample[]>();
   for (const word of words) {

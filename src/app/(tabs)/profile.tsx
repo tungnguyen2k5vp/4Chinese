@@ -3,6 +3,8 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
 import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
+import { LanguageSettings } from "@/components/LanguageSettings";
+import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { exportLocalBackup, importLocalBackup } from "@/db/backup-repository";
@@ -14,12 +16,15 @@ import { createDeviceBackupArchive, hasArchiveRestorePoint, materializeArchiveIm
   type PickedBackup } from "@/services/backup/device-archive";
 import { hasRestorePoint, readRestorePointText } from "@/services/backup/file";
 import { parseLocalBackup } from "@/services/backup/format";
+import { useLearningLanguage } from "@/services/languages/LanguageProvider";
 import { getDailyStudyReminderPermission, syncDailyStudyReminder, type ReminderPermissionState } from "@/services/notifications/daily-study-reminder";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { UserSettings } from "@/types/models";
 
 export default function ProfileScreen() {
+  const { preferences } = useLearningLanguage();
+  const isEnglish = preferences.learningLanguage === "en";
   const db = useSQLiteContext();
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
@@ -163,6 +168,8 @@ export default function ProfileScreen() {
     <Screen
       title="Tài khoản & Cài đặt"
       subtitle="Dữ liệu học đang được lưu cục bộ trên thiết bị."
+      safeAreaEdges={isEnglish ? ["top"] : ["bottom"]}
+      compact={!isEnglish}
     >
       <View style={[themedCard(theme), styles.profile]}>
         <View style={styles.avatar}>
@@ -175,8 +182,10 @@ export default function ProfileScreen() {
           </Text>
         </View>
       </View>
-      <View style={themedCard(theme)}>
-        <Text style={styles.section}>Mục tiêu hằng ngày</Text>
+      <LanguageSettings />
+      {!isEnglish ? <View style={themedCard(theme)}>
+        {__DEV__ ? <PrimaryButton label="Kiểm thử bộ từ tiếng Anh · V7" variant="secondary" onPress={() => router.push('/english' as Href)} /> : null}
+        <Text style={styles.section}>Mục tiêu tiếng Trung mỗi ngày</Text>
         <Text style={styles.label}>Từ mới mỗi ngày</Text>
         <View style={styles.choiceRow}>
           {[5, 10, 15, 20, 30, 50, 75, 100].map((value) => (
@@ -268,7 +277,7 @@ export default function ProfileScreen() {
             </Text>
           </Pressable>
         </View>
-      </View>
+      </View> : null}
       <View style={themedCard(theme)}>
         <Text style={styles.section}>Nhắc học hằng ngày</Text>
         <Setting
@@ -302,41 +311,50 @@ export default function ProfileScreen() {
         </> : null}
       </View>
       <View style={themedCard(theme)}>
-        <Text style={styles.section}>Trải nghiệm học</Text>
-        <Setting
-          label="Hiện Pinyin"
-          value={settings.pinyinVisibility}
-          onChange={(value) => void update({ pinyinVisibility: value })}
-        />
-        <Setting
-          label="Màu thanh điệu"
-          value={settings.toneColorEnabled}
-          onChange={(value) => void update({ toneColorEnabled: value })}
-        />
-        <Setting
-          label="Âm thanh"
-          value={settings.soundEnabled}
-          onChange={(value) => void update({ soundEnabled: value })}
-        />
-        <Setting
-          label="Tự phát âm khi học/ôn"
-          value={settings.autoPlayAudio}
-          onChange={(value) => void update({ autoPlayAudio: value })}
-        />
-        <Text style={styles.label}>Tốc độ phát âm</Text>
-        <View style={styles.choiceRow}>
-          {[0.6, 0.8, 1, 1.2].map((value) => (
-            <Pressable
-              key={value}
-              onPress={() => void update({ speechRate: value })}
-              style={[styles.choice, settings.speechRate === value && styles.choiceActive]}
-            >
-              <Text style={[styles.choiceText, settings.speechRate === value && styles.choiceTextActive]}>
-                {value.toFixed(1)}×
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <Text style={styles.section}>{isEnglish ? "Trải nghiệm chung" : "Trải nghiệm học tiếng Trung"}</Text>
+        {!isEnglish ? (
+          <>
+            <Setting
+              label="Hiện Pinyin"
+              value={settings.pinyinVisibility}
+              onChange={(value) => void update({ pinyinVisibility: value })}
+            />
+            <Setting
+              label="Màu thanh điệu"
+              value={settings.toneColorEnabled}
+              onChange={(value) => void update({ toneColorEnabled: value })}
+            />
+          </>
+        ) : null}
+        {!isEnglish ? (
+          <>
+            <Setting
+              label="Âm thanh"
+              value={settings.soundEnabled}
+              onChange={(value) => void update({ soundEnabled: value })}
+            />
+            <Setting
+              label="Tự phát âm khi ôn"
+              value={settings.autoPlayAudio}
+              onChange={(value) => void update({ autoPlayAudio: value })}
+            />
+            <Text style={styles.copy}>Khi học từ mới, mỗi từ phát âm một lần lúc xuất hiện nếu Âm thanh đang bật. Chạm loa để nghe lại.</Text>
+            <Text style={styles.label}>Tốc độ phát âm</Text>
+            <View style={styles.choiceRow}>
+              {[0.6, 0.8, 1, 1.2].map((value) => (
+                <Pressable
+                  key={value}
+                  onPress={() => void update({ speechRate: value })}
+                  style={[styles.choice, settings.speechRate === value && styles.choiceActive]}
+                >
+                  <Text style={[styles.choiceText, settings.speechRate === value && styles.choiceTextActive]}>
+                    {value.toFixed(1)}×
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        ) : null}
         <Setting
           label="Rung phản hồi"
           value={settings.hapticEnabled}
@@ -366,7 +384,7 @@ export default function ProfileScreen() {
         </View>
       </View>
       <View style={themedCard(theme)}>
-        <Text style={styles.section}>Dữ liệu & nguồn</Text>
+        <Text style={styles.section}>{isEnglish ? "Dữ liệu tiếng Trung & ứng dụng" : "Dữ liệu & nguồn"}</Text>
         <Text style={styles.copy}>
           SQLite lưu từ vựng, lịch cấp nhớ, ghi chú và thống kê. Chỉ tải bản sao
           lưu lên máy chủ khi bạn chủ động chọn.
@@ -374,10 +392,11 @@ export default function ProfileScreen() {
         <Text style={styles.version}>{getAppVersionLabel()}</Text>
       </View>
       <View style={[themedCard(theme), styles.backupCard]}>
-        <Text style={styles.section}>Sao lưu dữ liệu</Text>
+        <Text style={styles.section}>{isEnglish ? "Sao lưu dữ liệu tiếng Trung" : "Sao lưu dữ liệu"}</Text>
         <Text style={styles.copy}>
           Xuất bộ từ riêng, ảnh, tiến độ, lịch ôn, ghi chú và thống kê vào một tệp ZIP.
         </Text>
+        {isEnglish ? <Text style={styles.copy}>Dữ liệu tiếng Anh được sao lưu riêng trong Bộ từ tiếng Anh; hiện chưa có tệp gộp hai ngôn ngữ.</Text> : null}
         <View style={styles.backupActions}>
           <Pressable
             accessibilityRole="button"

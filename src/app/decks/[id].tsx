@@ -8,17 +8,17 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, Share, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { VocabularyCard } from "@/components/VocabularyCard";
+import { Disclosure } from "@/components/chinese/Disclosure";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
-import { deletePersonalDeck, getDeckVocabulary, getDueVocabulary, getSettings, listPersonalDecks, removeVocabularyFromDeck, renamePersonalDeck } from "@/db/repository";
+import { deletePersonalDeck, getDeckVocabulary, getDueVocabulary, listPersonalDecks, removeVocabularyFromDeck, renamePersonalDeck } from "@/db/repository";
 import { createSharedDeckPayload } from "@/services/decks/share-code";
 import { publishShortDeck, ShortDeckShareError } from "@/services/decks/short-share";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
 import { searchHanziCandidates, type PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
-import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { Vocabulary } from "@/types/models";
 
@@ -53,7 +53,6 @@ export default function DeckDetail() {
   const [hanziCandidates, setHanziCandidates] = useState<PinyinHanziCandidate[]>([]);
   const [selectedSearchHanzi, setSelectedSearchHanzi] = useState("");
   const [appliedSearch, setAppliedSearch] = useState<{ pinyin: string; hanzi: string } | null>(null);
-  const setReviewQueue = useAppStore((s) => s.setReviewQueue);
   const load = useCallback(() => {
     if (!id) return;
     Promise.all([
@@ -133,9 +132,7 @@ export default function DeckDetail() {
     if (!dueWords.length || reviewLoading) return;
     setReviewLoading(true);
     try {
-      const settings = await getSettings(db);
-      setReviewQueue(dueWords.slice(0, settings.reviewSessionSize));
-      router.push("/review/session");
+      router.push({ pathname: "/review", params: { deckId: id } } as Href);
     } finally {
       setReviewLoading(false);
     }
@@ -199,16 +196,25 @@ export default function DeckDetail() {
     if (sharing) return;
     setSharing(true);
     try {
-      const code = await publishShortDeck(createSharedDeckPayload({ name }, words));
+      const payload = createSharedDeckPayload({ name }, words);
+      let code: string;
+      try {
+        code = await publishShortDeck(payload);
+      } catch (error) {
+        Alert.alert(
+          "Chưa thể tạo mã 8 ký tự",
+          error instanceof ShortDeckShareError
+            ? error.message
+            : "Không thể kết nối dịch vụ chia sẻ. Hãy kiểm tra mạng rồi thử lại.",
+        );
+        return;
+      }
       await Share.share({
         title: `Bộ từ ${name}`,
         message: `Mời bạn nhập mã bộ từ này trong 4Chinese:\n${code}`,
       });
-    } catch (error) {
-      const message = error instanceof ShortDeckShareError
-        ? error.message
-        : "Không thể tạo mã bộ từ. Hãy kiểm tra kết nối mạng rồi thử lại.";
-      Alert.alert("Chưa thể tạo mã 8 ký tự", message);
+    } catch {
+      Alert.alert("Chưa thể chia sẻ bộ từ", "Hãy thử lại hoặc dùng tính năng sao chép của thiết bị.");
     } finally {
       setSharing(false);
     }
@@ -236,6 +242,7 @@ export default function DeckDetail() {
   };
   return (
     <Screen
+      avoidKeyboard
       title={name}
       subtitle={`${words.length} từ do bạn tự chọn`}
       right={(
@@ -250,6 +257,7 @@ export default function DeckDetail() {
         </Pressable>
       )}
     >
+      <PrimaryButton label={dueWords.length ? `Ôn ${dueWords.length} từ đến hạn` : unlearnedCount ? `Học từ mới (${unlearnedCount})` : "Đã học hết · thêm từ mới"} loading={reviewLoading || learningLoading} onPress={() => dueWords.length ? void startReview() : unlearnedCount ? void startLearning() : router.push({ pathname: "/decks/bulk-add", params: { deckId: id } } as Href)} />
       {editingName ? (
         <View style={[card, styles.renameCard]}>
           <Text style={styles.renameLabel}>TÊN BỘ TỪ</Text>
@@ -281,7 +289,9 @@ export default function DeckDetail() {
           </View>
         </View>
       ) : null}
+      <Disclosure title="Công cụ bộ từ">
       <PrimaryButton
+        variant="secondary"
         icon="＋"
         label="Thêm từ"
         style={styles.addWordButton}
@@ -326,9 +336,10 @@ export default function DeckDetail() {
           onPress={() => router.push({ pathname: "/decks/pronunciation", params: { deckId: id } } as Href)}
         />
       </View>
+      <PrimaryButton variant="danger" label="Đưa bộ từ vào thùng rác" loading={deleting} onPress={confirmArchive} />
+      </Disclosure>
       <View style={[card, styles.searchCard]}>
         <Text style={styles.searchTitle}>TÌM TRONG BỘ</Text>
-        <Text style={styles.searchHint}>Tìm theo pinyin hoặc Hán tự.</Text>
         <View style={styles.searchInputRow}>
           <TextInput
             accessibilityLabel="Nhập pinyin để tìm trong bộ từ"
@@ -413,10 +424,10 @@ export default function DeckDetail() {
         <Text style={styles.progressMeta}>
           {knownCount} đã biết · {skippedCount} bỏ qua · {dueWords.length} đến hạn
         </Text>
-        <Text style={styles.chartTitle}>Mức nhớ</Text>
+        <Disclosure title={`Mức nhớ · ${learnedCount} từ đã học`}>
         <View style={styles.levelChart}>
           {levelCounts.map((count, index) => (
-            <Pressable key={index + 1} onPress={() => setSelectedLevel((level) => level === index + 1 ? null : index + 1)} style={[styles.levelColumn, selectedLevel === index + 1 && styles.levelColumnActive]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`${index === 5 ? "Nhớ sâu" : `Cấp ${index + 1}`}: ${count} từ`} accessibilityState={{ selected: selectedLevel === index + 1 }} key={index + 1} onPress={() => setSelectedLevel((level) => level === index + 1 ? null : index + 1)} style={[styles.levelColumn, selectedLevel === index + 1 && styles.levelColumnActive]}>
               <View style={styles.levelBarTrack}>
                 <View
                   style={[
@@ -431,13 +442,16 @@ export default function DeckDetail() {
                   ]}
                 />
               </View>
-              <Text style={styles.levelLabel}>{index + 1 === 6 ? "Sâu" : index + 1}</Text>
-              <Text style={styles.levelCount}>{count}</Text>
+              <Text adjustsFontSizeToFit minimumFontScale={0.7} numberOfLines={1} style={styles.levelLabel}>{index + 1 === 6 ? "Sâu" : index + 1}</Text>
+              <Text adjustsFontSizeToFit minimumFontScale={0.7} numberOfLines={1} style={styles.levelCount}>{count}</Text>
             </Pressable>
           ))}
         </View>
         <Text style={styles.chartHint}>{selectedLevel ? `Đang lọc: ${selectedLevel === 6 ? "Nhớ sâu" : `Cấp ${selectedLevel}`}` : "Chạm mức để lọc"}</Text>
+        </Disclosure>
+        {selectedLevel ? <PrimaryButton variant="ghost" label="Bỏ lọc mức nhớ" onPress={() => setSelectedLevel(null)} /> : null}
       </View>
+      <Disclosure title="Học và ôn trong bộ">
       <View style={[card, styles.learnCard]}>
         <Text style={styles.learnEyebrow}>HỌC NGAY</Text>
         <Text style={styles.learnTitle}>
@@ -445,9 +459,9 @@ export default function DeckDetail() {
             ? `${unlearnedCount} từ mới sẵn sàng`
             : "Đã học hết từ mới trong bộ"}
         </Text>
-        <Text style={styles.learnHint}>Chọn tối đa 10 từ mới cho lượt này.</Text>
+        <Text style={styles.learnHint}>Số từ theo cài đặt phiên học và mục tiêu hôm nay.</Text>
         <PrimaryButton
-          label={unlearnedCount ? `Chọn từ để học (0/${Math.min(10, unlearnedCount)})` : "Chưa có từ mới"}
+          label={unlearnedCount ? "Chọn từ để học" : "Chưa có từ mới"}
           disabled={!unlearnedCount}
           loading={learningLoading}
           onPress={() => void startLearning()}
@@ -496,13 +510,8 @@ export default function DeckDetail() {
           </Text>
         )}
       </View>
-      <PrimaryButton
-        variant="danger"
-        icon="🗑"
-        label="Đưa bộ từ vào thùng rác"
-        loading={deleting}
-        onPress={confirmArchive}
-      />
+      </Disclosure>
+      <Text style={{ color: theme.textPrimary, fontSize: 18, fontWeight: "800" }}>Danh sách từ · {visibleWords.length}</Text>
       {visibleWords.length ? (
         <View style={styles.list}>
           {visibleWords.map((word) => (
@@ -519,8 +528,8 @@ export default function DeckDetail() {
           icon="词"
           variant="vocabulary"
           scene="deck"
-          title="Bộ từ đang trống"
-          message="Thêm Hanzi bằng cách viết tay hoặc nhập bàn phím; app sẽ gợi ý Pinyin và nghĩa sẵn có."
+          title={words.length ? "Chưa có từ phù hợp bộ lọc" : "Bộ từ đang trống"}
+          message={words.length ? "Xóa tìm kiếm hoặc bỏ lọc mức nhớ để xem toàn bộ từ." : "Thêm Hanzi bằng cách viết tay hoặc nhập bàn phím; app sẽ gợi ý Pinyin và nghĩa sẵn có."}
         />
       )}
     </Screen>

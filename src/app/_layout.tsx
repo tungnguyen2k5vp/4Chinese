@@ -8,8 +8,11 @@ import 'react-native-reanimated';
 
 import { DatabaseOwnershipGate } from '@/components/DatabaseOwnershipGate';
 import { StartupLoading } from '@/components/StartupRecovery';
-import { initializeDatabase } from '@/db/database';
+import { initializeWithHsk30Backup } from '@/db/hsk30-startup';
 import { getSettings } from '@/db/repository';
+import { appStatusBarStyle } from '@/services/english/status-bar';
+import { useLearningLanguage } from '@/services/languages/LanguageProvider';
+import { LanguageRuntime } from '@/services/languages/LanguageRuntime';
 import { DAILY_STUDY_REMINDER_KIND, syncDailyStudyReminder } from '@/services/notifications/daily-study-reminder';
 import { useAppStore } from '@/stores/app-store';
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider';
@@ -32,19 +35,20 @@ function SettingsHydrator() {
 }
 
 function AppNavigator() {
+  const { preferences } = useLearningLanguage();
   const theme = useTheme();
   const pathname = usePathname();
   const router = useRouter();
-  const statusBarStyle = theme.mode === 'dark' || pathname.endsWith('/vocabulary') ? 'light' : 'dark';
+  const statusBarStyle = appStatusBarStyle(preferences.learningLanguage, theme.mode, pathname);
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       if (response.notification.request.content.data?.kind === DAILY_STUDY_REMINDER_KIND) {
-        router.push('/daily' as Href);
+        router.push((preferences.learningLanguage === 'en' ? '/english/activity' : '/daily') as Href);
       }
     });
     return () => subscription.remove();
-  }, [router]);
+  }, [router, preferences.learningLanguage]);
   return <>
     <StatusBar style={statusBarStyle} />
     <Stack screenOptions={{ statusBarStyle, headerShadowVisible: false, headerTintColor: theme.textPrimary, headerStyle: { backgroundColor: theme.background }, headerTitleStyle: { color: theme.textPrimary }, contentStyle: { backgroundColor: theme.background } }}>
@@ -56,7 +60,9 @@ function AppNavigator() {
       <Stack.Screen name="library/index" options={{ title: 'Thư viện' }} />
       <Stack.Screen name="listening/index" options={{ title: 'Luyện nghe' }} />
       <Stack.Screen name="exam/index" options={{ title: 'Trung tâm luyện thi' }} />
-      <Stack.Screen name="hsk/syllabus" options={{ title: 'Syllabus HSK' }} />
+      <Stack.Screen name="exam/setup" options={{ title: 'Thiết lập bài luyện' }} />
+      <Stack.Screen name="exam/history" options={{ title: 'Lịch sử bài luyện' }} />
+      <Stack.Screen name="hsk/syllabus" options={{ title: 'Danh mục HSK 3.0' }} />
       <Stack.Screen name="exam/readiness" options={{ title: 'Mức độ chuẩn bị' }} />
       <Stack.Screen name="exam/session" options={{ title: 'Bài luyện', gestureEnabled: false, animation: 'none' }} />
       <Stack.Screen name="exam/result" options={{ title: 'Kết quả bài luyện', animation: 'none' }} />
@@ -83,6 +89,7 @@ function AppNavigator() {
       <Stack.Screen name="achievements/index" options={{ title: 'Thành tích & mục tiêu' }} />
       <Stack.Screen name="mistakes/practice" options={{ title: 'Củng cố lỗi' }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="english" options={{ headerShown: false }} />
       <Stack.Screen name="word/[id]" options={{ title: 'Chi tiết từ vựng', headerBackTitle: 'Kho từ' }} />
       <Stack.Screen name="search" options={{ title: 'Tìm trong ứng dụng' }} />
       <Stack.Screen name="learn/setup" options={{ title: 'Học từ mới' }} />
@@ -109,7 +116,7 @@ function AppNavigator() {
 }
 
 export default function RootLayout() {
-  return <DatabaseOwnershipGate><Suspense fallback={<StartupLoading />}><SQLiteProvider databaseName="hanzi30.db" onInit={initializeDatabase} useSuspense>
-    <ThemeProvider><SettingsHydrator /><AppNavigator /></ThemeProvider>
+  return <DatabaseOwnershipGate><Suspense fallback={<StartupLoading />}><SQLiteProvider databaseName="hanzi30.db" onInit={initializeWithHsk30Backup} useSuspense>
+    <ThemeProvider><LanguageRuntime><SettingsHydrator /><AppNavigator /></LanguageRuntime></ThemeProvider>
   </SQLiteProvider></Suspense></DatabaseOwnershipGate>;
 }

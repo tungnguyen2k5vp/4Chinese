@@ -3,8 +3,9 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
+import { Disclosure } from "@/components/chinese/Disclosure";
 import { themedCard } from "@/constants/design";
 import { vietnameseContrasts } from "@/data/vietnamese-contrasts";
 import { listGrammarMicroLessons } from "@/db/grammar-focus";
@@ -43,13 +44,13 @@ export default function GrammarFocus() {
   return (
     <Screen
       title="Ôn ngắn theo lỗi lặp lại"
-      subtitle="Gợi ý từ lịch sử ngữ pháp, không kết luận năng lực chỉ từ một lần sai."
+      hideTitle
     >
-      <Text style={{ color: theme.textMuted }}>
+      <Disclosure title="Cách chọn lỗi cần ôn"><Text style={{ color: theme.textMuted }}>
         Xét tối đa 2.000 lượt gần nhất trong 30 ngày. Cần ít nhất 5 lượt khác
         nhau, 3 lượt sai, 2 dạng bài; ba lượt đúng gần nhất sẽ ngừng gợi ý cấu
         trúc đó. Không thay lịch SRS từ vựng.
-      </Text>
+      </Text></Disclosure>
       {loading ? <ActivityIndicator color={theme.primary} /> : null}
       {error ? (
         <>

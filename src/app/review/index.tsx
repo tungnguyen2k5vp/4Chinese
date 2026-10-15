@@ -1,11 +1,12 @@
-import { router, useLocalSearchParams, type Href } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
+import { resolveReviewSelection, reviewSelections, reviewSelectionLabel, reviewSelectionDescription } from "@/components/review/review-selection";
 import { radius, spacing, themedCard } from "@/constants/design";
 import {
   getDueCount,
@@ -13,66 +14,88 @@ import {
   getSettings,
   saveSettings,
 } from "@/db/repository";
-import { exerciseForReviewMode, standardReviewModes } from "@/services/review/exercise";
-import { resolveReviewMode } from "@/services/review/review-mode";
+import { exerciseForReviewMode } from "@/services/review/exercise";
+import { normalizeReviewSessionSize, REVIEW_SESSION_SIZES } from "@/services/review/session-size";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { ThemeTokens } from "@/theme/tokens";
 import type { UserSettings, Vocabulary } from "@/types/models";
 
-const sizes = [10, 20, 30, 50] as const;
+const sizes = REVIEW_SESSION_SIZES;
 export default function ReviewIndex() {
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
-  const { mode: requestedMode, lessonActivityId } = useLocalSearchParams<{ mode?: string; lessonActivityId?: string }>();
+  const { mode: requestedMode, lessonActivityId, deckId } = useLocalSearchParams<{ mode?: string; lessonActivityId?: string; deckId?: string }>();
   const db = useSQLiteContext();
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [dueCount, setDueCount] = useState(0);
   const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [starting, setStarting] = useState(false);
+  const startLock = useRef(false);
   const setQueue = useAppStore((s) => s.setReviewQueue);
-  useEffect(() => {
+  const setGlobalSettings = useAppStore((s) => s.setSettings);
+  const [error, setError] = useState<string | null>(null);
+  useFocusEffect(useCallback(() => {
     let live = true;
     getSettings(db).then(async (next) => {
       const [dueWords, totalDue] = await Promise.all([
-        getDueVocabulary(db, 50, next.selectedHskBands),
-        getDueCount(db, next.selectedHskBands),
+        getDueVocabulary(db, normalizeReviewSessionSize(next.reviewSessionSize), undefined, deckId),
+        getDueCount(db, undefined, deckId),
       ]);
       if (!live) return;
       setSettings(next);
       setWords(dueWords);
       setDueCount(totalDue);
-    });
+      setGlobalSettings(next);
+    }).catch(() => { if (live) setError("Chưa tải được từ đến hạn. Hãy thử mở lại màn hình ôn."); });
     return () => {
       live = false;
     };
-  }, [db]);
-  const selected = settings?.reviewSessionSize ?? 20;
+  }, [db, deckId, setGlobalSettings]));
+  const selected = normalizeReviewSessionSize(settings?.reviewSessionSize);
   const count = dueCount;
-  const [mode, setMode] = useState(() => resolveReviewMode(requestedMode));
-  const isListening = exerciseForReviewMode(mode).playsAudio;
+  const [mode, setMode] = useState(() => resolveReviewSelection(requestedMode));
+  const isListening = mode !== "mixed" && exerciseForReviewMode(mode).playsAudio;
   const choose = async (size: (typeof sizes)[number]) => {
     if (!settings) return;
     const next = { ...settings, reviewSessionSize: size };
     setSettings(next);
-    await saveSettings(db, next);
+    setGlobalSettings(next);
+    try { await saveSettings(db, next); setError(null); }
+    catch { setError("Chưa lưu được số từ cho lần sau. Bạn vẫn có thể bắt đầu với số từ vừa chọn."); }
   };
-  const start = () => {
-    setQueue(words.slice(0, selected));
-    router.push({ pathname: "/review/session", params: { mode, lessonActivityId: lessonActivityId ?? "" } } as Href);
+  const start = async () => {
+    if (startLock.current) return;
+    startLock.current = true;
+    setStarting(true);
+    try {
+      const [currentWords, totalDue] = await Promise.all([getDueVocabulary(db, selected, undefined, deckId), getDueCount(db, undefined, deckId)]);
+      setWords(currentWords); setDueCount(totalDue);
+      if (!currentWords.length) return;
+      setQueue(currentWords, selected);
+      router.push({ pathname: "/review/session", params: { mode, lessonActivityId: lessonActivityId ?? "" } } as Href);
+    } catch { setError("Chưa bắt đầu được phiên ôn. Hãy thử lại."); }
+    finally { startLock.current = false; setStarting(false); }
   };
   return (
     <Screen
       title={isListening ? "Luyện nghe" : "Ôn tập theo cấp nhớ"}
+      hideTitle
       subtitle={isListening ? "Nghe từ tiếng Trung rồi chọn nghĩa đúng trong lịch ôn hiện có." : "Lịch ôn rõ ràng từ Cấp 1 đến Trí nhớ sâu, dựa trên kết quả thật của bạn."}
     >
       <View style={[themedCard(theme), styles.hero]}>
-        <Text style={styles.icon}>复</Text>
-        <Text style={styles.count}>{count}</Text>
-        <Text style={styles.label}>từ đến hạn</Text>
-        <Text style={styles.copy}>
-          Từ khó và quá hạn được ưu tiên. Trả lời sai sẽ xuất hiện lại tối đa
-          một lần trong phiên.
-        </Text>
+        <View style={styles.heroTop}>
+          <Text style={styles.icon}>复</Text>
+          <View style={styles.countCopy}>
+            <View style={styles.countRow}>
+              <Text style={styles.count}>{count}</Text>
+              <Text style={styles.label}>từ đến hạn</Text>
+            </View>
+            <Text style={styles.copy}>
+              Từ khó và quá hạn được ưu tiên · trả lời sai có thể gặp lại một lần.
+            </Text>
+          </View>
+        </View>
       </View>
       {count === 0 ? (
         <EmptyState
@@ -88,30 +111,35 @@ export default function ReviewIndex() {
           <View style={themedCard(theme)}>
             <Text style={styles.section}>Kiểu bài ôn</Text>
             <View style={styles.modeOptions}>
-              {standardReviewModes.map((candidateMode) => {
+              {reviewSelections.map((candidateMode) => {
                 const selectedMode = candidateMode === mode;
                 return (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityState={{ selected: selectedMode }}
+                    accessibilityLabel={reviewSelectionLabel(candidateMode)}
+                    disabled={starting}
                     key={candidateMode}
                     onPress={() => setMode(candidateMode)}
                     style={[styles.modeChoice, selectedMode && styles.modeChoiceActive]}
                   >
                     <Text style={[styles.modeChoiceText, selectedMode && styles.modeChoiceTextActive]}>
-                      {exerciseForReviewMode(candidateMode).label}
+                      {reviewSelectionLabel(candidateMode)}
                     </Text>
                   </Pressable>
                 );
               })}
             </View>
-            <Text style={styles.section}>Số từ trong phiên</Text>
+            <Text accessibilityLiveRegion="polite" style={styles.modeDescription}>{reviewSelectionDescription(mode)}</Text>
+            <Text style={styles.section}>Số từ mỗi phiên</Text>
+            <Text style={styles.note}>{deckId ? "Ôn các từ đến hạn trong bộ này." : "Ôn các từ đến hạn ở tất cả bộ và cấp HSK."}</Text>
             <View style={styles.sizes}>
               {sizes.map((size) => (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`${size} từ trong phiên`}
                   accessibilityState={{ selected: selected === size }}
+                  disabled={starting || !settings}
                   key={size}
                   onPress={() => void choose(size)}
                   style={[styles.size, selected === size && styles.sizeActive]}
@@ -127,32 +155,32 @@ export default function ReviewIndex() {
                 </Pressable>
               ))}
             </View>
-            <Text style={styles.note}>
-              {isListening
-                ? "Phiên này phát âm từ tiếng Trung; bạn chọn nghĩa tiếng Việt đúng trước khi chấm mức nhớ."
-                : "Phiên này sẽ hiện nghĩa tiếng Việt để bạn viết Hanzi, chọn Pinyin và chọn nghĩa đúng trước khi chấm mức nhớ."}
-            </Text>
           </View>
           <PrimaryButton
             label={`Bắt đầu ôn ${Math.min(selected, count)} từ`}
-            onPress={start}
+            loading={starting}
+            disabled={!words.length}
+            onPress={() => void start()}
           />
         </>
       )}
+      {error ? <Text accessibilityLiveRegion="polite" style={styles.note}>{error}</Text> : null}
     </Screen>
   );
 }
 function createStyles(theme: ThemeTokens) {
   return StyleSheet.create({
-    hero: { alignItems: "center", gap: 4, paddingVertical: spacing.xl, backgroundColor: theme.infoSoft },
-    icon: { fontSize: 45, color: theme.primaryText, fontWeight: "800" },
-    count: { fontSize: 42, color: theme.textPrimary, fontWeight: "900" },
+    hero: { paddingVertical: spacing.md, paddingHorizontal: spacing.md, backgroundColor: theme.infoSoft },
+    heroTop: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+    icon: { fontSize: 32, color: theme.primaryText, fontWeight: "800" },
+    countCopy: { flex: 1, minWidth: 0, gap: 2 },
+    countRow: { flexDirection: "row", alignItems: "baseline", gap: spacing.sm, flexWrap: "wrap" },
+    count: { fontSize: 34, lineHeight: 40, color: theme.textPrimary, fontWeight: "900" },
     label: { color: theme.primaryText, fontWeight: "800" },
     copy: {
       color: theme.textSecondary,
-      textAlign: "center",
-      lineHeight: 21,
-      marginTop: spacing.sm,
+      fontSize: 12,
+      lineHeight: 17,
     },
     section: {
       fontSize: 17,
@@ -161,10 +189,11 @@ function createStyles(theme: ThemeTokens) {
       marginBottom: spacing.md,
     },
     modeOptions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginBottom: spacing.md },
-    modeChoice: { borderColor: theme.border, borderRadius: radius.md, borderWidth: 1, minHeight: 40, justifyContent: "center", paddingHorizontal: spacing.sm, backgroundColor: theme.surface },
+    modeChoice: { borderColor: theme.border, borderRadius: radius.md, borderWidth: 1, minHeight: 48, justifyContent: "center", paddingHorizontal: spacing.sm, paddingVertical: spacing.sm, maxWidth: "100%", backgroundColor: theme.surface },
     modeChoiceActive: { backgroundColor: theme.primary, borderColor: theme.primary },
-    modeChoiceText: { color: theme.textSecondary, fontSize: 11, fontWeight: "800" },
+    modeChoiceText: { color: theme.textSecondary, fontSize: 13, fontWeight: "800", flexShrink: 1 },
     modeChoiceTextActive: { color: theme.onPrimary },
+    modeDescription: { color: theme.textSecondary, fontSize: 14, lineHeight: 21, marginBottom: spacing.lg },
     sizes: { flexDirection: "row", gap: spacing.sm },
     size: {
       flex: 1,

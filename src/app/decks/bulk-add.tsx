@@ -5,9 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { BilingualMeaningList } from "@/components/BilingualMeaningList";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { KeyboardTrackingInput } from "@/components/KeyboardTrackingInput";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { radius, spacing, themedCard } from "@/constants/design";
 import { copyVocabularyBatchToDeck, listPersonalDecks } from "@/db/repository";
 import { parseBulkVocabularyInput, removeBulkVocabularyResult, resolveBulkVocabulary, type BulkResolvedWord } from "@/services/vocabulary/bulk-import";
@@ -82,11 +82,11 @@ export default function BulkAddWords() {
   };
 
   return (
-    <Screen title="Thêm từ hàng loạt" subtitle="Mỗi dòng một mục · tối đa 100" avoidKeyboard scrollRef={scrollRef}
+    <Screen title="Thêm từ hàng loạt" hideTitle subtitle="Mỗi dòng một mục · tối đa 100" avoidKeyboard scrollRef={scrollRef}
       onViewportLayout={() => setViewportRevision(revision => revision + 1)}
       onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }}>
-      <View style={[styles.card, styles.deckCard]}>
-        <Text style={styles.label}>BỘ TỪ ĐANG THÊM</Text>
+      <View style={{ gap: spacing.xs }}>
+        <Text style={styles.label}>THÊM VÀO BỘ</Text>
         <Text style={styles.deckName}>{deckName}</Text>
       </View>
       <View style={[styles.card, styles.form]}>

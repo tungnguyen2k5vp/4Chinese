@@ -1,24 +1,31 @@
-# Error Intelligence V2
+# Error Intelligence V2 (V6)
 
-## Trạng thái
+Date: 2026-10-07. Source: `src/db/mistakes.ts`, `src/services/learning/error-intelligence-v2.ts`, and the Mistake Book routes.
 
-Đã thêm lớp phân cụm lỗi quan sát được trong `src/services/learning/error-intelligence-v2.ts` và nối vào màn hình Sổ lỗi. Lớp mới không thay thế SRS, không tự sửa dữ liệu học và không suy đoán nguyên nhân phát âm/ngữ nghĩa từ một lần trả lời sai.
+## What changed
 
-## Quy tắc kết luận
+The existing Mistake Book remains the source of truth for open mistakes. V6 adds the additive `practice_attempt_daily` table (schema V44) so it can compare correct and incorrect attempts over a rolling 30-day window. It stores only a mistake ID, skill, exercise type, UTC date, attempt count, and error count—no answer text or reader/OCR content.
 
-- Chỉ dùng các bản ghi `mistake_records` chưa được giải quyết.
-- Nhóm theo kỹ năng/bài tập đã được lưu; tiền tố `confusable_` mới được coi là nhóm từ dễ nhầm.
-- Mặc định cần ít nhất 5 lần sai cộng dồn và 2 mục lỗi đang mở.
-- Dưới ngưỡng vẫn hiển thị để người học biết, nhưng ghi rõ “chưa đủ mẫu” và không tạo bài chữa lỗi.
-- Không gọi đây là tỷ lệ lỗi vì schema hiện tại chưa lưu tổng số lần thử thành công/thất bại theo cùng một mẫu.
+The aggregate begins only after an item has produced a tracked mistake. It is therefore not a full denominator for all app practice and must be described as recent attempts on tracked mistake items, not a learner-wide error rate.
 
-## Remedial micro-lesson
+## Decision gate
 
-Khi đủ mẫu, hệ thống tạo đề xuất offline gồm giải thích ngắn, 3 bước và loại bài tập phù hợp với nhóm lỗi. Đây là đề xuất dựa trên lỗi đã quan sát, không phải chẩn đoán AI. Việc hoàn thành bài chữa lỗi không thay đổi ngày đến hạn SRS; chỉ luồng ghi nhận lỗi hiện có mới cập nhật `mistake_records`.
+A cluster is actionable only when all defaults are met:
 
-## Giới hạn còn lại
+- at least 10 tracked attempts in the last 30 days;
+- at least 5 tracked errors;
+- at least a 35% observed error rate in that window; and
+- at least 2 open mistake items.
 
-- Cần bổ sung lịch sử attempt chi tiết nếu muốn tính error-rate đáng tin cậy.
-- Cần QA nội dung từng micro-lesson trước khi nâng trạng thái PUBLISHED.
-- Các nhóm nhỏ chưa đủ mẫu không được tự động gắn nhãn “yếu”.
+Old mistakes without recent attempt evidence remain visible but do not become a diagnosis. Buckets use the recorded skill/exercise; only the `confusable_` exercise prefix creates the Confusable bucket. No cause is inferred from one answer or from an STT transcript.
+
+## Remediation and SRS boundary
+
+The offline suggestion includes a short explanation, three practice steps, relevant exercise labels, and at most five IDs from observed open mistakes. The route advances through the queue and retains the existing three consecutive unassisted-correct resolution rule. A practice attempt can update mistake/mastery records, but the remediation route never writes SRS due dates, review logs, or vocabulary progress.
+
+Error groups include Meaning, Pinyin, Listening, Hanzi, Writing, Speaking, Grammar, and Confusable. These are recorded activity categories; they are not all equally actionable in the current remedial UI. Micro-lessons are guidance templates, not separately peer-reviewed curricular material.
+
+## Verification and limits
+
+Unit tests cover rolling-window expiry, correct/error denominators, empty historic evidence, thresholds, queue limits, backup compatibility, and unchanged SRS fields. Physical-device interaction, accessibility, content review by a language specialist, and real-user statistical calibration remain **NOT VERIFIED**. The aggregate is local and is not uploaded by this change.
 

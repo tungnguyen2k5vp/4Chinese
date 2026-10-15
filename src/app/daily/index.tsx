@@ -8,7 +8,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { spacing, themedCard } from "@/constants/design";
 import { getMistakeFocus, listMistakes, type PracticeSkill } from "@/db/mistakes";
-import { getDashboardStats, getDueVocabulary, getSettings, getUnlearnedVocabulary, getWeakVocabulary, listRecentReviewSkillAttempts } from "@/db/repository";
+import { getDashboardStats, getDueCount, getDueVocabulary, getSettings, getUnlearnedVocabulary, getWeakVocabulary, listRecentReviewSkillAttempts } from "@/db/repository";
 import { AnalyticsEvent, track } from "@/services/analytics/analytics-service";
 import { buildDailySessionPlan, type DailySessionPlan } from "@/services/learning/daily-session";
 import { normalizeQuickSessionMinutes } from "@/services/learning/next-best-action";
@@ -29,6 +29,7 @@ export default function DailySessionScreen() {
   const quickMinutes = normalizeQuickSessionMinutes(requestedMinutes);
   const setLearnQueue = useAppStore((state) => state.setLearnQueue);
   const setReviewQueue = useAppStore((state) => state.setReviewQueue);
+  const setSettings = useAppStore((state) => state.setSettings);
   const [plan, setPlan] = useState<DailySessionPlan | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -37,16 +38,18 @@ export default function DailySessionScreen() {
     setLoading(true);
     setPlan(null);
     void getSettings(db).then(async (settings) => {
-      const [stats, dueWords, weakWords, unlearnedWords, attempts, mistakes, mistakeFocus] = await Promise.all([
+      const [stats, dueWords, weakWords, unlearnedWords, attempts, mistakes, mistakeFocus, totalDue] = await Promise.all([
         getDashboardStats(db, settings.selectedHskBands),
-        getDueVocabulary(db, settings.reviewSessionSize, settings.selectedHskBands),
+        getDueVocabulary(db, settings.reviewSessionSize),
         getWeakVocabulary(db, 30),
         getUnlearnedVocabulary(db, settings.selectedHskBands, settings.learnSessionSize),
         listRecentReviewSkillAttempts(db),
         listMistakes(db),
         getMistakeFocus(db),
+        getDueCount(db),
       ]);
       if (!active) return;
+      setSettings(settings);
       setPlan(buildDailySessionPlan({
         dueWords, weakWords, unlearnedWords,
         dailyNewWordGoal: settings.dailyNewWordGoal,
@@ -56,7 +59,7 @@ export default function DailySessionScreen() {
         studyTimeGoalMinutes: settings.dailyStudyMinutes,
         sessionDurationMinutes: quickMinutes ?? undefined,
         studiedSecondsToday: quickMinutes == null ? stats.studySeconds : 0,
-        totalDueCount: stats.due,
+        totalDueCount: totalDue,
         recentMistakeCount: mistakes.length,
         recentWrongAttempts: attempts.slice(0, 5).filter((attempt) => !attempt.correct).length,
         mistakeFocusLabel: mistakeFocus ? mistakeSkillLabel[mistakeFocus.skill] + " (" + mistakeFocus.openCount + " mục, " + mistakeFocus.totalWrong + " lần sai)" : undefined,
@@ -64,7 +67,7 @@ export default function DailySessionScreen() {
       }));
     }).catch(() => { if (active) setPlan(null); }).finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [db, quickMinutes]));
+  }, [db, quickMinutes, setSettings]));
 
   const startDueReview = () => {
     if (!plan?.dueWords.length) return;

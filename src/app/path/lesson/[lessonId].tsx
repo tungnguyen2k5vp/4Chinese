@@ -4,8 +4,8 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { MotionPressable } from "@/components/ui/MotionPressable";
 import { LearningLandscape } from "@/components/visual/LearningLandscape";
@@ -79,9 +79,9 @@ export default function LessonScreen() {
     return () => { active = false; };
   }, [db, lessonId]);
 
-  return <Screen title={lesson?.title ?? "Bài học"} subtitle="Mở từng hoạt động để hoàn thành bài học.">
+  return <Screen title={lesson?.title ?? "Bài học"} hideTitle>
     {errorMessage ? <View accessibilityRole="alert" style={styles.errorCard}><View style={styles.errorSeal}><Ionicons name="alert-circle-outline" size={22} color={theme.error} /></View><Text style={styles.errorTitle}>Chưa thể tiếp tục</Text><Text style={styles.errorCopy}>{errorMessage}</Text><PrimaryButton label="Quay lại lộ trình" onPress={() => router.back()} /></View> : null}
-    {lesson ? <View style={styles.lessonHero}><LearningLandscape mood="journey" scene="learn" height={112} /><View style={styles.lessonHeroBody}><Text style={styles.heroKicker}>BÀI HỌC · {lesson.unit_title}</Text><Text style={styles.lessonHeroTitle}>{lesson.title}</Text><View style={styles.lessonFacts}><Text style={styles.lessonFact}>{lesson.estimated_minutes} phút</Text><Text style={styles.factDot}>·</Text><Text style={styles.lessonFact}>{lesson.xp_reward} XP khi hoàn tất</Text></View></View></View> : null}
+    {lesson ? <View style={styles.lessonHero}><LearningLandscape mood="journey" scene="learn" height={64} /><View style={styles.lessonHeroBody}><Text style={styles.heroKicker}>BÀI HỌC · {lesson.unit_title}</Text><Text style={styles.lessonHeroTitle}>{lesson.title}</Text><View style={styles.lessonFacts}><Text style={styles.lessonFact}>{lesson.estimated_minutes} phút</Text><Text style={styles.factDot}>·</Text><Text style={styles.lessonFact}>{lesson.xp_reward} XP khi hoàn tất</Text></View></View></View> : null}
     <View style={[themedCard(theme), styles.progressCard]} accessible accessibilityLabel={`Đã hoàn thành ${completed} trên ${activities.length} hoạt động`}>
       <View style={styles.progressHead}>
         <View><Text style={styles.eyebrow}>TIẾN ĐỘ BÀI HỌC</Text><Text style={styles.progressTitle}>{completed}/{activities.length || "–"} hoạt động</Text></View>

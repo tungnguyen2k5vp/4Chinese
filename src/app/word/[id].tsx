@@ -8,14 +8,15 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, Text
 import { AudioButton } from "@/components/AudioButton";
 import { HskBadge, MasteryBadge } from "@/components/Badges";
 import { BilingualMeaningList } from "@/components/BilingualMeaningList";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { LexicalKnowledgeCard } from '@/components/LexicalKnowledgeCard';
 import { PersonalContextCard } from '@/components/PersonalContextCard';
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { StrokeWriter } from "@/components/StrokeWriter";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
+import { getHsk30WordLevels } from "@/db/hsk30";
 import { recordLessonActivityEvidence } from "@/db/learning-path";
 import {
   copyVocabularyBatchToDeck,
@@ -26,6 +27,7 @@ import {
   saveNotes,
   toggleFavorite,
 } from "@/db/repository";
+import { useModalAnimationType } from '@/hooks/use-reduced-motion';
 import { primaryEnglishMeaning } from "@/services/vocabulary/bilingual-meanings";
 import { analyzeVocabulary, buildMnemonicNote } from "@/services/vocabulary/character-analysis";
 import { useAppStore } from "@/stores/app-store";
@@ -34,13 +36,15 @@ import type { PersonalDeck, Vocabulary } from "@/types/models";
 
 type Tab = "overview" | "writing" | "examples" | "notes";
 export default function WordDetail() {
-  const { id, lessonActivityId } = useLocalSearchParams<{ id: string; lessonActivityId?: string }>();
+  const { id, lessonActivityId, hskSourceId } = useLocalSearchParams<{ id: string; lessonActivityId?: string; hskSourceId?: string }>();
   const db = useSQLiteContext();
   const theme = useTheme();
   const colors = designColors(theme);
   const card = themedCard(theme);
   const styles = useThemeStyles(createStyles);
+  const modalAnimation = useModalAnimationType();
   const [word, setWord] = useState<Vocabulary | null>();
+  const [hsk30Levels, setHsk30Levels] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>("overview");
   const [character, setCharacter] = useState("");
   const [notes, setNotes] = useState("");
@@ -61,10 +65,11 @@ export default function WordDetail() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setWord(undefined); setLoadFailed(false); setRelated([]); setSaveMessage("");
     if (!id) { setWord(null); return; }
-    void Promise.all([getVocabulary(db, id), getNotes(db, id)]).then(
-      ([value, note]) => {
+    void Promise.all([getVocabulary(db, id), getNotes(db, id), getHsk30WordLevels(db, id, hskSourceId)]).then(
+      ([value, note, levels]) => {
         if (!live) return;
         setWord(value);
+        setHsk30Levels(levels);
         setCharacter(value?.simplified[0] ?? "");
         setNotes(note);
         if (value) {
@@ -74,7 +79,7 @@ export default function WordDetail() {
       },
     ).catch(() => { if (live) setLoadFailed(true); });
     return () => { live = false; };
-  }, [db, id, lessonActivityId, reload]);
+  }, [db, id, lessonActivityId, hskSourceId, reload]);
   if (loadFailed) return <Screen><Text style={styles.loading}>Chưa tải được từ vựng. Dữ liệu của bạn vẫn được giữ nguyên.</Text><PrimaryButton label="Thử tải lại" onPress={() => setReload(value => value + 1)} /></Screen>;
   if (word === undefined)
     return (
@@ -185,6 +190,7 @@ export default function WordDetail() {
           <Text style={[styles.meaning, styles.meaningEn]}>{primaryEnglishMeaning(word.meaningsEn)}</Text>
         </View>
         <View style={styles.badges}>
+          {hsk30Levels.length ? <Text style={styles.pos}>HSK 3.0 · 11/2025: {hsk30Levels.map(level => 'HSK ' + level).join(', ')} · Cấp trong bộ từ gốc:</Text> : null}
           <HskBadge band={word.hskBand} />
           <MasteryBadge level={word.masteryLevel} status={word.status} />
           {word.pos.map((item) => (
@@ -356,7 +362,7 @@ export default function WordDetail() {
         </>
       ) : null}
     </Screen>
-      <Modal visible={deckPickerOpen} transparent animationType="fade" onRequestClose={() => setDeckPickerOpen(false)}>
+      <Modal visible={deckPickerOpen} transparent animationType={modalAnimation} onRequestClose={() => setDeckPickerOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.deckPicker}>
             <Text style={styles.deckPickerTitle}>{"Th\u00eam v\u00e0o b\u1ed9 t\u1eeb"}</Text>

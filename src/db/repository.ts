@@ -10,6 +10,7 @@ import {
 import { illustrationForVocabulary } from "@/services/media/illustration";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
 import { exerciseTypeForReviewMode } from "@/services/review/exercise";
+import { normalizeReviewSessionSize } from "@/services/review/session-size";
 import {
   assessWeakness,
   isWeakWord,
@@ -204,7 +205,7 @@ export const defaultSettings: UserSettings = {
   dailyReminderMinute: 0,
   onboardingCompleted: false,
   reviewStyle: "automatic",
-  reviewSessionSize: 20,
+  reviewSessionSize: 10,
   practiceWritingEarly: false,
 };
 
@@ -632,6 +633,32 @@ export async function getUpcomingReviewVocabulary(
   return rows.map(mapWord);
 }
 
+export const LEARNED_REVIEW_PAGE_SIZE = 50;
+export type LearnedReviewWord = Vocabulary & { isKnown: boolean; isSuspended: boolean };
+export type LearnedReviewPage = { words: LearnedReviewWord[]; total: number; page: number; totalPages: number };
+
+/** All learned cards across HSK bands and active decks, including due cards.
+ * Known/suspended cards remain visible, but the UI must not claim they are due. */
+export async function getLearnedReviewPage(db: SQLiteDatabase, requestedPage = 1): Promise<LearnedReviewPage> {
+  const scope = `FROM vocabulary v JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+    WHERE (p.studied=1 OR p.status='KNOWN')
+      AND (v.deck_id IS NULL OR EXISTS (
+        SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+      ))`;
+  const count = await db.getFirstAsync<{ count: number }>(`SELECT COUNT(*) count ${scope}`);
+  const total = count?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / LEARNED_REVIEW_PAGE_SIZE));
+  const page = Math.min(totalPages, Math.max(1, Number.isFinite(requestedPage) ? Math.trunc(requestedPage) : 1));
+  const rows = await db.getAllAsync<DbWord & { is_suspended: number }>(
+    `SELECT v.*,p.memory_level mastery_level,p.is_favorite,p.due,p.status,p.studied,
+      p.is_known,p.is_suspended,p.next_review_at,p.review_count ${scope}
+     ORDER BY CASE WHEN p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0 AND p.next_review_at IS NOT NULL THEN 0 ELSE 1 END,
+       p.next_review_at ASC,v.id ASC LIMIT ? OFFSET ?`,
+    LEARNED_REVIEW_PAGE_SIZE, (page - 1) * LEARNED_REVIEW_PAGE_SIZE,
+  );
+  return { words: rows.map(row => ({ ...mapWord(row), isKnown: row.is_known === 1 || row.status === 'KNOWN', isSuspended: row.is_suspended === 1 })), total, page, totalPages };
+}
+
 /**
  * A read-only “mistake book”. It reuses the same persisted signals that the
  * scheduler already uses to prioritize due reviews, without creating a second
@@ -926,9 +953,11 @@ export async function getSettings(db: SQLiteDatabase): Promise<UserSettings> {
   );
   if (!row) return defaultSettings;
   try {
+    const saved = JSON.parse(row.value) as Partial<UserSettings>;
     return {
       ...defaultSettings,
-      ...(JSON.parse(row.value) as Partial<UserSettings>),
+      ...saved,
+      reviewSessionSize: normalizeReviewSessionSize(saved.reviewSessionSize),
     };
   } catch {
     return defaultSettings;
@@ -1005,7 +1034,7 @@ export async function listPersonalDecks(
   }>(
     `SELECT d.*,
     COUNT(v.id) word_count,
-    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.next_review_at<=? AND p.is_suspended=0 THEN 1 ELSE 0 END) due_count
+    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.next_review_at<=? AND p.is_suspended=0 THEN 1 ELSE 0 END) due_count
     FROM personal_deck d LEFT JOIN vocabulary v ON v.deck_id=d.id
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     ${options.includeDeleted ? "" : "WHERE d.deleted_at IS NULL"}

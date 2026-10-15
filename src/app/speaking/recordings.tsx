@@ -3,9 +3,9 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform, Text, View } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { EmptyState } from '@/components/EmptyState';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
 import { spacing } from '@/constants/design';
 import { useConfirmation } from '@/hooks/use-confirmation';
 import { stopChineseSpeech } from '@/services/audio/chinese-speech';

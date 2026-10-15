@@ -3,15 +3,22 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Linking, Pressable, Text, View } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
+import { Hsk30Catalog } from '@/components/Hsk30Catalog';
 import { HskBandSelect } from '@/components/HskBandSelect';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
 import { SearchBar } from '@/components/SearchBar';
+import { HSK30_KINDS, type Hsk30Kind } from '@/services/hsk/hsk30-source';
 import { getSyllabusAlignment, syllabus, syllabusLevel, syllabusSectionLabels, type SyllabusRow, type SyllabusSection } from '@/services/hsk/syllabus';
 import { useTheme } from '@/theme/ThemeProvider';
 import type { HskBand } from '@/types/models';
 
 export default function SyllabusDetail() {
+  const params = useLocalSearchParams<{ band?: string; section?: string; filter?: string; source?: string }>();
+  if (params.source === 'legacy-pdf') return <LegacySyllabusDetail />;
+  return <Hsk30Catalog initialBand={params.band} initialSection={HSK30_KINDS.includes(params.section as never) ? params.section as Hsk30Kind : 'vocabulary'} reviewOnly={params.filter === 'review'} />;
+}
+function LegacySyllabusDetail() {
   const params = useLocalSearchParams<{ band?: string; filter?: string }>(); const db = useSQLiteContext(); const theme = useTheme();
   const [band, setBand] = useState<HskBand>(params.band === '7-9' ? '7-9' : [1,2,3,4,5,6].includes(Number(params.band)) ? Number(params.band) as HskBand : 1);
   const [section, setSection] = useState<'vocabulary' | SyllabusSection>('vocabulary');

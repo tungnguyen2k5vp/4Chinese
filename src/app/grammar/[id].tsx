@@ -4,9 +4,10 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AudioButton } from '@/components/AudioButton';
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { GrammarExerciseCard } from '@/components/GrammarExerciseCard';
 import { PinyinText } from '@/components/PinyinText';
-import { Screen } from '@/components/Screen';
+import { Disclosure } from '@/components/chinese/Disclosure';
 import { SyntaxPattern } from '@/components/visual/SyntaxPattern';
 import { card as baseCard, spacing } from '@/constants/design';
 import { vietnameseContrasts } from '@/data/vietnamese-contrasts';
@@ -57,14 +58,14 @@ export default function GrammarDetail() {
       <Text style={styles.label}>CẤU TRÚC</Text><SyntaxPattern value={point.pattern} />
       <Text style={styles.explanation}>{point.explanation_vi}</Text>
     </View> : null}
-    {contrast ? <View style={[styles.card, styles.block]}>
+    {contrast ? <Disclosure title="Lỗi dễ nhầm Việt–Trung"><View style={[styles.card, styles.block]}>
       <Text style={styles.label}>ĐỐI CHIẾU VIỆT–TRUNG · TỰ BIÊN SOẠN</Text>
       <Text style={styles.explanation}>{contrast.vietnameseTrap}</Text>
       <Text style={styles.explanation}>Câu cần sửa: {contrast.incorrect}</Text>
       <Text style={styles.hanzi}>{contrast.corrected}</Text>
       <Text style={styles.explanation}>{contrast.why}</Text>
       <Text style={styles.explanation}>Cấp độ chỉ mang tính gợi ý và có thể không trùng với cấu trúc đề thi HSK chính thức.</Text>
-    </View> : null}
+    </View></Disclosure> : null}
     {examples.map((example) => <View key={example.id} style={[styles.card, styles.block]}>
       <View style={styles.row}><Text style={styles.hanzi}>{example.hanzi}</Text><AudioButton text={example.hanzi} /></View>
       <PinyinText value={example.pinyin} style={styles.pinyin} /><Text style={styles.translation}>{example.translation_vi}</Text>

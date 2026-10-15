@@ -12,6 +12,7 @@ const { renderToStaticMarkup } = createRequire(import.meta.url)('react-dom/serve
 
 // Native views are shimmed; the real components render against the actual bundled paths.
 vi.mock('react-native', () => ({
+  useWindowDimensions: () => ({ width: 375, height: 812, scale: 1, fontScale: 1 }),
   StyleSheet: { create: (value: unknown) => value },
   PanResponder: { create: () => ({ panHandlers: {} }) },
   View: ({ children, accessibilityLabel }: { children: ReactNode; accessibilityLabel?: string }) =>

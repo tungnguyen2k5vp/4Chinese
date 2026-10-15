@@ -1,29 +1,34 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { designColors, spacing, themedCard } from "@/constants/design";
 import { getDashboardStats } from "@/db/repository";
 import { AnalyticsEvent, track } from "@/services/analytics/analytics-service";
 import { normalizeQuickSessionMinutes } from "@/services/learning/next-best-action";
+import { parseReviewLevelChanges, type ReviewChangeDirection, type ReviewLevelChange } from "@/services/review/result-summary";
+import { formatDueInterval } from "@/services/srs/scheduler";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 export default function Result() {
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
   const db = useSQLiteContext();
-  const p = useLocalSearchParams<Record<string, string>>();
+  const p = useLocalSearchParams<Record<string, string | string[]>>();
   const learning = p.mode === "learn";
   const quickMinutes = normalizeQuickSessionMinutes(p.quickSessionMinutes);
   const completionTracked = useRef(false);
   const lastReviewedWord = useAppStore((state) => state.lastReviewedWord);
   const lastReviewedHanzi = useAppStore((state) => state.lastReviewedHanzi);
   const [streak, setStreak] = useState<number | null>(null);
+  const [expandedGroup, setExpandedGroup] = useState<ReviewChangeDirection | null>(null);
+  const levelChanges = useMemo(() => parseReviewLevelChanges(p.changes), [p.changes]);
   const reviewed = Math.max(0, Number(p.correct ?? 0) + Number(p.wrong ?? 0));
   const accuracy = reviewed ? Math.round((Number(p.correct ?? 0) / reviewed) * 100) : 0;
   const elapsed = Number(p.elapsedSeconds);
@@ -74,9 +79,38 @@ export default function Result() {
         {!learning ? (
           <View style={styles.changeBlock}>
             <Text style={styles.changeTitle}>Thay đổi cấp nhớ</Text>
-            <ChangeBar label="Tăng cấp" value={Number(p.up ?? 0)} total={reviewed} color={theme.success} />
-            <ChangeBar label="Giữ cấp" value={Number(p.same ?? 0)} total={reviewed} color={theme.primary} />
-            <ChangeBar label="Giảm cấp" value={Number(p.down ?? 0)} total={reviewed} color={theme.error} />
+            <Text style={styles.changeHint}>Chạm vào từng nhóm để xem từ, cấp nhớ mới và thời điểm ôn tiếp theo.</Text>
+            <ChangeBar
+              testID="review-level-change-up"
+              label="Tăng cấp"
+              value={Number(p.up ?? 0)}
+              total={reviewed}
+              color={theme.success}
+              rows={levelChanges.filter(row => row.direction === "up")}
+              expanded={expandedGroup === "up"}
+              onPress={() => setExpandedGroup(value => value === "up" ? null : "up")}
+            />
+            <ChangeBar
+              testID="review-level-change-same"
+              label="Giữ cấp"
+              value={Number(p.same ?? 0)}
+              total={reviewed}
+              color={theme.primary}
+              rows={levelChanges.filter(row => row.direction === "same")}
+              expanded={expandedGroup === "same"}
+              onPress={() => setExpandedGroup(value => value === "same" ? null : "same")}
+            />
+            <ChangeBar
+              testID="review-level-change-down"
+              label="Giảm cấp"
+              value={Number(p.down ?? 0)}
+              total={reviewed}
+              color={theme.error}
+              rows={levelChanges.filter(row => row.direction === "down")}
+              expanded={expandedGroup === "down"}
+              onPress={() => setExpandedGroup(value => value === "down" ? null : "down")}
+            />
+            {expandedGroup && levelChanges.length === 0 ? <Text style={styles.changeHint}>Danh sách chi tiết chưa có trong kết quả của lượt ôn này.</Text> : null}
             <Text style={styles.copy}>Đạt trí nhớ sâu (cấp 6): {p.deep ?? 0} từ · tính trong nhóm đã xử lý.</Text>
           </View>
         ) : null}
@@ -109,15 +143,62 @@ function Stat({ label, value }: { label: string; value?: string }) {
     </View>
   );
 }
-function ChangeBar({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
+function ChangeBar({
+  testID,
+  label,
+  value,
+  total,
+  color,
+  rows,
+  expanded,
+  onPress,
+}: {
+  testID: string;
+  label: string;
+  value: number;
+  total: number;
+  color: string;
+  rows: ReviewLevelChange[];
+  expanded: boolean;
+  onPress: () => void;
+}) {
   const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
   const bounded = Math.max(0, Math.min(total, Number.isFinite(value) ? value : 0));
-  return <View style={{ gap: 5 }}>
-    <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm }}>
-      <Text style={{ color: theme.textSecondary, fontSize: 13, fontWeight: '700' }}>{label}</Text>
-      <Text style={{ color: theme.textPrimary, fontSize: 13, fontWeight: '800' }}>{bounded}</Text>
-    </View>
-    <AnimatedProgressBar progress={total ? bounded / total : 0} color={color} trackColor={theme.border} height={7} accessibilityLabel={`${label}: ${bounded} trên ${total} từ`} />
+  return <View style={styles.changeGroup}>
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      accessibilityLabel={`${label}, ${bounded} từ. ${expanded ? "Ẩn danh sách" : "Xem danh sách từ"}`}
+      onPress={onPress}
+      style={styles.changeBarButton}
+    >
+      <View style={styles.changeBarHeading}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={{ color: theme.textSecondary, fontSize: 14, fontWeight: '800' }}>{label}</Text>
+          <Text style={styles.changeHint}>{expanded ? "Chạm để thu gọn" : "Chạm để xem từ và lịch ôn"}</Text>
+        </View>
+        <Text style={{ color: theme.textPrimary, fontSize: 15, fontWeight: '900' }}>{bounded}</Text>
+        <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={theme.textMuted} />
+      </View>
+      <AnimatedProgressBar progress={total ? bounded / total : 0} color={color} trackColor={theme.border} height={7} accessibilityLabel={`${label}: ${bounded} trên ${total} từ`} />
+    </Pressable>
+    {expanded ? (
+      <View testID={`${testID}-list`} style={styles.changeRows}>
+        {rows.length ? rows.map(row => (
+          <View key={row.id} style={styles.changeWordRow}>
+            <View style={styles.changeWordHeading}>
+              <Text style={styles.changeHanzi}>{row.hanzi}</Text>
+              <Text style={styles.changeLevel}>Cấp {row.levelBefore} → {row.levelAfter}</Text>
+            </View>
+            <PinyinText value={row.pinyin} visible style={styles.changePinyin} />
+            <Text style={styles.changeMeaning}>{row.meaning}</Text>
+            <Text style={styles.changeDue}>Ôn tiếp theo: {formatDueInterval(row.nextReviewAt)}</Text>
+          </View>
+        )) : <Text style={styles.changeHint}>Không có từ trong nhóm này.</Text>}
+      </View>
+    ) : null}
   </View>;
 }
 function createStyles(theme: ReturnType<typeof useTheme>) {
@@ -147,6 +228,18 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
   metrics: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
   changeBlock: { width: '100%', gap: spacing.md, borderTopWidth: 1, borderColor: colors.border, paddingTop: spacing.md },
   changeTitle: { color: colors.text, fontSize: 16, fontWeight: '900' },
+  changeHint: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  changeGroup: { gap: spacing.sm },
+  changeBarButton: { gap: 7, paddingVertical: spacing.xs },
+  changeBarHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  changeRows: { gap: spacing.sm, paddingLeft: spacing.sm, borderLeftWidth: 3, borderLeftColor: colors.border },
+  changeWordRow: { gap: 3, padding: spacing.sm, borderRadius: 12, backgroundColor: colors.background },
+  changeWordHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm },
+  changeHanzi: { color: colors.text, fontSize: 23, fontWeight: '900' },
+  changeLevel: { color: colors.text, fontSize: 12, fontWeight: '900' },
+  changePinyin: { fontSize: 16 },
+  changeMeaning: { color: colors.text, fontSize: 14, fontWeight: '700' },
+  changeDue: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
   stat: {
     flex: 1,
     minWidth: 104,

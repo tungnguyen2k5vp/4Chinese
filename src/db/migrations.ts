@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { migrationV35Sql } from './confusable-words';
 import { migrationV33Sql } from './exam-schema';
 import { migrationV32Sql } from './hsk-standard-schema';
+import { migrationV45Sql } from './hsk30-schema';
 import { roleplaySchemaSQL } from './roleplay-history';
 import {
   DATABASE_VERSION,
@@ -38,6 +39,7 @@ import { migrationV37Sql } from './speaking-attempt-schema';
 import { migrationV36Sql } from './v5-content-schema';
 import { migrationV41Sql } from './v5-context-schema';
 import { migrationV42Sql } from './v5-sense-schema';
+import { migrationV44Sql } from './v6-learning-schema';
 import { migrationV34Sql } from './written-practice-schema';
 
 // CREATE TABLE IF NOT EXISTS does not upgrade an existing table. In particular,
@@ -160,6 +162,8 @@ export async function migrateDatabaseSchema(db: SQLiteDatabase): Promise<number>
     await db.execAsync(roleplaySchemaSQL);
     await db.execAsync(migrationV41Sql);
     await ensureColumns(db, migrationV42Sql);
+    await db.execAsync(migrationV44Sql);
+    await db.execAsync(migrationV45Sql);
     await db.execAsync(latestIndexSql);
     await assertDatabaseIntegrity(db);
   });

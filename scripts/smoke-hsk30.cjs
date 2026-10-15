@@ -1,0 +1,167 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { chromium } = require(process.argv[2] || "playwright");
+const bundle = require("../src/data/hsk30-2025-11.json");
+const origin = "http://localhost:8096";
+const destination = path.resolve(
+  __dirname,
+  "../artifacts/hsk30-test-2026-10-09/screens",
+);
+const kinds = {
+  vocabulary: "Từ vựng",
+  grammar: "Ngữ pháp",
+  topic: "Chủ đề",
+  task: "Giao tiếp",
+  hanzi: "Hán tự",
+};
+const levels = ["1", "2", "3", "4", "5", "6", "7-9"];
+fs.mkdirSync(destination, { recursive: true });
+(async () => {
+  const browser = await chromium.launch({ channel: "msedge", headless: true });
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  const errors = [],
+    manifest = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    for (const level of levels) {
+      await page.goto(origin + "/hsk/syllabus?band=" + level);
+      await page
+        .getByText("HSK 3.0 · 11/2025 · bộ 2025/2026", { exact: true })
+        .waitFor({ timeout: 120000 });
+      for (const [kind, label] of Object.entries(kinds)) {
+        await page.getByRole("tab", { name: label, exact: true }).click();
+        const count = bundle.rows[kind].filter(
+          (row) => row.hsk_level === "HSK" + level,
+        ).length;
+        await page
+          .getByText(count + " mục riêng cấp này", { exact: false })
+          .waitFor({ timeout: 30000 });
+        const first = bundle.rows[kind].find(
+          (row) => row.hsk_level === "HSK" + level,
+        );
+        const title =
+          kind === "vocabulary"
+            ? first.word
+            : kind === "grammar"
+              ? first.title_zh
+              : kind === "hanzi"
+                ? first.character
+                : kind === "task"
+                  ? first.task_title_zh
+                  : [first.topic_l1_zh, first.topic_l2_zh, first.topic_l3_zh]
+                      .filter(Boolean)
+                      .join(" · ");
+        await page
+          .getByRole("button", {
+            name: "Xem " + title + " · mục " + first.level_order,
+            exact: true,
+          })
+          .waitFor({ timeout: 30000 });
+        assert.equal(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth > window.innerWidth,
+          ),
+          false,
+          "Horizontal overflow " + kind + " " + level,
+        );
+        const name = kind + "-hsk" + level + ".png";
+        await page.screenshot({
+          path: path.join(destination, name),
+          fullPage: true,
+        });
+        manifest.push({
+          kind,
+          level,
+          expectedCount: count,
+          screenshot: name,
+          viewport: "390x844",
+          platform: "web",
+        });
+        if (kind === "grammar" && level === "1") {
+          await page
+            .getByRole("button", {
+              name: "Xem " + title + " · mục " + first.level_order,
+              exact: true,
+            })
+            .click();
+          await page.getByText("小高去哪儿了？", { exact: true }).waitFor();
+          await page
+            .getByText("今天我们学习第一课。", { exact: true })
+            .waitFor();
+          await page.screenshot({
+            path: path.join(destination, "grammar-hsk1-examples.png"),
+            fullPage: true,
+          });
+          manifest.push({
+            kind: "grammar_examples",
+            level: "1",
+            screenshot: "grammar-hsk1-examples.png",
+            platform: "web",
+          });
+          await page
+            .getByRole("button", { name: "Đóng chi tiết", exact: true })
+            .click();
+        }
+      }
+    }
+    await page.goto(origin + "/hsk/syllabus?band=3");
+    await page
+      .getByText("500 mục riêng cấp này · 1000 mục tích lũy", { exact: true })
+      .waitFor({ timeout: 30000 });
+    await page.getByRole("textbox").fill("还");
+    await page
+      .getByRole("button", { name: "Xem 还 · mục 178", exact: true })
+      .waitFor({ timeout: 30000 });
+    await page
+      .getByRole("button", { name: "Xem 还 · mục 178", exact: true })
+      .click();
+    await page
+      .getByText("HSK30-2025-VOC-HSK3-00178", { exact: true })
+      .waitFor();
+    await page.screenshot({
+      path: path.join(destination, "polyphonic-hai-hsk3.png"),
+      fullPage: true,
+    });
+    await page.goto(origin + "/hsk/syllabus?band=1&source=legacy-pdf");
+    await page
+      .getByText("Mở tài liệu chính thức", { exact: true })
+      .waitFor({ timeout: 30000 });
+    assert.deepEqual(errors, []);
+    fs.writeFileSync(
+      path.join(destination, "manifest.json"),
+      JSON.stringify(
+        {
+          platform: "web",
+          freshIsolatedBrowserProfile: true,
+          notPhysicalDeviceQA: true,
+          checks:
+            "35 source-count views + grammar examples + HSK3 cumulative + polyphonic search + legacy PDF route",
+          errors,
+          manifest,
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(
+      "PASS: 35 source-count screens; examples; 500/1000 counts; polyphonic search; legacy route; no page errors.",
+    );
+  } catch (error) {
+    await page
+      .screenshot({
+        path: path.join(destination, "failure.png"),
+        fullPage: true,
+      })
+      .catch(() => {});
+    console.error(error);
+    console.error((await page.locator("body").innerText()).slice(0, 4500));
+    console.error(errors);
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+  }
+})();

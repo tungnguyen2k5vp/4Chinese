@@ -18,6 +18,7 @@ describe('reader personal context integration', () => {
       expect((await copyVocabularyBatchToDeck(db, 'deck-1', [word])).saved).toBe(1);
       const input = { vocabularyId: word.id, chunk: splitReaderChunks('你好。')[0]!, localCharacterOffset: 0,
         tokenIndex: 0, documentId: null, draftText: '你好。', sourceType: 'READER' as const, sourceId: 'draft-1',
+        userConfirmed: true as const,
         deckCopy: { deckId: 'deck-1', word } };
       await saveReaderWordContext(db, input);
       expect((await copyVocabularyBatchToDeck(db, 'deck-1', [word])).saved).toBe(0);
@@ -37,7 +38,7 @@ describe('reader personal context integration', () => {
       const id = await saveReadingDocument(db, '你'.repeat(1996) + '。我学习中文。下一句。', [], 0);
       const chunk = (await getReadingDocumentChunk(db, id, 1))!;
       const input = { vocabularyId: 'hsk-1-ni', chunk, localCharacterOffset: 0, tokenIndex: 0,
-        documentId: id, draftText: '', sourceId: id, sourceType: 'READER' as const };
+        documentId: id, draftText: '', sourceId: id, sourceType: 'READER' as const, userConfirmed: true as const };
       await saveReaderWordContext(db, input); await saveReaderWordContext(db, input);
       const rows = await listVocabularyContexts(db, 'hsk-1-ni');
       expect(rows).toHaveLength(1);
@@ -51,12 +52,12 @@ describe('reader personal context integration', () => {
       const db = expoAdapter(sqlite); await migrateDatabaseSchema(db);
       for (const sourceType of ['STORY', 'OCR', 'LESSON'] as const) await saveReaderWordContext(db, {
         vocabularyId: 'hsk-1-ni', chunk: splitReaderChunks('你好。再见！')[0]!, localCharacterOffset: 0,
-        tokenIndex: 0, documentId: null, draftText: '你好。再见！', sourceType, sourceId: `${sourceType}-source`,
+        tokenIndex: 0, documentId: null, draftText: '你好。再见！', sourceType, sourceId: `${sourceType}-source`, userConfirmed: true,
       });
       expect((await listVocabularyContexts(db, 'hsk-1-ni')).map((row) => row.sentence)).toEqual(['你好。', '你好。', '你好。']);
       const text = '你'.repeat(2500);
       await expect(saveReaderWordContext(db, { vocabularyId: 'hsk-1-ni', chunk: splitReaderChunks(text)[0]!,
-        localCharacterOffset: 0, tokenIndex: 0, documentId: null, draftText: text, sourceType: 'READER', sourceId: 'too-long' }))
+        localCharacterOffset: 0, tokenIndex: 0, documentId: null, draftText: text, sourceType: 'READER', sourceId: 'too-long', userConfirmed: true }))
         .rejects.toThrow('INVALID_PERSONAL_CONTEXT');
       expect(await listVocabularyContexts(db, 'hsk-1-ni')).toHaveLength(3);
     } finally { sqlite.close(); }

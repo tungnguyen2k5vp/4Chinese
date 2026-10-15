@@ -2,7 +2,7 @@ import type { SQLiteBindValue, SQLiteDatabase } from "expo-sqlite";
 
 import { seedAchievements } from './gamification';
 import { validateSpeakingAttemptBackupRecord } from './speaking-attempts';
-import { validateContextRecord } from './vocabulary-context';
+import { validateContextRecord, validatePersonalContextMemoryRecord } from './vocabulary-context';
 import { validateWordContextRecord } from './word-contexts';
 
 import { validateConfusableAttempt } from '@/data/confusable-words';
@@ -67,6 +67,8 @@ const goalColumns = ['id', 'weekly_minutes', 'updated_at'] as const;
 const grammarAttemptColumns = ['id', 'grammar_id', 'exercise_type', 'correct', 'created_at'] as const;
 const personalContextColumns = ['vocabulary_id','source_type','source_id','location','sentence','sense_id','created_at','updated_at'] as const;
 const wordContextColumns = ['id','vocabulary_id','source_type','source_id','source_title','sentence_text','pinyin','translation_vi','position_metadata','created_at'] as const;
+const personalMemoryColumns = ['id','vocabulary_id','source_type','source_id','source_title','sentence_text','pinyin','translation_vi','sense_id','context_locator','user_selected','created_at','updated_at'] as const;
+const practiceAttemptDailyColumns = ['mistake_id','skill_type','exercise_type','utc_day','attempt_count','error_count'] as const;
 const timedSpeakingColumns = ['id','prompt_id','snapshot_json','recorded_at','duration_ms','self_review','checklist_json','transcript_opt_in','transcript','audio_retention'] as const;
 const roleplayHistoryColumns = ['id','scene_id','level','saved_at','attempts','completed_goals','total_goals','used_words_json','transcript_opt_in','transcript_summary'] as const;
 const roleplayLimitColumns = ['id','daily_limit','session_limit'] as const;
@@ -167,6 +169,8 @@ async function readBackupSnapshot(db: SQLiteDatabase, appVersion: string): Promi
   const confusableAttempts = await readRows(db, 'SELECT * FROM confusable_attempts');
   const personalVocabularyContexts = await readRows(db, `SELECT ${personalContextColumns.join(',')} FROM personal_vocabulary_context`);
   const wordContexts = await readRows(db, `SELECT ${wordContextColumns.join(',')} FROM word_contexts`);
+  const personalContextMemory = await readRows(db, `SELECT ${personalMemoryColumns.join(',')} FROM personal_context_memory`);
+  const practiceAttemptDaily = await readRows(db, `SELECT ${practiceAttemptDailyColumns.join(',')} FROM practice_attempt_daily ORDER BY utc_day,mistake_id`);
   const timedSpeakingAttempts = await readRows(db, `SELECT ${timedSpeakingColumns.join(',')} FROM timed_speaking_attempts`);
   // Do not even read opted-in notes/audio/usage for backup. Local consent is not cloud/backup consent.
   const roleplayHistory = await readRows(db, `SELECT id,scene_id,level,saved_at,attempts,completed_goals,total_goals,used_words_json,
@@ -176,7 +180,7 @@ async function readBackupSnapshot(db: SQLiteDatabase, appVersion: string): Promi
     vocabularyProgress, reviewLogs, dailyStats, baseVocabularyOverrides, imageAssets, lessonProgress,
     lessonActivityProgress, grammarProgress,
     readingDocuments, readingProgress, readingVocabulary, readingDocumentChunks, storyProgress, mistakes, skillMastery, speakingPractice,
-    xpEvents, userAchievements, learningGoals, grammarAttempts, examAttempts, writtenPractice, confusableAttempts, personalVocabularyContexts, wordContexts, timedSpeakingAttempts,
+    xpEvents, userAchievements, learningGoals, grammarAttempts, examAttempts, writtenPractice, confusableAttempts, personalVocabularyContexts, wordContexts, personalContextMemory, practiceAttemptDaily, timedSpeakingAttempts,
     roleplayHistory, roleplayAiLimits };
   return createLocalBackup(data, appVersion);
 }
@@ -194,6 +198,7 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
   data.confusableAttempts?.forEach(validateConfusableAttempt);
   data.personalVocabularyContexts?.forEach(validateContextRecord);
   data.wordContexts?.forEach(validateWordContextRecord);
+  data.personalContextMemory?.forEach(validatePersonalContextMemoryRecord);
   data.timedSpeakingAttempts?.forEach(validateSpeakingAttemptBackupRecord);
   for (const row of data.baseVocabularyOverrides ?? []) {
     if (typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,120}$/.test(row.id)) throw new Error('INVALID_BASE_WORD_OVERRIDE');
@@ -205,6 +210,8 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
       ? await readRows(db, `SELECT ${personalContextColumns.join(',')} FROM personal_vocabulary_context`) : [];
     const retainedWordContexts = data.wordContexts === undefined
       ? await readRows(db, `SELECT ${wordContextColumns.join(',')} FROM word_contexts`) : [];
+    const retainedPersonalContextMemory = data.personalContextMemory === undefined
+      ? await readRows(db, `SELECT ${personalMemoryColumns.join(',')} FROM personal_context_memory`) : [];
     await seedAchievements(db);
     await db.execAsync('DELETE FROM xp_events; DELETE FROM user_achievements; DELETE FROM learning_goals;');
     await db.execAsync('DELETE FROM grammar_attempts;');
@@ -248,6 +255,17 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
         }
       }
     }
+    if (data.personalContextMemory !== undefined) {
+      await db.execAsync('DELETE FROM personal_context_memory;');
+      await insertRows(db,'personal_context_memory',personalMemoryColumns,data.personalContextMemory);
+    } else {
+      for (const row of retainedPersonalContextMemory) {
+        if (await db.getFirstAsync('SELECT id FROM vocabulary WHERE id=?',String(row.vocabulary_id))) {
+          await db.runAsync(`INSERT OR IGNORE INTO personal_context_memory (${personalMemoryColumns.join(',')})
+            VALUES(${personalMemoryColumns.map(() => '?').join(',')})`, ...personalMemoryColumns.map(column => backupValue(row[column])));
+        }
+      }
+    }
     await rebuildCustomCharacterIndex(db, data.customVocabulary);
     await insertRows(db, "example_sentence", exampleColumns, data.exampleSentences);
     await insertRows(db, "user_vocabulary_progress", progressColumns, data.vocabularyProgress);
@@ -266,6 +284,10 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
     await insertRows(db, 'grammar_progress', grammarProgressColumns, data.grammarProgress ?? []);
     await insertRows(db, 'story_progress', storyProgressColumns, data.storyProgress ?? []);
     await insertRows(db, 'mistake_records', mistakeColumns, data.mistakes ?? []);
+    if (data.practiceAttemptDaily !== undefined) {
+      await db.execAsync('DELETE FROM practice_attempt_daily;');
+      await insertRows(db,'practice_attempt_daily',practiceAttemptDailyColumns,data.practiceAttemptDaily);
+    }
     await insertRows(db, 'vocabulary_skill_mastery', skillMasteryColumns, data.skillMastery ?? []);
     await insertRows(db, 'speaking_practice', speakingColumns, data.speakingPractice ?? []);
     await insertRows(db, 'xp_events', xpColumns, data.xpEvents ?? []);

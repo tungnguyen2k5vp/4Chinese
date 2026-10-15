@@ -6,10 +6,11 @@ import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { HanziHandwritingPad } from "@/components/HanziHandwritingPad";
 import { PinyinHanziComposer } from "@/components/PinyinHanziComposer";
+import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { StudySettingsSheet } from "@/components/StudySettingsSheet";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { radius, spacing, themedCard } from "@/constants/design";
@@ -20,11 +21,8 @@ import {
   setSkipped,
   saveSettings,
 } from "@/db/repository";
+import { useNewWordAudio } from "@/hooks/use-new-word-audio";
 import { useStudySession } from "@/hooks/use-study-session";
-import {
-  speakChinese,
-  stopChineseSpeech,
-} from "@/services/audio/chinese-speech";
 import { playFeedback } from "@/services/feedback/feedback-service";
 import { normalizeQuickSessionMinutes } from "@/services/learning/next-best-action";
 import type { PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
@@ -45,7 +43,7 @@ function secondsSince(startedAt: number): number {
 
 /**
  * A NEW word is encoded in three passes: one guided copy followed by two
- * meaning-to-Hanzi recalls. SRS starts only after all three are correct.
+ * meaning-and-pinyin-to-Hanzi recalls. SRS starts only after all three are correct.
  */
 export default function LearnSession() {
   const db = useSQLiteContext();
@@ -84,13 +82,12 @@ export default function LearnSession() {
     if (!word && queue.length === 0) router.replace("/learn/setup");
   }, [queue.length, word]);
 
-  useEffect(() => {
-    if (!word || !settings?.soundEnabled || !settings.autoPlayAudio) return;
-    void speakChinese(word.simplified, { rate: settings.speechRate });
-    return () => {
-      void stopChineseSpeech();
-    };
-  }, [settings, word]);
+  useNewWordAudio(
+    word ? `learn-session:${deckId ?? "all"}:${index}:${word.id}` : null,
+    word?.simplified,
+    Boolean(settings?.soundEnabled),
+    settings?.speechRate ?? 0.82,
+  );
 
   const resetWord = () => {
     setRecognizedHanzi("");
@@ -281,6 +278,7 @@ export default function LearnSession() {
           </Text>
         )}
         <AudioButton text={word.simplified} size={27} />
+        <PinyinText value={word.pinyin} visible style={styles.pinyin} />
         {pass === 1 ? (
           <Text style={styles.meta}>
             {word.pos.join(" · ")} · HSK {word.hskBand}
@@ -310,7 +308,7 @@ export default function LearnSession() {
       <Text style={styles.instruction}>
         {pass === 1
           ? "Quan sát đáp án rồi viết và chọn đúng chữ Hán một lần."
-          : `Chỉ nhìn nghĩa tiếng Việt, tự viết chữ Hán ở lượt ${pass}/3.`}
+          : `Dựa vào nghĩa tiếng Việt và pinyin, tự viết chữ Hán ở lượt ${pass}/3.`}
       </Text>
       <View style={[themedCard(theme), styles.padCard]}>
         <HanziHandwritingPad
@@ -451,7 +449,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.cr
   },
   hanzi: { fontSize: 68, fontWeight: "900", color: theme.textPrimary },
   pronounce: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  pinyin: { fontSize: 22 },
+  pinyin: { fontSize: 22, textAlign: "center", color: theme.textPrimary },
   meaning: {
     fontSize: 21,
     color: theme.textPrimary,

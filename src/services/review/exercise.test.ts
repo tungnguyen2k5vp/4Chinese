@@ -14,7 +14,17 @@ describe("review exercise definitions", () => {
     expect(exerciseForReviewMode("audio-hanzi")).toMatchObject({ answer: "hanzi", requiresHanziInput: true, playsAudio: true });
   });
 
-  it("exposes the four standard review skills without legacy-only modes", () => {
-    expect(standardReviewModes).toEqual(["meaning-hanzi", "hanzi-meaning", "pinyin-hanzi", "audio-hanzi"]);
+  it("exposes all nine review exercise modes", () => {
+    expect(standardReviewModes).toEqual([
+      "meaning-hanzi",
+      "hanzi-meaning",
+      "pinyin-hanzi",
+      "audio-hanzi",
+      "hanzi-pinyin",
+      "audio-meaning",
+      "cloze",
+      "writing",
+      "hanzi-recall-pinyin-compose",
+    ]);
   });
 });

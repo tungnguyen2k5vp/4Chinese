@@ -2,17 +2,14 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { AppState, StyleSheet, Text, View } from "react-native";
 
+import EnglishActivity from "@/app/english/activity";
 import { AudioButton } from "@/components/AudioButton";
-import {
-  DailyQuestCard,
-  type DailyQuestItem,
-} from "@/components/DailyQuestCard";
-import { DueReviewCard } from "@/components/DueReviewCard";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
+import type { DailyQuestItem } from "@/components/DailyQuestCard";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { MotionPressable } from "@/components/ui/MotionPressable";
 import { LearningGuide } from '@/components/visual/LearningGuide';
@@ -25,15 +22,19 @@ import {
 import { listLearningCourses, type LearningCourse } from "@/db/learning-path";
 import {
   getDashboardStats,
+  getDueCount,
   getDailyVocabulary,
   getSettings,
   getUnlearnedVocabulary,
 } from "@/db/repository";
 import { featureFlags } from "@/services/feature-flags/feature-flags";
+import { useLearningLanguage } from "@/services/languages/LanguageProvider";
+import { EnglishAvailability } from "@/services/languages/LanguageRuntime";
 import {
   getComebackPlan,
   getHomeNextAction,
 } from "@/services/learning/next-best-action";
+import { normalizeReviewSessionSize } from "@/services/review/session-size";
 import { toLocalDateKey } from "@/services/stats/calendar";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -62,6 +63,11 @@ const toolHubs = [
 ] as const;
 
 export default function Home() {
+  const { preferences } = useLearningLanguage();
+  return preferences.learningLanguage === "en" ? <EnglishAvailability><EnglishActivity /></EnglishAvailability> : <ChineseHome />;
+}
+
+function ChineseHome() {
   const db = useSQLiteContext();
   const theme = useTheme();
   const styles = createStyles(theme);
@@ -92,7 +98,7 @@ export default function Home() {
       const refreshDateKey = todayKey;
       const refresh = async () => {
         const currentSettings = await getSettings(db);
-        const [nextStats, dailyWord, nextCourses, nextGamification, unlearned] =
+        const [nextStats, dailyWord, nextCourses, nextGamification, unlearned, totalDue] =
           await Promise.all([
             getDashboardStats(db, currentSettings.selectedHskBands),
             getDailyVocabulary(
@@ -103,9 +109,10 @@ export default function Home() {
             listLearningCourses(db),
             getGamificationSummary(db, currentSettings.dailyStudyMinutes),
             getUnlearnedVocabulary(db, currentSettings.selectedHskBands, 1),
+            getDueCount(db),
           ]);
         if (live && refreshDateKey === toLocalDateKey(new Date())) {
-          setStats(nextStats);
+          setStats({ ...nextStats, due: totalDue });
           setDaily(dailyWord);
           setCourses(nextCourses);
           setGamification(nextGamification);
@@ -114,13 +121,16 @@ export default function Home() {
         }
       };
       void refresh();
+      const timer = setInterval(() => { if (AppState.currentState === 'active') void refresh(); }, 30_000);
       return () => {
         live = false;
+        clearInterval(timer);
       };
     }, [db, setSettings, todayKey]),
   );
 
   const newGoal = settings?.dailyNewWordGoal ?? 10;
+  const reviewSessionSize = normalizeReviewSessionSize(settings?.reviewSessionSize);
   const studyGoalMinutes = settings?.dailyStudyMinutes ?? 30;
   const studyMinutes = Math.floor((stats?.studySeconds ?? 0) / 60);
   const activeCourse =
@@ -171,7 +181,7 @@ export default function Home() {
     nextAction.kind === "course" && activeCourse
       ? `${activeCourse.completed_lessons}/${activeCourse.total_lessons} bài`
       : nextAction.kind === "review"
-        ? `${stats?.due ?? 0} từ đang đến hạn`
+        ? `${stats?.reviewedToday ?? 0} đã ôn hôm nay`
         : nextAction.kind === "new-words"
           ? `${stats?.newToday ?? 0}/${newGoal} từ mới`
           : `${studyMinutes}/${studyGoalMinutes} phút học`;
@@ -210,9 +220,12 @@ export default function Home() {
         ),
     },
   ];
+  const visibleQuests = quests.filter(
+    (quest) => !(nextAction.kind === "review" && quest.id === "review"),
+  );
 
   return (
-    <Screen>
+    <Screen safeAreaEdges={["top", "bottom"]}>
       <View style={styles.top}>
         <View style={styles.topLine}>
           <Text style={styles.hello}>Xin chào</Text>
@@ -234,7 +247,7 @@ export default function Home() {
 
       <View style={styles.hero}>
         <View style={styles.heroScene}>
-          <LearningLandscape mood="journey" height={124} />
+          <LearningLandscape mood="journey" height={82} />
           <View style={styles.sceneCaption}>
             <Text style={styles.sceneCaptionChinese}>学</Text>
             <Text style={styles.sceneCaptionText}>MỖI NGÀY MỘT BƯỚC</Text>
@@ -248,7 +261,7 @@ export default function Home() {
               <Text style={styles.heroSubtitle}>{heroSubtitle}</Text>
             </View>
             <View style={styles.heroSeal}>
-              <LearningGuide mood="welcome" size={55} />
+              <LearningGuide mood="welcome" size={42} />
             </View>
           </View>
           <AnimatedProgressBar
@@ -264,11 +277,33 @@ export default function Home() {
             </Text>
           </View>
           <PrimaryButton
-            label={nextAction.kind === "stats" ? "Xem thống kê" : "Tiếp tục học"}
+            label={nextAction.kind === "stats" ? "Xem thống kê" : nextAction.kind === "review" ? `Ôn ${Math.min(reviewSessionSize, stats?.due ?? 0)} từ ngay` : "Tiếp tục học"}
             onPress={heroAction}
           />
         </View>
       </View>
+
+      {daily ? (
+        <View>
+          <Text style={styles.section}>Từ hôm nay</Text>
+          <MotionPressable
+            haptic
+            accessibilityLabel={`Mở từ hôm nay: ${daily.simplified}`}
+            onPress={() => router.push(`/word/${daily.id}`)}
+            style={styles.daily}
+          >
+            <View style={styles.dailyIcon}>
+              <Text style={styles.dailyMark}>字</Text>
+            </View>
+            <View style={styles.dailyCopy}>
+              <Text style={styles.dailyHanzi}>{daily.simplified}</Text>
+              <PinyinText value={daily.pinyin} />
+              <Text style={styles.muted}>{daily.primaryMeaningVi}</Text>
+            </View>
+            <AudioButton text={daily.simplified} />
+          </MotionPressable>
+        </View>
+      ) : null}
 
       {featureFlags.enabled("quickSessions") ? (
         <View style={styles.quickSession}>
@@ -328,13 +363,10 @@ export default function Home() {
         </MotionPressable>
       ) : null}
 
-      {(stats?.due ?? 0) > 0 ? (
-        <DueReviewCard
-          count={stats?.due ?? 0}
-          onPress={() => router.push("/review")}
-        />
-      ) : null}
-      <DailyQuestCard items={quests} />
+      <View style={{ gap: spacing.sm }}>
+        <Text style={styles.section}>Hôm nay</Text>
+        {visibleQuests.map(quest => <MotionPressable key={quest.id} haptic accessibilityLabel={`${quest.label}: ${quest.detail}`} onPress={() => quest.onPress?.()} style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 48, paddingVertical: 8, borderBottomWidth: 1, borderColor: theme.border }}><Ionicons name={quest.complete ? "checkmark-circle" : "ellipse-outline"} size={22} color={quest.complete ? theme.success : theme.textMuted} /><View style={{ flex: 1 }}><Text style={{ color: theme.textPrimary, fontSize: 15, fontWeight: "700" }}>{quest.label}</Text><Text style={{ color: theme.textMuted, fontSize: 13 }}>{quest.detail}</Text></View><Ionicons name="chevron-forward" size={18} color={theme.textMuted} /></MotionPressable>)}
+      </View>
 
       <View>
         <Text style={styles.section}>Bắt đầu nhanh</Text>
@@ -381,27 +413,6 @@ export default function Home() {
         </View>
       </View>
 
-      {daily ? (
-        <View>
-          <Text style={styles.section}>今日词汇 · Từ hôm nay</Text>
-          <MotionPressable
-            haptic
-            accessibilityLabel={`Mở từ hôm nay: ${daily.simplified}`}
-            onPress={() => router.push(`/word/${daily.id}`)}
-            style={styles.daily}
-          >
-            <View style={styles.dailyIcon}>
-              <Text style={styles.dailyMark}>字</Text>
-            </View>
-            <View style={styles.dailyCopy}>
-              <Text style={styles.dailyHanzi}>{daily.simplified}</Text>
-              <PinyinText value={daily.pinyin} />
-              <Text style={styles.muted}>{daily.primaryMeaningVi}</Text>
-            </View>
-            <AudioButton text={daily.simplified} />
-          </MotionPressable>
-        </View>
-      ) : null}
     </Screen>
   );
 }

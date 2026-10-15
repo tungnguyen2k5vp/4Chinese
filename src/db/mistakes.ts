@@ -9,7 +9,8 @@ const columns: Partial<Record<PracticeSkill, SkillColumn>> = {
 
 export type Mistake = { id: string; vocabulary_id: string | null; grammar_id: string | null;
   skill_type: PracticeSkill; exercise_type: string; wrong_count: number; correct_streak: number;
-  last_wrong_at: string | null; resolved: number; title: string; pinyin: string | null };
+  last_wrong_at: string | null; resolved: number; title: string; pinyin: string | null;
+  attempts_30d: number; errors_30d: number };
 
 export type MistakeFocus = {
   skill: PracticeSkill;
@@ -21,13 +22,15 @@ export type MistakeFocus = {
 /** Call inside the caller's transaction when paired with an SRS/grammar write. */
 export async function recordPracticeResult(db: SQLiteDatabase, input: {
   vocabularyId?: string; grammarId?: string; skill: PracticeSkill; exerciseType: string;
-  correct: boolean; hintUsed?: boolean; responseTimeMs?: number;
+  correct: boolean; hintUsed?: boolean; responseTimeMs?: number; occurredAt?: string;
 }): Promise<void> {
   const entityId = input.vocabularyId ?? input.grammarId;
   if (!entityId) throw new Error('MISSING_PRACTICE_ENTITY');
   const id = `${input.vocabularyId ? 'word' : 'grammar'}:${entityId}:${input.skill}:${input.exerciseType}`;
-  const now = new Date().toISOString();
+  const now = input.occurredAt ?? new Date().toISOString();
+  if (!Number.isFinite(Date.parse(now))) throw new Error('INVALID_PRACTICE_TIMESTAMP');
   const metadata = JSON.stringify({ hintUsed: !!input.hintUsed, responseTimeMs: input.responseTimeMs ?? null });
+  const existing = await db.getFirstAsync<{ id: string }>('SELECT id FROM mistake_records WHERE id=?',id);
   if (!input.correct) {
     await db.runAsync(`INSERT INTO mistake_records(id,vocabulary_id,grammar_id,skill_type,exercise_type,
       wrong_count,correct_streak,last_wrong_at,resolved,metadata,updated_at)
@@ -43,6 +46,17 @@ export async function recordPracticeResult(db: SQLiteDatabase, input: {
       last_correct_at=?,metadata=?,updated_at=? WHERE id=?`,
     input.hintUsed ? 1 : 0, input.hintUsed ? 1 : 0, now, metadata, now, id);
   }
+  // Aggregate only attempts on a word/grammar item after it has produced a
+  // mistake. No answer text is stored and no SRS table is touched here.
+  if (!input.correct || existing) {
+    await db.runAsync(`INSERT INTO practice_attempt_daily
+      (mistake_id,skill_type,exercise_type,utc_day,attempt_count,error_count)
+      VALUES(?,?,?,?,1,?) ON CONFLICT(mistake_id,utc_day) DO UPDATE SET
+        attempt_count=practice_attempt_daily.attempt_count+1,
+        error_count=practice_attempt_daily.error_count+excluded.error_count,
+        skill_type=excluded.skill_type,exercise_type=excluded.exercise_type`,
+    id,input.skill,input.exerciseType,now.slice(0,10),input.correct ? 0 : 1);
+  }
   const column = columns[input.skill];
   if (input.vocabularyId && column) {
     await db.runAsync(`INSERT OR IGNORE INTO vocabulary_skill_mastery(vocabulary_id,updated_at) VALUES(?,?)`,
@@ -54,14 +68,18 @@ export async function recordPracticeResult(db: SQLiteDatabase, input: {
   }
 }
 
-export async function listMistakes(db: SQLiteDatabase, skill?: PracticeSkill): Promise<Mistake[]> {
+export async function listMistakes(db: SQLiteDatabase, skill?: PracticeSkill, asOf = new Date().toISOString()): Promise<Mistake[]> {
+  if (!Number.isFinite(Date.parse(asOf))) throw new Error('INVALID_PRACTICE_TIMESTAMP');
+  const cutoff = new Date(Date.parse(asOf) - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0,10);
   return db.getAllAsync<Mistake>(`SELECT m.id,m.vocabulary_id,m.grammar_id,m.skill_type,m.exercise_type,
     m.wrong_count,m.correct_streak,m.last_wrong_at,m.resolved,
-    COALESCE(v.simplified,g.title,'Nội dung luyện tập') AS title,v.pinyin
+    COALESCE(v.simplified,g.title,'Nội dung luyện tập') AS title,v.pinyin,
+    COALESCE((SELECT SUM(a.attempt_count) FROM practice_attempt_daily a WHERE a.mistake_id=m.id AND a.utc_day>=?),0) AS attempts_30d,
+    COALESCE((SELECT SUM(a.error_count) FROM practice_attempt_daily a WHERE a.mistake_id=m.id AND a.utc_day>=?),0) AS errors_30d
     FROM mistake_records m LEFT JOIN vocabulary v ON v.id=m.vocabulary_id
     LEFT JOIN grammar_points g ON g.id=m.grammar_id
     WHERE m.resolved=0 ${skill ? 'AND m.skill_type=?' : ''}
-    ORDER BY m.wrong_count DESC,m.last_wrong_at DESC LIMIT 200`, ...(skill ? [skill] : []));
+    ORDER BY m.wrong_count DESC,m.last_wrong_at DESC LIMIT 200`, cutoff,cutoff,...(skill ? [skill] : []));
 }
 
 /** Keeps the next practice recommendation actionable without touching SRS dates. */

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { PanResponder, Pressable, StyleSheet, Text, View } from "react-native";
+import { PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Svg, { G, Line, Path, Polyline, Text as SvgText } from "react-native-svg";
 
 import { radius, spacing } from "@/constants/design";
@@ -13,6 +13,9 @@ const PAPER_INK = "#172033";
 export function WritingCanvas({ character, size = 300, onFirstStroke }: { character: string; size?: number; onFirstStroke?: () => void }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const { width: windowWidth } = useWindowDimensions();
+  const [availableWidth, setAvailableWidth] = useState(Math.max(1, windowWidth - 64));
+  const canvasSize = Math.max(1, Math.min(size, availableWidth));
   const [lines, setLines] = useState<Point[][]>([]);
   const [hint, setHint] = useState(false);
   const [guided, setGuided] = useState(false);
@@ -40,7 +43,7 @@ export function WritingCanvas({ character, size = 300, onFirstStroke }: { charac
   }), [onFirstStroke, reportedStroke]);
 
   return (
-    <View style={styles.wrapper}>
+    <View onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)} style={styles.wrapper}>
       <View style={styles.actions}>
         <Pressable accessibilityRole="button" accessibilityLabel="Tự viết" accessibilityState={{ selected: !guided }} onPress={() => setGuided(false)} style={styles.button}><Text style={styles.text}>Tự viết</Text></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="Tô theo nét mẫu" accessibilityState={{ selected: guided, disabled: !paths.length }} disabled={!paths.length}
@@ -51,14 +54,14 @@ export function WritingCanvas({ character, size = 300, onFirstStroke }: { charac
         accessibilityRole="image"
         accessibilityLabel={`Vùng giấy viết chữ ${character}`}
         accessibilityHint="Dùng ngón tay để viết chữ Hán trên vùng giấy này. Các nút bên dưới cho phép xóa nét hoặc bật gợi ý."
-        style={[styles.canvas, { width: size, height: size }]}
+        style={[styles.canvas, { width: canvasSize, height: canvasSize }]}
         {...responder.panHandlers}
       >
-        <Svg height={size} width={size}>
-          <Line stroke={theme.border} strokeDasharray="5 5" x1={size / 2} x2={size / 2} y1="0" y2={size} />
-          <Line stroke={theme.border} strokeDasharray="5 5" x1="0" x2={size} y1={size / 2} y2={size / 2} />
-          {hint ? <SvgText fill={theme.primary} fillOpacity={0.12} fontSize={size * 0.65} textAnchor="middle" x={size / 2} y={size * 0.72}>{character}</SvgText> : null}
-          {guided ? <G transform={`scale(${size / 1024}) translate(0 900) scale(1 -1)`}>
+        <Svg height={canvasSize} width={canvasSize} viewBox={`0 0 ${canvasSize} ${canvasSize}`}>
+          <Line stroke={theme.border} strokeDasharray="5 5" x1={canvasSize / 2} x2={canvasSize / 2} y1="0" y2={canvasSize} />
+          <Line stroke={theme.border} strokeDasharray="5 5" x1="0" x2={canvasSize} y1={canvasSize / 2} y2={canvasSize / 2} />
+          {hint ? <SvgText fill={theme.primary} fillOpacity={0.12} fontSize={canvasSize * 0.65} textAnchor="middle" x={canvasSize / 2} y={canvasSize * 0.72}>{character}</SvgText> : null}
+          {guided ? <G transform={`scale(${canvasSize / 1024}) translate(0 900) scale(1 -1)`}>
             {paths.map((path, index) => <Path key={index} d={path} fill={theme.primary} opacity={index === guideIndex ? 0.34 : 0.09} />)}
           </G> : null}
           {lines.map((line, index) => (
@@ -101,7 +104,7 @@ export function WritingCanvas({ character, size = 300, onFirstStroke }: { charac
 
 function createStyles(theme: ThemeTokens) {
   return StyleSheet.create({
-    wrapper: { alignItems: "center", gap: spacing.sm },
+    wrapper: { alignItems: "center", alignSelf: "stretch", gap: spacing.sm },
     canvas: { backgroundColor: "#FFFDFC", borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, overflow: "hidden" },
     tip: { color: theme.textMuted, fontSize: 12, lineHeight: 18, textAlign: "center" },
     actions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.sm },

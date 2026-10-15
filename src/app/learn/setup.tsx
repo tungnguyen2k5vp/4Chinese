@@ -5,13 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, type DimensionValue } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { getDashboardStats, getSettings, getUnlearnedVocabulary, setKnown, setSkipped } from "@/db/repository";
-import { speakChinese, stopChineseSpeech } from "@/services/audio/chinese-speech";
+import { useNewWordAudio } from "@/hooks/use-new-word-audio";
 import { getLearnSessionLimit } from "@/services/learning/session-limit";
 import {
   groupVocabularyByTopic,
@@ -79,13 +79,12 @@ export default function LearnSetup() {
     return () => { live = false; };
   }, [db, deckId]);
 
-  useEffect(() => {
-    if (!word || !audioSettings?.soundEnabled || !audioSettings.autoPlayAudio) return;
-    void speakChinese(word.simplified, { rate: audioSettings.speechRate });
-    return () => {
-      void stopChineseSpeech();
-    };
-  }, [audioSettings, word]);
+  useNewWordAudio(
+    word ? `${deckId ?? selectedTopic ?? ""}:${index}:${word.id}` : null,
+    word?.simplified,
+    Boolean(audioSettings?.soundEnabled),
+    audioSettings?.speechRate ?? 0.82,
+  );
 
   const begin = (queue: Vocabulary[]) => {
     if (!queue.length) return;

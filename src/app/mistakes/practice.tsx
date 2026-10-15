@@ -19,11 +19,20 @@ import type { Vocabulary } from '@/types/models';
 type Target = { vocabulary_id: string; skill_type: PracticeSkill; exercise_type: string; correct_streak: number };
 
 export default function MistakePractice() {
-  const { id = '' } = useLocalSearchParams<{ id?: string }>();
-  return <PracticeContent key={id} id={id} />;
+  const { id = '', queue: queueParam } = useLocalSearchParams<{ id?: string; queue?: string }>();
+  const queue = queueParam?.split('|').filter((value,index,all) => value && all.indexOf(value) === index).slice(0,5) ?? [];
+  const validQueue = queue[0] === id ? queue : [];
+  return <PracticeQueue key={`${id}:${queueParam ?? ''}`} id={id} queue={validQueue} />;
 }
 
-function PracticeContent({ id }: { id: string }) {
+function PracticeQueue({ id, queue }: { id: string; queue: string[] }) {
+  const [queueIndex,setQueueIndex] = useState(0);
+  const currentId = queue[queueIndex] ?? id;
+  return <PracticeContent key={currentId} id={currentId}
+    onNext={queue[queueIndex + 1] ? () => setQueueIndex(value => value + 1) : undefined} />;
+}
+
+function PracticeContent({ id, onNext }: { id: string; onNext?: () => void }) {
   const db = useSQLiteContext();
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
@@ -98,7 +107,9 @@ function PracticeContent({ id }: { id: string }) {
       {!feedback && !resolved && <PrimaryButton label="Kiểm tra" disabled={saving || !answer.trim()} onPress={() => { void submit(); }} />}
       {saveError ? <View accessibilityRole="alert" style={styles.errorNotice}><Text style={styles.meta}>{saveError}</Text><PrimaryButton label={saving ? 'Đang lưu…' : 'Thử lưu lại'} disabled={saving} variant="secondary" onPress={() => void submit()} /></View> : null}
       {feedback && <Text style={styles.meta}>{feedback}</Text>}
-      {resolved ? <><Text style={styles.prompt}>Đã khắc phục lỗi</Text><PrimaryButton label="Về sổ lỗi" onPress={() => router.back()} /></> : feedback &&
+      {resolved ? <><Text style={styles.prompt}>Đã khắc phục lỗi</Text>{onNext
+        ? <PrimaryButton label="Luyện mục tiếp theo" onPress={onNext} />
+        : <PrimaryButton label="Về sổ lỗi" onPress={() => router.back()} />}</> : feedback &&
         <PrimaryButton label="Luyện tiếp" onPress={() => { setAnswer(''); setHint(false); setFeedback(null); setRound((value) => value + 1); started.current = Date.now(); }} />}
     </View>
   </Screen>;

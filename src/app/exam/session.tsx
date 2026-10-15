@@ -16,8 +16,9 @@ import {
   View,
 } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
+import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { getExamAttempt, saveExamAttempt, submitExamAttempt } from "@/db/exam";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { examSkillLabels, getExamSectionWindow } from "@/services/exam/engine";
@@ -41,6 +42,8 @@ export default function ExamSession() {
   const [busy, setBusy] = useState(false);
   const [remaining, setRemaining] = useState(0);
   const [clockNow, setClockNow] = useState(() => Date.now());
+  const [expiredUnsubmitted, setExpiredUnsubmitted] = useState(false);
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
   const lock = useRef(false);
   const leave = useRef(false);
   const autoSubmitted = useRef(false);
@@ -49,15 +52,16 @@ export default function ExamSession() {
     setError("");
     try {
       let saved = await getExamAttempt(db, id);
-      if (
+      const expiredBeforeResume =
         saved.status === "IN_PROGRESS" &&
-        getExamRemaining(saved, Date.now()) === 0
-      )
-        saved = await submitExamAttempt(db, id);
+        getExamRemaining(saved, Date.now()) === 0;
+      setExpiredUnsubmitted(expiredBeforeResume);
+      autoSubmitted.current = expiredBeforeResume;
       const now = Date.now();
       const resumedIndex = getExamCurrentIndex(saved, now);
       if (
         saved.status === "IN_PROGRESS" &&
+        !expiredBeforeResume &&
         resumedIndex !== saved.snapshot.currentIndex
       )
         saved = await saveExamAttempt(
@@ -142,7 +146,7 @@ export default function ExamSession() {
     void ask({
       title: "Rời bài luyện?",
       message:
-        "Đáp án đã lưu trên máy. Thời gian vẫn tiếp tục chạy; hết giờ bài sẽ được nộp khi mở lại.",
+      "Đáp án đã lưu trên máy. Nếu thời gian đã hết khi bạn quay lại, bài sẽ giữ nguyên để bạn chủ động nộp; không tự chuyển thành kết quả.",
       acceptLabel: "Rời bài",
       cancelLabel: "Làm tiếp",
     }).then((accepted) => {
@@ -192,8 +196,8 @@ export default function ExamSession() {
     window?.lastQuestionIndex ?? (snapshot?.questions.length ?? 1) - 1;
   return (
     <Screen
-      title="Bài luyện gốc"
-      subtitle="Không phải đề thi HSK chính thức · đáp án được lưu sau mỗi thao tác."
+      title="Bài luyện"
+      hideTitle
     >
       {loading ? <ActivityIndicator color={theme.primary} /> : null}
       {error ? (
@@ -219,8 +223,13 @@ export default function ExamSession() {
             {String(remaining % 60).padStart(2, "0")} ·{" "}
             {Object.keys(snapshot.answers).length} đã trả lời
           </Text>
-          <Text style={{ color: theme.textMuted, lineHeight: 23 }}>
-            Bài luyện trong ứng dụng, không phải đề thi chính thức.{" "}
+          <AnimatedProgressBar progress={Object.keys(snapshot.answers).length / Math.max(1, snapshot.questions.length)} color={theme.primary} trackColor={theme.border} accessibilityLabel="Số câu đã trả lời" />
+          {remaining === 0 && expiredUnsubmitted ? (
+            <Text accessibilityRole="alert" style={{ color: theme.warning, lineHeight: 22 }}>
+              Thời gian đã hết. Bài và đáp án vẫn được giữ nguyên; hãy bấm “Nộp bài hết giờ” khi bạn sẵn sàng xem kết quả.
+            </Text>
+          ) : null}
+          <Text style={{ color: theme.textMuted, fontSize: 13, lineHeight: 19 }}>
             {noBack
               ? "Không quay lại câu đã rời; cờ chỉ dùng khi xem kết quả."
               : "Có thể quay lại câu trong phần còn mở."}
@@ -232,7 +241,7 @@ export default function ExamSession() {
             </Text>
           ) : null}
           <Text
-            style={{ color: theme.textPrimary, fontSize: 22, lineHeight: 34 }}
+            style={{ color: theme.textPrimary, fontSize: 20, lineHeight: 30 }}
           >
             {question.prompt}
           </Text>
@@ -255,7 +264,10 @@ export default function ExamSession() {
                 })
               }
               style={{
-                padding: 16,
+                padding: 12,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
                 minHeight: 48,
                 borderWidth: 1,
                 borderRadius: 16,
@@ -269,8 +281,8 @@ export default function ExamSession() {
                     : theme.surface,
               }}
             >
-              <Text style={{ color: theme.textPrimary, fontSize: 18 }}>
-                {snapshot.answers[question.id] === index ? "✓ " : ""}
+              <Text style={{ color: snapshot.answers[question.id] === index ? theme.primaryText : theme.textMuted, fontSize: 14, fontWeight: "800", minWidth: 22 }}>{String.fromCharCode(65 + index)}</Text>
+              <Text style={{ color: theme.textPrimary, fontSize: 16, lineHeight: 24, flex: 1 }}>
                 {choice}
               </Text>
             </Pressable>
@@ -293,9 +305,10 @@ export default function ExamSession() {
               })
             }
           />
-          <View style={{ gap: 12 }}>
+          <View style={{ gap: 10, flexDirection: "row", alignItems: "stretch" }}>
             <PrimaryButton
               label="Câu trước"
+              style={{ flex: 1 }}
               variant="secondary"
               disabled={busy || remaining === 0 || currentIndex === firstIndex}
               onPress={() =>
@@ -304,6 +317,7 @@ export default function ExamSession() {
             />
             <PrimaryButton
               label="Câu tiếp"
+              style={{ flex: 1 }}
               variant="secondary"
               disabled={busy || remaining === 0 || currentIndex === lastIndex}
               onPress={() =>
@@ -333,7 +347,8 @@ export default function ExamSession() {
               tạm dừng.
             </Text>
           ) : null}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          <Pressable accessibilityRole="button" accessibilityState={{ expanded: navigatorOpen }} accessibilityLabel="Danh sách câu hỏi" onPress={() => setNavigatorOpen(value => !value)} style={{ minHeight: 48, justifyContent: "center" }}><Text style={{ color: theme.primaryText, fontSize: 15, fontWeight: "700" }}>Danh sách câu · {Object.keys(snapshot.answers).length}/{snapshot.questions.length} đã trả lời {navigatorOpen ? "⌃" : "⌄"}</Text></Pressable>
+          {navigatorOpen ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {snapshot.questions.map((item, index) => (
               <Pressable
                 key={item.id}
@@ -378,7 +393,7 @@ export default function ExamSession() {
                 </Text>
               </Pressable>
             ))}
-          </View>
+          </View> : null}
           <PrimaryButton
             label={remaining === 0 ? "Nộp bài hết giờ" : "Nộp bài"}
             loading={busy}

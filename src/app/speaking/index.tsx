@@ -4,7 +4,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Screen } from '@/components/Screen';
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { MotionPressable } from '@/components/ui/MotionPressable';
 import { LearningLandscape } from '@/components/visual/LearningLandscape';
 import { radius, spacing } from '@/constants/design';
@@ -32,7 +32,7 @@ export default function SpeakingIndex() {
   ];
   return <Screen title="Nghe & nói" subtitle="Phòng luyện giọng — chọn một bài tập, nghe mẫu rồi tự đối chiếu." hideHeader>
     <View style={styles.hero}>
-      <View style={styles.art}><LearningLandscape mood="voice" scene="speak" height={126} /><View style={styles.waveBadge}><Ionicons name="mic" size={20} color="#FFFFFF" /></View><Text style={styles.artWord}>声 · 音 · 語</Text></View>
+      <View style={styles.art}><LearningLandscape mood="voice" scene="speak" height={72} /><View style={styles.waveBadge}><Ionicons name="mic" size={20} color="#FFFFFF" /></View><Text style={styles.artWord}>声 · 音 · 语</Text></View>
       <View style={styles.heroCopy}><Text style={styles.eyebrow}>LUYỆN NGHE VÀ NÓI</Text><Text style={styles.heroTitle}>Luyện nói theo nhịp của bạn</Text><Text style={styles.heroNote}>Tập trung vào nghe và phát âm. App không tự chấm chất lượng giọng nói nếu chưa có bộ chấm được xác thực.</Text></View>
       <View style={styles.progressStrip}><View style={styles.summaryCell}><Text style={styles.summaryValue}>{summary ? `${summary.toneCorrect}/${summary.toneAttempts}` : error ? '—' : '…'}</Text><Text style={styles.summaryLabel}>thanh điệu đúng</Text></View><View style={styles.divider} /><View style={styles.summaryCell}><Text style={styles.summaryValue}>{summary?.shadowingAttempts ?? (error ? '—' : '…')}</Text><Text style={styles.summaryLabel}>lượt nói theo mẫu</Text></View></View>
     </View>

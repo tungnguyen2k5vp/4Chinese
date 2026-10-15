@@ -10,6 +10,7 @@ import type { Vocabulary } from '@/types/models';
 export async function saveReaderWordContext(db: SQLiteDatabase, input: {
   vocabularyId: string; chunk: ReaderChunk; localCharacterOffset: number; tokenIndex: number;
   documentId: string | null; draftText: string; sourceId: string; sourceType: ContextSource;
+  userConfirmed: true;
   deckCopy?: { deckId: string; word: Pick<Vocabulary, 'simplified' | 'pinyinNumeric' | 'pinyin'> };
 }): Promise<void> {
   const offset = input.chunk.char_start + input.localCharacterOffset;
@@ -18,7 +19,8 @@ export async function saveReaderWordContext(db: SQLiteDatabase, input: {
     : sentenceAtCharacter(input.draftText, offset).sentence;
   const payload = { sentence,
     sourceType: input.sourceType, sourceId: input.sourceId,
-    location: `chunk:${input.chunk.chunk_index}:token:${input.tokenIndex}:char:${offset}` };
+    location: `chunk:${input.chunk.chunk_index}:token:${input.tokenIndex}:char:${offset}`,
+    userConfirmed: input.userConfirmed };
   const ids = new Set([input.vocabularyId]);
   if (input.deckCopy) {
     const copyId = await getReadingDeckCopyId(db, input.deckCopy.deckId, input.deckCopy.word);

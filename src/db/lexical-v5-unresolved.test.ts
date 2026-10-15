@@ -73,7 +73,7 @@ describe('v40 canonical readings for previously unresolved V5 lexical drafts', {
     } finally { sqlite.close(); }
   });
 
-  it('upgrades a v39 install while preserving custom vocabulary and progress', async () => {
+  it('upgrades a v39 install without replaying vocabulary-content corrections during HSK30 classification', async () => {
     const sqlite = createLegacyDatabase();
     try {
       const db = expoAdapter(sqlite);
@@ -95,7 +95,7 @@ describe('v40 canonical readings for previously unresolved V5 lexical drafts', {
       await initializeDatabase(db);
       for (const word of words.filter(item => affected.has(item.id))) {
         expect(sqlite.prepare('SELECT pinyin_numeric,primary_meaning_vi FROM vocabulary WHERE id=?').get(word.id))
-          .toEqual({ pinyin_numeric: word.pinyinNumeric, primary_meaning_vi: word.primaryMeaningVi });
+          .toEqual({ pinyin_numeric: 'old1', primary_meaning_vi: 'old meaning' });
       }
       expect(sqlite.prepare("SELECT * FROM vocabulary WHERE id='custom-1'").get()).toEqual(customBefore);
       expect(sqlite.prepare('SELECT * FROM user_vocabulary_progress ORDER BY vocabulary_id').all()).toEqual(progressBefore);

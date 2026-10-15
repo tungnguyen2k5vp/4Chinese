@@ -2,12 +2,13 @@ import * as ImagePicker from 'expo-image-picker';
 import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, AppState, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
+import { Disclosure } from "@/components/chinese/Disclosure";
 import { LearningLandscape } from "@/components/visual/LearningLandscape";
 import { card as baseCard, radius, spacing, typography } from "@/constants/design";
 import { recordLessonActivityEvidence } from '@/db/learning-path';
@@ -18,13 +19,14 @@ import { copyVocabularyBatchToDeck, findVocabularyByExactHanzi, listPersonalDeck
 import { getStory, getStoryQuestions, recordStoryAnswer, type Story, type StoryQuestion } from '@/db/stories';
 import type { ContextSource } from '@/db/vocabulary-context';
 import { useConfirmation } from '@/hooks/use-confirmation';
+import { useModalAnimationType } from '@/hooks/use-reduced-motion';
 import { useStudySession } from '@/hooks/use-study-session';
 import { analyzeReaderTokens } from "@/services/reader/analysis";
 import { analyzeReaderChunk, ReaderWorkCanceled } from '@/services/reader/chunk-analysis';
 import { pickReaderDocument } from '@/services/reader/document-import';
 import { isImageOcrAvailable, recognizeImageText } from '@/services/reader/ocr';
-import { decodeReaderPosition, MAX_READER_CHARACTERS, READER_CHUNK_CHARACTERS, READER_TOKEN_PAGE_SIZE,
-  readerTokenPage, splitReaderChunks, type LocatedReaderToken, type ReaderChunk } from '@/services/reader/pages';
+import { decodeReaderPosition, MAX_READER_CHARACTERS, READER_CHUNK_CHARACTERS,
+  splitReaderChunks, splitReaderTextWithTokens, type LocatedReaderToken, type ReaderChunk } from '@/services/reader/pages';
 import { normalizeImportedText } from '@/services/reader/text-import';
 import { saveReaderWordContext } from '@/services/reader/word-context';
 import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
@@ -42,6 +44,7 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
   const styles = useThemeStyles(createStyles);
   const { ask, dialog } = useConfirmation();
   const readingMode = visualModePresentation(theme, 'READ');
+  const modalAnimation = useModalAnimationType();
   const db = useSQLiteContext();
   useStudySession(db);
   const [text, setText] = useState("");
@@ -52,9 +55,7 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
   const [loading, setLoading] = useState(!!storyId);
   const [showImport, setShowImport] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showPinyin, setShowPinyin] = useState(false);
-  const [showVietnamese, setShowVietnamese] = useState(false);
-  const [tokenPage, setTokenPage] = useState(0);
+  const [savePersonalContext, setSavePersonalContext] = useState(false);
   const [chunk, setChunk] = useState<ReaderChunk | null>(null);
   const [chunkCount, setChunkCount] = useState(0);
   const [characterCount, setCharacterCount] = useState(0);
@@ -89,6 +90,7 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
   const requests = useRef(0);
   const saveLock = useRef(false);
   const metrics = useMemo(() => analyzeReaderTokens(tokens, chunk?.content ?? ''), [tokens, chunk]);
+  const readingSegments = useMemo(() => splitReaderTextWithTokens(chunk?.content ?? '', tokens), [chunk, tokens]);
   const busy = loading || documentSaving || ocrLoading || textImportLoading;
 
   useFocusEffect(useCallback(() => {
@@ -129,15 +131,14 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
     pageRequest.current?.abort();
     const controller = new AbortController(); pageRequest.current = controller;
     const request = ++requests.current;
-    setLoading(true); setLoadError(''); setTokens([]); setSelected(null); setChunk(nextChunk);
+    setLoading(true); setLoadError(''); setTokens([]); setSelected(null); setSavePersonalContext(false); setChunk(nextChunk);
     try {
       const next = await analyzeReaderChunk(nextChunk, (terms) => findVocabularyByExactHanzi(db, terms), controller.signal);
       if (request !== requests.current || controller.signal.aborted) return;
       setTokens(next);
       const localOffset = legacyIndex >= 0 ? -1 : offset - nextChunk.char_start;
-      setTokenPage(readerTokenPage(next, localOffset, Math.max(0, legacyIndex)));
       const target = legacyIndex >= 0 ? next[legacyIndex] : next.find((token) => token.charEnd > localOffset);
-      setSelected(target ?? null);
+      setSelected(null);
       characterPosition.current = legacyIndex >= 0 ? nextChunk.char_start + (target?.charStart ?? 0) : offset;
       if (next.length && lessonActivityId) void recordLessonActivityEvidence(db, lessonActivityId, "READING_TOKENS_ANALYZED", storyId ?? next[0]!.text).catch(() => undefined);
     } catch (error) {
@@ -235,16 +236,19 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
       const outcome = await copyVocabularyBatchToDeck(db, deckId, [selected.vocabulary]);
       // Saving an already-present word may still attach a new personal encounter.
       let contextFailed = false;
-      try {
-        await saveReaderWordContext(db, { vocabularyId: token.vocabulary!.id, chunk: sourceChunk,
-          localCharacterOffset: token.charStart, tokenIndex, documentId, draftText: text, sourceType, sourceId,
-          deckCopy: { deckId, word: token.vocabulary! } });
-      } catch { contextFailed = true; }
+      if (savePersonalContext) {
+        try {
+          await saveReaderWordContext(db, { vocabularyId: token.vocabulary!.id, chunk: sourceChunk,
+            localCharacterOffset: token.charStart, tokenIndex, documentId, draftText: text, sourceType, sourceId,
+            userConfirmed: true, deckCopy: { deckId, word: token.vocabulary! } });
+        } catch { contextFailed = true; }
+      }
       Alert.alert(outcome.saved ? "Đã thêm vào bộ từ" : "Từ đã có trong bộ",
         `${outcome.saved ? `Đã thêm ${token.vocabulary!.simplified}.` : 'Không tạo từ trùng lặp.'} ${contextFailed
-          ? 'Từ vẫn đã lưu, nhưng chưa lưu được câu ngữ cảnh (có thể câu quá dài). Hãy thử lại.' : 'Đã lưu câu ngữ cảnh riêng trên thiết bị.'}`);
+          ? 'Từ vẫn đã lưu, nhưng chưa lưu được câu ngữ cảnh. Hãy thử lại.' : savePersonalContext
+            ? 'Đã lưu câu ngữ cảnh riêng trên thiết bị.' : 'Không lưu câu ngữ cảnh vì bạn chưa chọn.'}`);
     } catch { Alert.alert('Chưa thêm được từ', 'Vui lòng thử lại.'); }
-    finally { wordSaveLock.current = false; setSaving(false); }
+    finally { wordSaveLock.current = false; setSaving(false); setSavePersonalContext(false); }
   };
   const editDraft = (clear = false, enterComposer = true) => {
     setShowImport(enterComposer);
@@ -338,12 +342,13 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
       </View>
 
       <View style={[styles.card, styles.readerSection]}>
-        <Text style={styles.readerSectionKicker}>02 · THƯ VIỆN CỦA RIÊNG BẠN</Text><Text style={styles.title}>Thêm nội dung</Text>
+        <Disclosure title="Thêm nội dung của bạn">
         <Text style={styles.counter}>Tài liệu được xử lý trên thiết bị; chỉ phần hiện tại được tra từ.</Text>
         <PrimaryButton label="Mở tệp TXT / EPUB" loading={textImportLoading} disabled={busy || saving} onPress={() => void importTxt()} />
         <PrimaryButton variant="secondary" label="Nhận chữ từ ảnh (OCR)" loading={ocrLoading} disabled={!isImageOcrAvailable() || busy || saving} onPress={() => void importImage()} />
         <PrimaryButton variant="ghost" label="Dán văn bản" disabled={busy || saving} onPress={() => { setShowImport(true); setText(''); setInputCharacters(0); setInputError(''); }} />
         {!isImageOcrAvailable() ? <Text style={styles.readerMeta}>OCR cần bản Android hỗ trợ; bạn vẫn có thể dán văn bản.</Text> : null}
+        </Disclosure>
       </View>
 
       {documents.length > 1 ? <View style={[styles.card, styles.readerSection]}>
@@ -398,42 +403,15 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
         <PrimaryButton style={styles.navButton} variant="secondary" label="Phần trước" disabled={busy || saving || chunk.chunk_index === 0} onPress={() => void navigateChunk(chunk.chunk_index - 1)} />
         <PrimaryButton style={styles.navButton} variant="secondary" label="Phần sau" disabled={busy || saving || chunk.chunk_index + 1 >= chunkCount} onPress={() => void navigateChunk(chunk.chunk_index + 1)} />
       </View>
-      <Text selectable style={styles.readingText}>{chunk.content}</Text>
+      <Text selectable style={styles.readingText}>{readingSegments.map((segment, index) => segment.token ? <Text key={`${segment.token.charStart}-${index}`}
+        accessibilityRole="button" accessibilityLabel={`Tra từ ${segment.text}${segment.token.vocabulary ? `, ${segment.token.vocabulary.primaryMeaningVi}` : ''}`}
+        onPress={() => { setSelected(segment.token!); setSavePersonalContext(false); persistPosition(documentId, chunk.char_start + segment.token!.charStart); }}
+        style={[styles.inlineToken, segment.token.vocabulary?.status === 'KNOWN' ? styles.inlineKnown : segment.token.vocabulary?.status === 'LEARNING' ? styles.inlineLearning : styles.inlineUnknown]}>{segment.text}</Text> : segment.text)}</Text>
     </View> : null}
     {tokens.length ? <View style={[styles.card, styles.tokens]}>
       <Text style={styles.title}>Độ phủ phần hiện tại {metrics.coveragePercent}% · {metrics.difficulty}</Text>
       <Text style={styles.counter}>{metrics.totalWords} từ · {metrics.knownWords} đã biết · {metrics.learningWords} đang học · {metrics.unknownWords} chưa học · HSK ước tính {metrics.estimatedHsk}</Text>
-      <View style={styles.toggleRow}>
-        <Pressable accessibilityRole="button" onPress={() => setShowPinyin((value) => !value)}><Text style={styles.toggle}>Pinyin {showPinyin ? '✓' : '○'}</Text></Pressable>
-        <Pressable accessibilityRole="button" onPress={() => setShowVietnamese((value) => !value)}><Text style={styles.toggle}>Tiếng Việt {showVietnamese ? '✓' : '○'}</Text></Pressable>
-      </View>
-      <Text style={styles.counter}>Chạm từ để tra; màu xanh: đã biết, vàng: đang học, xám: chưa học.</Text>
-      <View style={styles.tokenWrap}>{tokens.slice(tokenPage * READER_TOKEN_PAGE_SIZE, (tokenPage + 1) * READER_TOKEN_PAGE_SIZE).map((token) => <Pressable key={`${token.text}-${token.charStart}`}
-        accessibilityRole="button" accessibilityLabel={`${token.text}${token.vocabulary ? `, ${token.vocabulary.primaryMeaningVi}` : ', chưa có trong kho từ'}`}
-        accessibilityState={{ selected: selected === token }} onPress={() => { setSelected(token); persistPosition(documentId, (chunk?.char_start ?? 0) + token.charStart); }}
-        style={[styles.token, token.vocabulary?.status === 'KNOWN' ? styles.tokenKnown :
-          token.vocabulary?.status === 'LEARNING' ? styles.tokenLearning : styles.tokenUnknown,
-        selected === token && styles.tokenActive]}>
-        <Text style={[styles.tokenText, token.vocabulary?.status === 'KNOWN' ? styles.tokenKnownText :
-          token.vocabulary?.status === 'LEARNING' ? styles.tokenLearningText : !token.vocabulary && styles.tokenUnknownText]}>{token.text}</Text>
-        {showPinyin && token.vocabulary ? <Text style={styles.tokenSub}>{token.vocabulary.pinyin}</Text> : null}
-        {showVietnamese && token.vocabulary ? <Text style={styles.tokenSub}>{token.vocabulary.primaryMeaningVi}</Text> : null}
-      </Pressable>)}</View>
-      <Text style={styles.counter}>Trang từ {tokenPage + 1}/{Math.ceil(tokens.length / READER_TOKEN_PAGE_SIZE)}</Text>
-      <View style={styles.navigation}>{[-1, 1].map((direction) => <PrimaryButton key={direction} style={styles.navButton} variant="secondary"
-        label={direction < 0 ? 'Trang từ trước' : 'Trang từ sau'} disabled={busy || saving || tokenPage + direction < 0 || (tokenPage + direction) * READER_TOKEN_PAGE_SIZE >= tokens.length}
-        onPress={() => {
-          const page = tokenPage + direction; setTokenPage(page); setSelected(null);
-          persistPosition(documentId, (chunk?.char_start ?? 0) + (tokens[page * READER_TOKEN_PAGE_SIZE]?.charStart ?? 0));
-        }} />)}</View>
-    </View> : null}
-    {selected?.vocabulary ? <View style={[styles.card, styles.detail]}>
-      <Text style={styles.hanzi}>{selected.vocabulary.simplified}</Text><PinyinText value={selected.vocabulary.pinyin} style={styles.pinyin} /><Text style={styles.meaning}>{selected.vocabulary.primaryMeaningVi}</Text><Text style={styles.meta}>HSK {selected.vocabulary.hskBand} · {selected.vocabulary.status === "LEARNING" ? "Đang học" : selected.vocabulary.status === "KNOWN" ? "Đã biết" : selected.vocabulary.status === "SKIPPED" ? "Đã bỏ qua" : "Mới"}</Text>
-      <PrimaryButton variant="ghost" label="Mở chi tiết từ" disabled={saving || busy} onPress={() => {
-        persistPosition(documentId, (chunk?.char_start ?? 0) + selected.charStart);
-        router.push(`/word/${selected.vocabulary?.id}` as Href);
-      }} />
-      {decks.length ? <><Text style={styles.deckLabel}>THÊM VÀO BỘ TỪ</Text><View style={styles.deckChoices}>{decks.map((deck) => <Pressable key={deck.id} onPress={() => setDeckId(deck.id)} style={[styles.deckChoice, deckId === deck.id && styles.deckChoiceActive]}><Text style={[styles.deckText, deckId === deck.id && styles.deckTextActive]}>{deck.name}</Text></Pressable>)}</View><PrimaryButton label="Thêm vào bộ từ" loading={saving} onPress={() => void saveToDeck()} /></> : <PrimaryButton variant="secondary" label="Tạo bộ từ để lưu" onPress={() => router.push("/decks" as Href)} />}
+      <Text style={styles.counter}>Chạm trực tiếp vào từ trong bài để xem pinyin, nghĩa và thao tác lưu. Màu xanh: đã biết · vàng: đang học.</Text>
     </View> : null}
     {chunk && !loading && !loadError && tokens.length === 0 ? <EmptyState variant="reading" title="Phần này chưa có từ Hán để tra" message="Văn bản vẫn hiển thị phía trên. Bạn có thể đọc tiếp bằng Phần sau." /> : null}
     {story && question ? <View style={[styles.card, styles.tokens]}>
@@ -452,6 +430,42 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
         `Đáp án: ${(JSON.parse(question.choices_json) as string[])[question.correct_index]}`}</Text> : null}
     </View> : null}
     </ScrollView>
+    <Modal visible={Boolean(selected)} transparent statusBarTranslucent animationType={modalAnimation} onRequestClose={() => setSelected(null)}>
+      <View style={styles.modalRoot}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Đóng tra từ" onPress={() => setSelected(null)} style={styles.modalScrim} />
+        {selected ? <View style={styles.detailSheet}>
+          <View style={styles.sheetHandle} />
+          <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={styles.detailHeader}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={styles.hanzi}>{selected.vocabulary?.simplified ?? selected.text}</Text>
+              {selected.vocabulary ? <PinyinText value={selected.vocabulary.pinyin} style={styles.pinyin} /> : <Text style={styles.meta}>Chưa có trong kho từ hiện tại</Text>}
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel="Đóng tra từ" onPress={() => setSelected(null)} style={styles.closeButton}><Text style={styles.closeText}>×</Text></Pressable>
+          </View>
+          {selected.vocabulary ? <>
+            <Text style={styles.meaning}>{selected.vocabulary.primaryMeaningVi}</Text>
+            <Text style={styles.meta}>HSK {selected.vocabulary.hskBand} · {selected.vocabulary.status === 'LEARNING' ? 'Đang học' : selected.vocabulary.status === 'KNOWN' ? 'Đã biết' : selected.vocabulary.status === 'SKIPPED' ? 'Đã bỏ qua' : 'Mới'}</Text>
+            <PrimaryButton variant="ghost" label="Mở chi tiết từ" disabled={saving || busy} onPress={() => {
+              persistPosition(documentId, (chunk?.char_start ?? 0) + selected.charStart);
+              const vocabularyId = selected.vocabulary?.id;
+              setSelected(null);
+              if (vocabularyId) router.push(`/word/${vocabularyId}` as Href);
+            }} />
+            {decks.length ? <>
+              <Text style={styles.deckLabel}>THÊM VÀO BỘ TỪ</Text>
+              <View style={styles.deckChoices}>{decks.map((deck) => <Pressable key={deck.id} onPress={() => setDeckId(deck.id)} style={[styles.deckChoice, deckId === deck.id && styles.deckChoiceActive]}><Text style={[styles.deckText, deckId === deck.id && styles.deckTextActive]}>{deck.name}</Text></Pressable>)}</View>
+              <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: savePersonalContext }} onPress={() => setSavePersonalContext(value => !value)} style={{ minHeight: 48, justifyContent: 'center' }}>
+                <Text style={styles.counter}>{savePersonalContext ? '☑' : '□'}  Lưu cả câu ngữ cảnh riêng trên thiết bị</Text>
+                <Text style={styles.counter}>Chỉ lưu khi bạn chọn; câu không được gửi cho AI hay đồng bộ lên đám mây.</Text>
+              </Pressable>
+              <PrimaryButton label="Thêm vào bộ từ" loading={saving} onPress={() => void saveToDeck()} />
+            </> : <PrimaryButton variant="secondary" label="Tạo bộ từ để lưu" onPress={() => { setSelected(null); router.push('/decks' as Href); }} />}
+          </> : <Text style={styles.meta}>Từ này được nhận diện trong bài nhưng chưa có mục từ điển để hiển thị nghĩa.</Text>}
+          </ScrollView>
+        </View> : null}
+      </View>
+    </Modal>
   </Screen>;
 }
 
@@ -472,8 +486,9 @@ function createStyles(theme: ThemeTokens) { return StyleSheet.create({
   readerDocumentTitle: { color: theme.textPrimary, fontSize: typography.subtitle, lineHeight: 25, fontWeight: '800' },
   readerMeta: { color: theme.textSecondary, fontSize: 13, lineHeight: 20 }, readerSection: { gap: spacing.sm }, readerSectionKicker: { color: theme.primaryText, fontSize: 10, fontWeight: '900', letterSpacing: 0.8 }, readingPaper: { backgroundColor: theme.readingBackground, shadowOpacity: 0.04, elevation: 1 },
   deleteAction: { minHeight: 48, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' },
-  tokens: { gap: spacing.sm }, title: { color: theme.textPrimary, fontSize: 17, fontWeight: "900" }, prompt: { color: theme.textPrimary, lineHeight: 22 }, tokenWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, token: { borderRadius: radius.sm, paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1 }, tokenKnown: { borderColor: theme.success, backgroundColor: theme.successSoft }, tokenLearning: { borderColor: theme.warning, backgroundColor: theme.warningSoft }, tokenUnknown: { borderColor: theme.border, backgroundColor: theme.surfaceElevated }, tokenActive: { borderWidth: 2, borderColor: theme.primary }, tokenText: { color: theme.primaryText, fontWeight: "800", fontSize: 16 }, tokenKnownText: { color: theme.success }, tokenLearningText: { color: theme.warning }, tokenUnknownText: { color: theme.textSecondary }, tokenSub: { color: theme.textSecondary, fontSize: 11, maxWidth: 110 }, toggleRow: { flexDirection: 'row', gap: spacing.lg }, toggle: { color: theme.primaryText, fontWeight: '800' },
+  tokens: { gap: spacing.sm }, title: { color: theme.textPrimary, fontSize: 17, fontWeight: "900" }, prompt: { color: theme.textPrimary, lineHeight: 22 }, inlineToken: { fontWeight: '800', textDecorationLine: 'underline' }, inlineKnown: { color: theme.success }, inlineLearning: { color: theme.warning }, inlineUnknown: { color: theme.primaryText },
   detail: { gap: spacing.sm }, hanzi: { color: theme.textPrimary, fontSize: 44, fontWeight: "900" }, pinyin: { color: theme.textPrimary, fontSize: 20 }, meaning: { color: theme.textPrimary, fontSize: 20, fontWeight: "800" }, meta: { color: theme.textMuted, fontSize: 12 }, deckLabel: { color: theme.primaryText, fontSize: 10, fontWeight: "900", letterSpacing: 0.8, marginTop: spacing.sm }, deckChoices: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, deckChoice: { minHeight: 40, justifyContent: 'center', borderWidth: 1, borderColor: theme.border, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: theme.surface }, deckChoiceActive: { backgroundColor: theme.primary, borderColor: theme.primary }, deckText: { color: theme.textSecondary, fontSize: 12, fontWeight: "800" }, deckTextActive: { color: theme.onPrimary },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' }, modalScrim: { ...StyleSheet.absoluteFill, backgroundColor: theme.overlay }, detailSheet: { maxHeight: '86%', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border }, detailScroll: { flexShrink: 1, minHeight: 0 }, detailContent: { gap: spacing.sm, paddingBottom: spacing.xs }, sheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: theme.border, alignSelf: 'center', marginBottom: spacing.xs }, detailHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm }, closeButton: { minWidth: 44, minHeight: 44, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.backgroundSecondary }, closeText: { color: theme.textSecondary, fontSize: 30, lineHeight: 34 },
   answerCorrect: { borderColor: theme.success, backgroundColor: theme.successSoft }, answerIncorrect: { borderColor: theme.error, backgroundColor: theme.errorSoft }, answerCorrectText: { color: theme.success, fontWeight: '800' }, answerIncorrectText: { color: theme.error, fontWeight: '800' },
   savedRow: { flexDirection: 'row', gap: spacing.sm, borderTopWidth: 1, borderColor: theme.border, paddingTop: spacing.sm },
   savedTitle: { flex: 1 }, deleteText: { color: theme.error, fontWeight: '700' },

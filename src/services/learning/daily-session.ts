@@ -81,7 +81,7 @@ export function buildDailySessionPlan(input: DailySessionInput): DailySessionPla
   // Estimates, not a promise of completion time. Never change a card's due date.
   const reviewSeconds = 45;
   const newWordSeconds = 90;
-  const dueLimit = Math.min(Math.trunc(safeNumber(input.reviewSessionSize)), Math.floor(budget / reviewSeconds));
+  const dueLimit = Math.min(20, Math.trunc(safeNumber(input.reviewSessionSize)), Math.floor(budget / reviewSeconds));
   const dueWords = uniqueWords(input.dueWords, dueLimit);
   budget -= dueWords.length * reviewSeconds;
   const dueIds = new Set(dueWords.map((word) => word.id));

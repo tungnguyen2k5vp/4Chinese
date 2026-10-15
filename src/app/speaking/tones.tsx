@@ -3,16 +3,16 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { LocalVoiceRecorder } from '@/components/LocalVoiceRecorder';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
 import { ToneContour } from '@/components/visual/ToneContour';
 import { designColors, spacing, themedCard } from '@/constants/design';
 import { recordLessonActivityEvidence } from '@/db/learning-path';
 import { listToneWords, saveSpeakingPractice } from '@/db/speaking';
 import { useStudySession } from '@/hooks/use-study-session';
 import { speakChinese, stopChineseSpeech } from '@/services/audio/chinese-speech';
-import { buildToneSamples, toneChoices, toneLabel, type ToneWord } from '@/services/speaking/tones';
+import { buildToneSamples, toneChoices, toneLabel, withoutPinyinToneMarks, type ToneWord } from '@/services/speaking/tones';
 import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
 
 export default function TonesScreen() {
@@ -85,7 +85,7 @@ export default function TonesScreen() {
     </View>
     {loading ? <ActivityIndicator color={theme.primaryText} /> : sample ? <View style={[card, styles.content]}>
       <Text style={styles.copy}>Bài {(index % samples.length) + 1}/{samples.length}</Text>
-      {!listen || answer ? <><Text style={styles.hanzi}>{sample.hanzi}</Text><Text style={styles.pinyin}>{sample.pinyin}</Text><Text style={styles.copy}>{sample.meaning}</Text></> : <Text style={styles.hanzi}>?</Text>}
+      {!listen || answer ? <><Text style={styles.hanzi}>{sample.hanzi}</Text><Text style={styles.pinyin}>{answer ? sample.pinyin : withoutPinyinToneMarks(sample.pinyin)}</Text><Text style={styles.copy}>{sample.meaning}</Text></> : <Text style={styles.hanzi}>?</Text>}
       <PrimaryButton label={playing ? 'Dừng mẫu' : 'Nghe mẫu'} disabled={micBusy || saving} onPress={() => playing ? stop() : void play(sample.hanzi)} />
       <View accessibilityRole="radiogroup" accessibilityLabel={pair ? 'Chọn cặp thanh điệu' : 'Chọn thanh điệu'} style={styles.choices}>{toneChoices(pair).map((value) => {
         const selected = answer === value;

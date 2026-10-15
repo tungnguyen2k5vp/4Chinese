@@ -4,12 +4,13 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { Screen } from '@/components/Screen';
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { AnimatedProgressBar } from '@/components/ui/AnimatedProgressBar';
 import { MotionPressable } from '@/components/ui/MotionPressable';
 import { LearningLandscape } from '@/components/visual/LearningLandscape';
 import { radius, spacing } from '@/constants/design';
 import { isLessonUnlocked, listLearningLessons, listLessonActivities, type LearningActivity, type LearningLesson } from '@/db/learning-path';
+import { useModalAnimationType } from '@/hooks/use-reduced-motion';
 import { groupLessonsByUnit, lessonNodeState } from '@/services/learning/lesson-path-presentation';
 import { useTheme } from '@/theme/ThemeProvider';
 import { visualModePresentation } from '@/theme/visual-modes';
@@ -28,6 +29,7 @@ export default function CourseScreen() {
   const { courseId } = useLocalSearchParams<{ courseId: string }>();
   const db = useSQLiteContext();
   const theme = useTheme();
+  const modalAnimation = useModalAnimationType();
   const styles = createStyles(theme);
   const [lessons, setLessons] = useState<LearningLesson[]>([]);
   const [selected, setSelected] = useState<LearningLesson | null>(null);
@@ -66,9 +68,9 @@ export default function CourseScreen() {
   const selectedState = selected ? lessonNodeState(selected, selectedUnlocked) : null;
   const courseTitle = `Lộ trình ${courseId.replace(/-path$/u, '').toUpperCase()}`;
 
-  return <Screen title={courseTitle} subtitle="Chọn một nút để xem mục tiêu và bước học tiếp theo.">
+  return <Screen title={courseTitle}>
     <View style={styles.worldHero}>
-      <LearningLandscape mood="journey" scene="hsk" height={112} />
+      <LearningLandscape mood="journey" scene="hsk" height={64} />
       <View style={styles.worldStamp}><Text style={styles.worldStampText}>学</Text></View>
       <View style={styles.worldHeroCopy}><Text style={styles.worldEyebrow}>BẢN ĐỒ HỌC TẬP</Text><Text style={styles.worldTitle}>{completed === lessons.length && lessons.length ? 'Chặng đường đã hoàn tất' : 'Con đường ghi nhớ'}</Text><Text style={styles.worldSub}>{lessons.length} bài · {groups.length} chặng</Text></View>
     </View>
@@ -109,7 +111,7 @@ export default function CourseScreen() {
       </View>;
     })}</View>
 
-    <Modal transparent visible={Boolean(selected)} animationType="slide" statusBarTranslucent onRequestClose={closeLessonDetails}>
+    <Modal transparent visible={Boolean(selected)} animationType={modalAnimation} statusBarTranslucent onRequestClose={closeLessonDetails}>
       <View style={styles.modalRoot}>
         <MotionPressable accessibilityLabel="Đóng chi tiết bài học" style={styles.modalScrim} onPress={closeLessonDetails}><View style={{ flex: 1 }} /></MotionPressable>
         {selected ? <View style={styles.sheet}>

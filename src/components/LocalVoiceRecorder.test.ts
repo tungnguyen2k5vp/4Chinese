@@ -27,10 +27,13 @@ vi.mock('expo-file-system', () => ({}));
 vi.mock('expo-router', () => ({ useFocusEffect: () => {} }));
 vi.mock('expo-sqlite', () => ({ useSQLiteContext: () => ({}) }));
 vi.mock('react-native-svg', () => ({ default: () => null, Svg: () => null, Circle: () => null, Path: () => null, Rect: () => null }));
+vi.mock('@expo/vector-icons', () => ({ Ionicons: () => null, AntDesign: () => null }));
 vi.mock('react-native', () => ({
   Platform: { OS: 'web' },
   Text: ({ children }: { children: ReactNode }) => createElement('span', null, children),
   View: ({ children }: { children: ReactNode }) => createElement('div', null, children),
+  Modal: ({ children }: { children: ReactNode }) => createElement('div', null, children),
+  ScrollView: ({ children }: { children: ReactNode }) => createElement('div', null, children),
   Pressable: ({ children, disabled }: { children: ReactNode; disabled?: boolean }) => createElement('button', { disabled }, children),
   ActivityIndicator: () => createElement('span', null, 'loading'),
   TextInput: () => createElement('input'),

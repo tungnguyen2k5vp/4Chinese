@@ -3,7 +3,7 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { Screen } from '@/components/Screen';
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { AnimatedProgressBar } from '@/components/ui/AnimatedProgressBar';
 import { MotionPressable } from '@/components/ui/MotionPressable';
 import { LearningLandscape } from '@/components/visual/LearningLandscape';
@@ -24,14 +24,14 @@ export default function LearningPathScreen() {
   const activeCourse = courses[activeIndex >= 0 ? activeIndex : 0];
   const remainingCourses = courses.filter((course) => course.id !== activeCourse?.id);
 
-  return <Screen title="Lộ trình học" subtitle="Một hành trình theo cấp độ — mỗi bài mở ra nhờ tiến độ thật của bạn." hideTitle>
+  return <Screen title="Lộ trình học" hideTitle>
     {activeCourse ? (() => {
       const index = courses.findIndex((item) => item.id === activeCourse.id);
       const color = theme.hsk[index % theme.hsk.length] ?? theme.primary;
       const progress = activeCourse.total_lessons > 0 ? activeCourse.completed_lessons / activeCourse.total_lessons : 0;
       const isComplete = activeCourse.completed_lessons >= activeCourse.total_lessons && activeCourse.total_lessons > 0;
       return <MotionPressable haptic accessibilityLabel={`Tiếp tục ${activeCourse.title}, ${activeCourse.completed_lessons} trên ${activeCourse.total_lessons} bài`} style={styles.activeWorld} onPress={() => router.push(`/path/${activeCourse.id}` as Href)}>
-        <View style={styles.worldArt}><LearningLandscape mood="journey" scene="hsk" height={154} /><View style={[styles.worldLevel, { backgroundColor: color }]}><Text style={styles.levelTop}>HSK</Text><Text style={styles.levelNumber}>{courseLevel(activeCourse, index)}</Text></View><Text style={styles.worldChinese}>山 · 路 · 学</Text></View>
+        <View style={styles.worldArt}><LearningLandscape mood="journey" scene="hsk" height={84} /><View style={[styles.worldLevel, { backgroundColor: color }]}><Text style={styles.levelTop}>HSK</Text><Text style={styles.levelNumber}>{courseLevel(activeCourse, index)}</Text></View><Text style={styles.worldChinese}>山 · 路 · 学</Text></View>
         <View style={styles.worldBody}>
           <Text style={[styles.eyebrow, { color }]}>CHẶNG ĐANG MỞ</Text>
           <Text style={styles.worldTitle}>{activeCourse.title}</Text>

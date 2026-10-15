@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Svg, { G, Line, Path, Text as SvgText } from "react-native-svg";
 
 import { radius, spacing } from "@/constants/design";
@@ -18,6 +18,9 @@ const radicalReference: Record<string, string> = {
 export function StrokeWriter({ character, size = 260 }: { character: string; size?: number }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const { width: windowWidth } = useWindowDimensions();
+  const [availableWidth, setAvailableWidth] = useState(Math.max(1, windowWidth - 64));
+  const boardSize = Math.max(1, Math.min(size, availableWidth));
   const reference = radicalReference[character] ?? character;
   const strokes = useMemo(() => {
     const exact = getStrokePaths(character);
@@ -39,14 +42,14 @@ export function StrokeWriter({ character, size = 260 }: { character: string; siz
   };
 
   return (
-    <View style={styles.wrapper}>
+    <View onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)} style={styles.wrapper}>
       <View
         accessible
         accessibilityRole="image"
         accessibilityLabel={strokes.length
           ? `Mẫu thứ tự nét của chữ ${reference}, đang hiện ${visible} trên ${strokes.length} nét.`
           : `Hình chữ ${character} từ phông chữ; chưa có dữ liệu thứ tự nét ngoại tuyến.`}
-        style={[styles.board, { width: size, height: size }]}
+        style={[styles.board, { width: boardSize, height: boardSize }]}
       >
         <Svg height="100%" viewBox="0 0 1024 1024" width="100%">
           <Line x1="512" x2="512" y1="44" y2="980" stroke={theme.border} strokeDasharray="28 28" strokeWidth="5" />
@@ -62,7 +65,7 @@ export function StrokeWriter({ character, size = 260 }: { character: string; siz
               ))}
             </G>
           ) : (
-            <SvgText fill={theme.primary} fillOpacity={0.14} fontSize="650" textAnchor="middle" x="512" y="730">{character}</SvgText>
+            <SvgText fill={theme.primary} fillOpacity={0.14} fontSize="520" textAnchor="middle" x="512" y="700">{character}</SvgText>
           )}
         </Svg>
       </View>
@@ -84,9 +87,9 @@ export function StrokeWriter({ character, size = 260 }: { character: string; siz
 
 function createStyles(theme: ThemeTokens) {
   return StyleSheet.create({
-    wrapper: { alignItems: "center", gap: spacing.md },
+    wrapper: { alignItems: "center", alignSelf: "stretch", gap: spacing.md },
     board: { backgroundColor: "#FFFDFC", borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, overflow: "hidden" },
-    controls: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs },
+    controls: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: spacing.xs },
     control: { minHeight: 44, paddingHorizontal: spacing.sm, alignItems: "center", justifyContent: "center" },
     controlText: { color: theme.textSecondary, fontSize: 12, fontWeight: "800" },
     disabled: { opacity: 0.55 },

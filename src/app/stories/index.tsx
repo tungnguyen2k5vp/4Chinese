@@ -3,11 +3,12 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { EmptyState } from '@/components/EmptyState';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
 import { MotionPressable } from '@/components/ui/MotionPressable';
 import { LearningLandscape } from '@/components/visual/LearningLandscape';
+import { StoryCover } from '@/components/visual/StoryCover';
 import { card as baseCard, spacing } from '@/constants/design';
 import { storiesV5Drafts } from '@/data/stories-v5';
 import { listStories, type Story } from '@/db/stories';
@@ -40,7 +41,7 @@ export default function StoriesScreen() {
     {stories.map((story) => <MotionPressable key={story.id} haptic style={[styles.card, styles.storyCard]}
       accessibilityLabel={`${story.title}. Mức ước tính ${story.hsk_level}, ${story.estimated_minutes} phút`}
       onPress={() => router.push(`/stories/${story.id}` as Href)}>
-      <View style={styles.cover}><LearningLandscape mood={Number(story.hsk_level) >= 4 ? 'progress' : 'reading'} height={120} /></View>
+      <View style={styles.cover}><StoryCover storyId={story.id} level={story.hsk_level} /></View>
       <View style={styles.storyCopy}><View style={styles.tagRow}><Text style={styles.levelTag}>HSK ƯỚC TÍNH {story.hsk_level}</Text>{story.attempts > 0 ? <Text style={styles.readTag}>{story.best_score}% tốt nhất</Text> : null}</View><Text style={styles.title}>{story.title}</Text><Text numberOfLines={3} style={styles.note}>{story.description}</Text><View style={styles.metaRow}><Text style={styles.meta}>{story.estimated_minutes} phút</Text><Text style={styles.metaDot}>·</Text><Text style={styles.meta}>{story.attempts ? `${story.attempts} lượt đọc hiểu` : 'Có câu hỏi đọc hiểu'}</Text></View></View>
     </MotionPressable>)}
     {__DEV__ ? <>

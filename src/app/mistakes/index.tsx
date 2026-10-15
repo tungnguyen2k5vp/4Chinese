@@ -49,7 +49,14 @@ export default function MistakeBook() {
       {clusters.slice(0,3).map(group=><View key={group.key} style={{gap:8}}>
         <Text style={styles.link}>{group.title} · {group.openItems} mục · {group.wrongAttempts} lần sai</Text>
         <Text style={styles.note}>{group.suggestion}</Text>
-        <Text style={styles.meta}>{group.recurring?'Có mục sai từ 3 lần: nên luyện lại trong ngữ cảnh.':'Chưa đủ dấu hiệu để kết luận nguyên nhân lỗi.'}</Text>
+        <Text style={styles.meta}>{group.thresholdReason}</Text>
+        {group.microLesson ? <View style={{gap:6}}>
+          <Text style={styles.title}>{group.microLesson.title}</Text>
+          <Text style={styles.note}>{group.microLesson.explanation}</Text>
+          {group.microLesson.steps.map((step,index)=><Text key={`${group.key}:${index}`} style={styles.meta}>{index+1}. {step}</Text>)}
+          {group.microLesson.practiceItemIds.length >= 2 ? <PrimaryButton label={`Bắt đầu chuỗi luyện ${group.microLesson.practiceItemIds.length} mục`}
+            onPress={()=>router.push(`/mistakes/practice?id=${encodeURIComponent(group.microLesson!.practiceItemIds[0]!)}&queue=${encodeURIComponent(group.microLesson!.practiceItemIds.join('|'))}` as Href)} /> : null}
+        </View> : null}
       </View>)}
     </View>:null}
     {!loading&&!error&&!visibleItems.length ? <View style={themedCard(theme)}><EmptyState

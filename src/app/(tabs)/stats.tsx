@@ -3,15 +3,19 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
+import { EnglishStatistics } from "@/components/EnglishOverview";
 import { MasteryChart } from "@/components/MasteryChart";
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from "@/components/Screen";
+import { Disclosure } from "@/components/chinese/Disclosure";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { MotionPressable } from "@/components/ui/MotionPressable";
 import { LearningLandscape } from "@/components/visual/LearningLandscape";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { getKnowledgeMap, type KnowledgeSkill } from '@/db/knowledge-map';
 import { getDailyActivity, getDashboardStats, getHskProgress, getSettings, listRecentReviewSkillAttempts } from "@/db/repository";
+import { useLearningLanguage } from "@/services/languages/LanguageProvider";
+import { EnglishAvailability } from "@/services/languages/LanguageRuntime";
 import { buildSkillMastery, skillLabel } from "@/services/review/skill-mastery";
 import { buildStudyHeatmap } from "@/services/stats/heatmap";
 import { buildVisibleStatsMetrics, hasMeaningfulStatsData } from '@/services/stats/presentation';
@@ -21,6 +25,11 @@ import type { DashboardStats, SkillMasteryMetric } from "@/types/models";
 type HskProgress = { band: string; total: number; learned: number; mastered: number };
 
 export default function StatsScreen() {
+  const { preferences } = useLearningLanguage();
+  return preferences.learningLanguage === "en" ? <EnglishAvailability><EnglishStatistics /></EnglishAvailability> : <ChineseStatsScreen />;
+}
+
+function ChineseStatsScreen() {
   const db = useSQLiteContext();
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
@@ -86,7 +95,7 @@ export default function StatsScreen() {
     ? `Độ chính xác hôm nay là ${accuracy}%. Con số này chỉ phản ánh lượt ôn đã ghi nhận.`
     : "Tiến độ chỉ tăng khi bạn hoàn thành hoạt động trong ứng dụng — không có số liệu mô phỏng.";
   return (
-    <Screen title="Tiến độ học tập" subtitle="Nhìn lại nhịp học và chọn điều cần tập trung tiếp theo.">
+    <Screen title="Thống kê" safeAreaEdges={["top", "bottom"]}>
       {loadError ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorTitle}>Chưa tải được thống kê</Text><Text style={styles.note}>Dữ liệu trên máy không bị thay đổi. Hãy thử đọc lại.</Text><MotionPressable haptic accessibilityLabel="Thử tải lại thống kê" style={styles.retry} onPress={() => setReload((value) => value + 1)}><Text style={styles.retryText}>THỬ LẠI</Text></MotionPressable></View> : null}
       {!stats && !loadError ? <ActivityIndicator accessibilityLabel="Đang tải thống kê" color={theme.primary} /> : null}
       {stats && !hasPersonalData ? <View style={[themedCard(theme), styles.emptyProgress]}>
@@ -97,8 +106,12 @@ export default function StatsScreen() {
         <PrimaryButton label="Bắt đầu phiên học 5 phút" onPress={() => router.push({ pathname: '/daily', params: { minutes: '5' } } as Href)} />
       </View> : null}
       {stats && hasPersonalData ? <>
+      <Disclosure title="Các chỉ số được tính như thế nào?">
+        <Text style={styles.note}>Chuỗi tại Trang chủ và Thống kê đếm ngày có học từ mới hoặc ôn từ. Thành tích tính cả ngày luyện kỹ năng, đọc và học ít nhất một phút; vì vậy hai chuỗi có thể khác nhau. “Nhớ sâu” là cấp 6, không đồng nghĩa tất cả từ đã học.</Text>
+        <Text style={styles.note}>Số từ của Kho đang học thuộc bộ từ hiện có; Đề cương HSK 3.0 là danh sách tham chiếu riêng. Các con số này không đo cùng một kho dữ liệu.</Text>
+      </Disclosure>
       <View style={styles.insightCard}>
-        <LearningLandscape scene="stats" height={98} />
+        <LearningLandscape scene="stats" height={56} />
         <View style={styles.insightBody}><Text style={styles.eyebrow}>DẤU MỐC CỦA BẠN</Text><Text style={styles.insightTitle}>{insightTitle}</Text><Text style={styles.insightCopy}>{insightCopy}</Text></View>
         {todayFacts.length ? <View style={styles.todayStrip}>{todayFacts.map((fact, index) => <View key={fact.label} style={styles.todayFact}>{index > 0 ? <View style={styles.todayDivider} /> : null}<View style={styles.todayCell}><Text style={styles.todayValue}>{fact.value}</Text><Text style={styles.todayLabel}>{fact.label}</Text></View></View>)}</View> : null}
       </View>
@@ -124,8 +137,9 @@ export default function StatsScreen() {
       </View> : null}
 
       {stats.mastery.some((value) => value > 0) ? <View style={themedCard(theme)}>
-        <Text style={styles.section}>Cấp độ ghi nhớ</Text>
+        <Disclosure title="Cấp độ ghi nhớ">
         <MasteryChart values={stats.mastery} />
+        </Disclosure>
       </View> : null}
 
       {hasSkillHistory ? <View style={themedCard(theme)}>
@@ -142,12 +156,13 @@ export default function StatsScreen() {
       </View> : null}
 
       {hasKnowledgeData ? <View style={themedCard(theme)}>
-        <Text style={styles.section}>Bản đồ kỹ năng lưu bền</Text>
+        <Disclosure title="Chi tiết chỉ số kỹ năng">
         <Text style={styles.note}>Chỉ tính nội dung có dữ liệu luyện. Điểm từ vựng là chỉ số theo dõi 0–100; ngữ pháp là tỷ lệ đúng.</Text>
         <View style={styles.skillList}>{knowledgeMap.filter((metric) => metric.score !== null).map((metric) => <View key={metric.skill} style={styles.skillRow}>
           <Text style={styles.skillLabel}>{metric.label}</Text>
           <Text style={styles.skillValue}>{metric.score === null ? 'Chưa có dữ liệu' : `${metric.score}${metric.skill === 'GRAMMAR' ? '%' : '/100'} · ${metric.wordCount} ${metric.skill === 'GRAMMAR' ? 'cấu trúc' : 'từ'}`}</Text>
         </View>)}</View>
+        </Disclosure>
       </View> : null}
 
       {meaningfulHsk.length ? <View style={themedCard(theme)}>

@@ -26,10 +26,10 @@ function achievementIcon(id: string): keyof typeof Ionicons.glyphMap {
 
 function achievementSeal(id: string) {
   if (id.includes('streak')) return '火';
-  if (id.includes('review')) return '溫';
-  if (id.includes('write')) return '筆';
-  if (id.includes('learn')) return '學';
-  return '記';
+  if (id.includes('review')) return '复';
+  if (id.includes('write')) return '写';
+  if (id.includes('learn')) return '学';
+  return '词';
 }
 
 export default function AchievementsScreen() {
