@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 import { describe, expect, it } from 'vitest';
@@ -6,6 +7,8 @@ import { addEnglishDictionaryCard, createEnglishDeck, initializeEnglishLearner, 
 import { expoAdapter } from '@/db/fixtures/legacy_database';
 import { lookupEnglishForms } from '@/services/english/dictionary-intelligence';
 import { notesWithEnglishContext, readEnglishContext, readerLookupTarget, replaceVisibleEnglishNotes, visibleEnglishNotes } from '@/services/english/reading-context';
+
+const sourcePath = 'artifacts/v7-2026-10-10/sources/skypedia-388adc0/dictionary_en_vi.db';
 
 describe('English sense-bound local Reader context', () => {
   it('rejects malformed imported context titles and offsets instead of rendering invalid notes', () => {
@@ -42,9 +45,9 @@ describe('English sense-bound local Reader context', () => {
     expect(readerLookupTarget(text, text.indexOf('up this')).query).toBe('look up');
     expect(readerLookupTarget(text, 0).query).toBe("Don't");
   });
-  it('atomically saves only an explicit sense with context in existing notes, no corpus/schema writes', async () => {
+  it.skipIf(!existsSync(sourcePath))('atomically saves only an explicit sense with context in existing notes, no corpus/schema writes', async () => {
     const raw = new DatabaseSync(':memory:');
-    const corpus = new DatabaseSync('artifacts/v7-2026-10-10/sources/skypedia-388adc0/dictionary_en_vi.db', { readOnly: true });
+    const corpus = new DatabaseSync(sourcePath, { readOnly: true });
     try {
       const db = expoAdapter(raw);
       await initializeEnglishLearner(db);

@@ -8,7 +8,8 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const app = JSON.parse(read('app.json')).expo;
 const pkg = JSON.parse(read('package.json'));
 const lock = JSON.parse(read('package-lock.json'));
-const gradle = read('android/app/build.gradle');
+const gradlePath = path.join(root, 'android/app/build.gradle');
+const gradle = fs.existsSync(gradlePath) ? fs.readFileSync(gradlePath, 'utf8') : null;
 const versionTuple = value => value.split('.').map(Number);
 if (!/^\d+\.\d+\.\d+$/.test(nextVersion || '') || !Number.isSafeInteger(nextBuild))
   throw new Error('Usage: node scripts/prepare-android-version.cjs VERSION BUILD');
@@ -17,10 +18,12 @@ const firstDifference = next.findIndex((part, index) => part !== old[index]);
 if (firstDifference < 0 || next[firstDifference] <= old[firstDifference] || nextBuild <= app.android.versionCode)
   throw new Error('Versions must increase monotonically');
 if (pkg.version !== app.version || lock.version !== app.version || lock.packages[''].version !== app.version ||
-    !gradle.includes(`versionCode ${app.android.versionCode}`) || !gradle.includes(`versionName "${app.version}"`))
+    (gradle && (!gradle.includes(`versionCode ${app.android.versionCode}`) || !gradle.includes(`versionName "${app.version}"`))))
   throw new Error('Existing version files disagree; no patch emitted');
 const patch = ['*** Begin Patch'];
-for (const file of ['app.json', 'package.json', 'package-lock.json', 'android/app/build.gradle']) {
+const versionFiles = ['app.json', 'package.json', 'package-lock.json'];
+if (gradle) versionFiles.push('android/app/build.gradle');
+for (const file of versionFiles) {
   const lines = read(file).split(/\r?\n/);
   const changed = lines.map(line => {
     if (line.includes(`"version": "${app.version}"`) || line.includes(`versionName "${app.version}"`))
