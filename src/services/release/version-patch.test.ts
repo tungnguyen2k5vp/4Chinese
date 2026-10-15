@@ -18,7 +18,8 @@ describe("release version patch generation", () => {
     const result = run(nextVersion, String(app.android.versionCode + 1));
     expect(result.status).toBe(0);
     expect(result.stdout.match(/\*\*\* Update File:/g)).toHaveLength(hasGeneratedGradle ? 4 : 3);
-    expect(result.stdout).toContain(`versionCode ${app.android.versionCode + 1}`);
+    expect(result.stdout).toContain(`"versionCode": ${app.android.versionCode + 1}`);
+    if (hasGeneratedGradle) expect(result.stdout).toContain(`versionCode ${app.android.versionCode + 1}`);
     expect(result.stdout).not.toContain("signingConfig");
     expect(readFileSync(resolve(root, "app.json"), "utf8")).toBe(before);
   });
