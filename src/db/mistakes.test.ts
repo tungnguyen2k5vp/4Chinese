@@ -48,11 +48,30 @@ describe('persistent mistake and skill tracking', () => {
       await recordPracticeResult(db, { ...input, correct: false });
       expect((await listMistakes(db))[0]?.wrong_count).toBe(2);
       const backup = await exportLocalBackup(db, 'test');
+      const dailyBefore = sqlite.prepare('SELECT * FROM practice_attempt_daily ORDER BY utc_day,mistake_id').all();
       sqlite.exec('DELETE FROM mistake_records; DELETE FROM vocabulary_skill_mastery');
       await importLocalBackup(db, backup);
       expect(await listMistakes(db, 'PINYIN')).toHaveLength(1);
+      expect(sqlite.prepare('SELECT * FROM practice_attempt_daily ORDER BY utc_day,mistake_id').all()).toEqual(dailyBefore);
       expect(sqlite.prepare('SELECT pinyin_score FROM vocabulary_skill_mastery').get()).toEqual({ pinyin_score: 20 });
       expect(sqlite.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+    } finally { sqlite.close(); }
+  });
+
+  it('counts recent attempts only on tracked error items and excludes expired buckets', async () => {
+    const sqlite = createLegacyDatabase();
+    try {
+      const db = expoAdapter(sqlite); await migrateDatabaseSchema(db);
+      const input = {vocabularyId:'hsk-1-ni',skill:'MEANING' as const,exerciseType:'meaning_choice'};
+      await recordPracticeResult(db,{...input,correct:false,occurredAt:'2026-10-01T08:00:00Z'});
+      await recordPracticeResult(db,{...input,correct:true,occurredAt:'2026-10-02T08:00:00Z'});
+      await recordPracticeResult(db,{...input,correct:false,occurredAt:'2026-10-03T08:00:00Z'});
+      expect(await listMistakes(db,undefined,'2026-10-03T12:00:00Z')).toMatchObject([
+        {wrong_count:2,attempts_30d:3,errors_30d:2},
+      ]);
+      expect(await listMistakes(db,undefined,'2026-11-10T12:00:00Z')).toMatchObject([
+        {wrong_count:2,attempts_30d:0,errors_30d:0},
+      ]);
     } finally { sqlite.close(); }
   });
 });

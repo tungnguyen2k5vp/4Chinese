@@ -3,8 +3,8 @@ import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Text } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
 import { ShadowingPlayer } from '@/components/ShadowingPlayer';
 import { recordLessonActivityEvidence } from '@/db/learning-path';
 import { listShadowingSentences, saveSpeakingPractice, type ShadowingSentence } from '@/db/speaking';

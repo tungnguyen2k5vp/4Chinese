@@ -1,7 +1,8 @@
+import { HeaderShownContext } from 'expo-router/react-navigation';
 import type { PropsWithChildren, ReactNode, RefObject } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
 import { spacing, typography, webLayout } from '@/constants/design';
 import { useAppStore } from '@/stores/app-store';
@@ -10,13 +11,15 @@ import { useTheme } from '@/theme/ThemeProvider';
 const ENTRANCE_DURATION_MS = 180;
 const ENTRANCE_OFFSET = 7;
 
-export function Screen({ children, scroll = true, title, subtitle, right, refreshControl, scrollRef, onScroll, onViewportLayout, avoidKeyboard = false, hideHeader = false, hideTitle = false }: PropsWithChildren<{
+export function Screen({ children, scroll = true, title, subtitle, right, refreshControl, scrollRef, onScroll, onViewportLayout, avoidKeyboard = false, hideHeader = false, hideTitle = false, safeAreaEdges = ['top'], compact = false }: PropsWithChildren<{
   scroll?: boolean; title?: string; subtitle?: string; right?: ReactNode; refreshControl?: ScrollViewProps['refreshControl'];
   scrollRef?: RefObject<ScrollView | null>; onScroll?: ScrollViewProps['onScroll']; onViewportLayout?: ScrollViewProps['onLayout']; avoidKeyboard?: boolean;
   hideHeader?: boolean; hideTitle?: boolean;
+  safeAreaEdges?: Edge[]; compact?: boolean;
 }>) {
   const theme = useTheme();
   const styles = createStyles(theme);
+  const nativeHeaderShown = useContext(HeaderShownContext);
   const motionMode = useAppStore((state) => state.settings?.motionMode ?? null);
   const shouldAnimateOnMount = useRef(motionMode !== null);
   const hasResolvedEntrance = useRef(false);
@@ -96,7 +99,7 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
     return () => animation.stop();
   }, [motionMode, opacity, systemReducedMotion, translateY]);
 
-  const content = <Animated.View style={[styles.content, !scroll && { flex: 1, paddingBottom: spacing.md }, { opacity, transform: [{ translateY }] }]}>
+  const content = <Animated.View style={[styles.content, compact && { paddingTop: spacing.sm, paddingBottom: 40, gap: spacing.md }, !scroll && { flex: 1, paddingBottom: spacing.md }, { opacity, transform: [{ translateY }] }]}>
     {!hideHeader && ((title && !hideTitle) || subtitle || right) && <View style={styles.header}><View style={styles.headerCopy}>
       {title && !hideTitle ? <Text style={styles.title}>{title}</Text> : null}
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -107,7 +110,8 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
     keyboardShouldPersistTaps={avoidKeyboard ? 'handled' : 'never'}
     keyboardDismissMode={avoidKeyboard ? 'on-drag' : 'none'}
     contentInsetAdjustmentBehavior="automatic" refreshControl={refreshControl} showsVerticalScrollIndicator={false}>{content}</ScrollView> : content;
-  return <SafeAreaView ref={safeRef} edges={['top']} style={[styles.safe, avoidKeyboard && Platform.OS === 'android' ? { paddingBottom: keyboardOverlap } : null]}>
+  // The navigation header already owns the top inset. Apply it once, including on nested screens.
+  return <SafeAreaView ref={safeRef} edges={nativeHeaderShown ? safeAreaEdges.filter(edge => edge !== 'top') : safeAreaEdges} style={[styles.safe, avoidKeyboard && Platform.OS === 'android' ? { paddingBottom: keyboardOverlap } : null]}>
     {avoidKeyboard && Platform.OS === 'ios' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{body}</KeyboardAvoidingView> : body}
   </SafeAreaView>;
 }

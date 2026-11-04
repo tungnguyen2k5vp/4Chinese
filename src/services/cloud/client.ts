@@ -7,6 +7,7 @@ import { AppState, Platform } from 'react-native';
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/u, '');
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 let client: SupabaseClient | null = null;
+let aiGuestClient: SupabaseClient | null = null;
 const deviceIdKey = '4chinese.sync.device-id';
 let deviceIdPromise: Promise<string> | null = null;
 
@@ -41,19 +42,27 @@ const sessionStorage = {
     : SecureStore.deleteItemAsync(key),
 };
 
-export function getCloudClient(): SupabaseClient | null {
+function createCloudClient(storageKey?: string): SupabaseClient | null {
   if (!url || !publishableKey) return null;
-  if (!client) {
-    client = createClient(url, publishableKey, {
-      auth: { storage: sessionStorage, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
+  const current = createClient(url, publishableKey, {
+    auth: { storage: sessionStorage, ...(storageKey ? { storageKey } : {}), autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
+  });
+  if (Platform.OS !== 'web') {
+    AppState.addEventListener('change', (state) => {
+      if (state === 'active') current.auth.startAutoRefresh();
+      else current.auth.stopAutoRefresh();
     });
-    if (Platform.OS !== 'web') {
-      const current = client;
-      AppState.addEventListener('change', (state) => {
-        if (state === 'active') current.auth.startAutoRefresh();
-        else current.auth.stopAutoRefresh();
-      });
-    }
   }
+  return current;
+}
+
+export function getCloudClient(): SupabaseClient | null {
+  if (!client) client = createCloudClient();
   return client;
+}
+
+/** Separate session: using AI must never sign the learner into backup or sync. */
+export function getAIGuestClient(): SupabaseClient | null {
+  if (!aiGuestClient) aiGuestClient = createCloudClient('4chinese.ai.guest-session');
+  return aiGuestClient;
 }

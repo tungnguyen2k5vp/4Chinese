@@ -1,18 +1,20 @@
-import { useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { LocalVoiceRecorder } from '@/components/LocalVoiceRecorder';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
+import { Disclosure } from '@/components/chinese/Disclosure';
+import { MotionPressable } from '@/components/ui/MotionPressable';
 import { ToneContour } from '@/components/visual/ToneContour';
 import { designColors, spacing, themedCard } from '@/constants/design';
 import { recordLessonActivityEvidence } from '@/db/learning-path';
 import { listToneWords, saveSpeakingPractice } from '@/db/speaking';
 import { useStudySession } from '@/hooks/use-study-session';
 import { speakChinese, stopChineseSpeech } from '@/services/audio/chinese-speech';
-import { buildToneSamples, toneChoices, toneLabel, type ToneWord } from '@/services/speaking/tones';
+import { buildToneSamples, toneChoices, toneLabel, withoutPinyinToneMarks, type ToneWord } from '@/services/speaking/tones';
 import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
 
 export default function TonesScreen() {
@@ -33,6 +35,9 @@ export default function TonesScreen() {
   const [micBusy, setMicBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [guide, setGuide] = useState({ tone: 1, replay: 0, animate: false });
+  const focused = useIsFocused();
+  const guideSample = useMemo(() => buildToneSamples(words, false).find(item => item.answer === String(guide.tone) && item.listeningSafe), [guide.tone, words]);
   const lock = useRef(false);
   const generation = useRef(0);
   const active = useRef(false);
@@ -79,13 +84,30 @@ export default function TonesScreen() {
     finally { lock.current = false; setSaving(false); }
   };
   return <Screen subtitle="Thanh 1–4, thanh nhẹ và 16 cặp thanh. Đáp án theo pinyin trong kho từ.">
+    <Disclosure title="Khám phá đường thanh">
+      <View style={[card, styles.content]} testID="tone-guide">
+        <View accessibilityRole="radiogroup" accessibilityLabel="Chọn đường thanh để tìm hiểu" style={styles.choices}>
+          {[1, 2, 3, 4, 5].map(tone => <MotionPressable key={tone} accessibilityRole="radio" accessibilityLabel={`Xem ${toneLabel(String(tone)).toLowerCase()}`} accessibilityState={{ checked: tone === guide.tone }} onPress={() => setGuide(current => ({ tone, replay: current.replay + 1, animate: true }))} style={[styles.guideChoice, { backgroundColor: tone === guide.tone ? theme.primarySoft : theme.surface, borderColor: tone === guide.tone ? theme.primary : theme.border }]}><Text style={{ color: theme.textPrimary, fontWeight: '800' }}>{tone === 5 ? 'Nhẹ' : tone}</Text></MotionPressable>)}
+        </View>
+        <View accessible accessibilityRole="image" accessibilityLabel={`Mô hình tham khảo ${toneLabel(String(guide.tone)).toLowerCase()}`} style={{ alignItems: 'center' }}>
+          <ToneContour tone={guide.tone} color={theme.primaryText} width={240} height={108} revealKey={focused && guide.animate ? `${guide.tone}:${guide.replay}` : undefined} />
+        </View>
+        <Text style={styles.pinyin}>{['', 'Thanh 1 · đều', 'Thanh 2 · đi lên', 'Thanh 3 · xuống rồi lên', 'Thanh 4 · đi xuống', 'Thanh nhẹ · phụ thuộc âm tiết trước'][guide.tone]}</Text>
+        <Text style={styles.copy}>Mô hình thanh gốc tham khảo, không đo giọng nói và không đồng bộ với âm thanh. Thanh 3 minh họa dạng đầy đủ; đường thanh nhẹ chỉ là ký hiệu.</Text>
+        <View style={[styles.row, { flexWrap: 'wrap' }]}>
+          <PrimaryButton label="Minh họa lại" variant="secondary" onPress={() => setGuide(current => ({ ...current, replay: current.replay + 1, animate: true }))} />
+          <PrimaryButton label="Hiện toàn đường" variant="ghost" onPress={() => setGuide(current => ({ ...current, animate: false }))} />
+        </View>
+        {guideSample ? <PrimaryButton label={playing ? 'Dừng âm mẫu' : `Nghe ví dụ: ${guideSample.hanzi} · ${guideSample.pinyin}`} disabled={micBusy || saving} variant="ghost" onPress={() => playing ? stop() : void play(guideSample.hanzi, false)} /> : <Text style={styles.copy}>Chưa có từ một âm tiết phù hợp để nghe minh họa thanh này.</Text>}
+      </View>
+    </Disclosure>
     <View style={styles.row}>
       <PrimaryButton style={styles.flex} label={pair ? 'Cặp thanh' : 'Một thanh'} disabled={saving || micBusy} variant="secondary" onPress={() => { reset(); setIndex(0); setPair(!pair); }} />
       <PrimaryButton style={styles.flex} label={listen ? 'Nghe rồi chọn' : 'Đọc pinyin'} disabled={saving || micBusy} variant="ghost" onPress={() => { reset(); setIndex(0); setListen(!listen); }} />
     </View>
     {loading ? <ActivityIndicator color={theme.primaryText} /> : sample ? <View style={[card, styles.content]}>
       <Text style={styles.copy}>Bài {(index % samples.length) + 1}/{samples.length}</Text>
-      {!listen || answer ? <><Text style={styles.hanzi}>{sample.hanzi}</Text><Text style={styles.pinyin}>{sample.pinyin}</Text><Text style={styles.copy}>{sample.meaning}</Text></> : <Text style={styles.hanzi}>?</Text>}
+      {!listen || answer ? <><Text style={styles.hanzi}>{sample.hanzi}</Text><Text style={styles.pinyin}>{answer ? sample.pinyin : withoutPinyinToneMarks(sample.pinyin)}</Text><Text style={styles.copy}>{sample.meaning}</Text></> : <Text style={styles.hanzi}>?</Text>}
       <PrimaryButton label={playing ? 'Dừng mẫu' : 'Nghe mẫu'} disabled={micBusy || saving} onPress={() => playing ? stop() : void play(sample.hanzi)} />
       <View accessibilityRole="radiogroup" accessibilityLabel={pair ? 'Chọn cặp thanh điệu' : 'Chọn thanh điệu'} style={styles.choices}>{toneChoices(pair).map((value) => {
         const selected = answer === value;
@@ -117,6 +139,7 @@ export default function TonesScreen() {
 }
 
 function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({ content: { gap: spacing.md }, row: { flexDirection: 'row', gap: spacing.sm }, flex: { flex: 1 },
+  guideChoice: { minWidth: 44, minHeight: 48, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, choice: { minWidth: '28%', flexGrow: 1, minHeight: 64, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: theme.border, borderRadius: 14, backgroundColor: theme.surface, paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, gap: 2 },
   choiceSelected: { backgroundColor: theme.primary, borderColor: theme.primary }, choiceDisabled: { opacity: 0.62 }, contourRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   choiceLabel: { color: theme.textPrimary, fontSize: 12, fontWeight: '800', textAlign: 'center' }, choiceLabelSelected: { color: theme.onPrimary },

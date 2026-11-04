@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
@@ -14,11 +14,11 @@ import type { Vocabulary } from "@/types/models";
 
 const masteryColors = ["#D9DEE9", "#F6A134", "#F7D34A", "#9FD66D", "#35BE79", "#3BC0D9", "#3475EB"];
 
-export const VocabularyCard = memo(function VocabularyCard({ word, onPress, onLongPress, onFavorite, onRestore }: { word: Vocabulary; onPress: () => void; onLongPress?: () => void; onFavorite?: () => void; onRestore?: () => void }) {
+export const VocabularyCard = memo(function VocabularyCard({ word, onPress, onLongPress, onFavorite, onRestore, footer, footerAccessibilityLabel }: { word: Vocabulary; onPress: () => void; onLongPress?: () => void; onFavorite?: () => void; onRestore?: () => void; footer?: ReactNode; footerAccessibilityLabel?: string }) {
   const theme = useTheme();
   const styles = createStyles(theme);
   const dueLabel = word.status === "LEARNING" && word.nextReviewAt ? formatDueInterval(word.nextReviewAt) : null;
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${word.simplified}, ${word.pinyin}, ${word.primaryMeaningVi}`} onPress={onPress} onLongPress={onLongPress} delayLongPress={550} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
+  return <Pressable accessibilityRole="button" accessibilityLabel={[word.simplified, word.pinyin, word.primaryMeaningVi, footerAccessibilityLabel].filter(Boolean).join(", ")} onPress={onPress} onLongPress={onLongPress} delayLongPress={550} style={({ pressed }) => [styles.card, pressed && styles.pressed]}>
     <View style={[styles.levelAccent, { backgroundColor: masteryColors[word.masteryLevel ?? 0] ?? masteryColors[0] }]} />
     <View style={styles.main}>
       <View style={styles.hanziTile}>
@@ -45,6 +45,7 @@ export const VocabularyCard = memo(function VocabularyCard({ word, onPress, onLo
         </Pressable> : null}
       </View>
     </View>
+    {footer ? <View style={styles.footer}>{footer}</View> : null}
   </Pressable>;
 });
 
@@ -66,5 +67,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     meta: { flexDirection: "row", gap: spacing.xs, alignItems: "center", flexWrap: "wrap", marginTop: 3 },
     pos: { color: theme.textMuted, fontSize: 12, flexShrink: 1 },
     due: { color: theme.primaryText, fontSize: 11, fontWeight: "800", marginTop: 1 },
+    footer: { borderTopWidth: 1, borderColor: theme.border, marginTop: spacing.sm, paddingTop: spacing.sm },
   });
 }

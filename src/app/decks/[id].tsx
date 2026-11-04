@@ -5,20 +5,23 @@ import {
   type Href,
 } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, Share, StyleSheet, Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { VocabularyCard } from "@/components/VocabularyCard";
+import { Disclosure } from "@/components/chinese/Disclosure";
+import { LearningGuide } from "@/components/visual/LearningGuide";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
-import { deletePersonalDeck, getDeckVocabulary, getDueVocabulary, getSettings, listPersonalDecks, removeVocabularyFromDeck, renamePersonalDeck } from "@/db/repository";
+import { getDeckShareProgress, resetDeckProgress } from "@/db/deck-progress";
+import { deletePersonalDeck, getDeckVocabulary, getDueVocabulary, listPersonalDecks, removeVocabularyFromDeck, renamePersonalDeck } from "@/db/repository";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { createSharedDeckPayload } from "@/services/decks/share-code";
-import { publishShortDeck, ShortDeckShareError } from "@/services/decks/short-share";
+import { publishShortDeck } from "@/services/decks/short-share";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
 import { searchHanziCandidates, type PinyinHanziCandidate } from "@/services/pinyin-ime/candidateSearch";
-import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { Vocabulary } from "@/types/models";
 
@@ -32,7 +35,12 @@ const levelColors = [
 ] as const;
 
 export default function DeckDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, celebrate } = useLocalSearchParams<{ id: string; celebrate?: string }>();
+  const [celebrating, setCelebrating] = useState(celebrate === 'learn');
+  useEffect(() => {
+    if (celebrate === 'learn') router.setParams({ celebrate: undefined });
+  }, [celebrate]);
+  useFocusEffect(useCallback(() => () => setCelebrating(false), []));
   const db = useSQLiteContext();
   const theme = useTheme();
   const colors = designColors(theme);
@@ -49,11 +57,20 @@ export default function DeckDetail() {
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const modalAnimation = useModalAnimationType();
+  const progressAction = useRef(false);
+  const [shareVisible, setShareVisible] = useState(false);
+  const [includeProgress, setIncludeProgress] = useState(true);
+  const [sharedCode, setSharedCode] = useState("");
+  const [shareNotice, setShareNotice] = useState("");
+  const [shareError, setShareError] = useState("");
+  const [resetVisible, setResetVisible] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState("");
   const [pinyinSearchInput, setPinyinSearchInput] = useState("");
   const [hanziCandidates, setHanziCandidates] = useState<PinyinHanziCandidate[]>([]);
   const [selectedSearchHanzi, setSelectedSearchHanzi] = useState("");
   const [appliedSearch, setAppliedSearch] = useState<{ pinyin: string; hanzi: string } | null>(null);
-  const setReviewQueue = useAppStore((s) => s.setReviewQueue);
   const load = useCallback(() => {
     if (!id) return;
     Promise.all([
@@ -133,9 +150,7 @@ export default function DeckDetail() {
     if (!dueWords.length || reviewLoading) return;
     setReviewLoading(true);
     try {
-      const settings = await getSettings(db);
-      setReviewQueue(dueWords.slice(0, settings.reviewSessionSize));
-      router.push("/review/session");
+      router.push({ pathname: "/review", params: { deckId: id } } as Href);
     } finally {
       setReviewLoading(false);
     }
@@ -196,21 +211,50 @@ export default function DeckDetail() {
       Alert.alert("Chưa có từ để chia sẻ", "Hãy thêm ít nhất một từ vào bộ trước.");
       return;
     }
-    if (sharing) return;
+    if (progressAction.current) return;
+    progressAction.current = true;
     setSharing(true);
+    setShareError("");
     try {
-      const code = await publishShortDeck(createSharedDeckPayload({ name }, words));
+      let code = sharedCode;
+      if (!code) {
+        const [currentWords, progress] = await Promise.all([
+          getDeckVocabulary(db, id),
+          includeProgress ? getDeckShareProgress(db, id) : Promise.resolve(undefined),
+        ]);
+        const payload = createSharedDeckPayload({ name }, currentWords, progress);
+        code = await publishShortDeck(payload);
+        setShareNotice("Mã 8 ký tự. Người nhận cần kết nối mạng để nhập.");
+        setSharedCode(code);
+      }
       await Share.share({
         title: `Bộ từ ${name}`,
-        message: `Mời bạn nhập mã bộ từ này trong 4Chinese:\n${code}`,
+        message: `Bộ từ ${name}${includeProgress ? " kèm tiến độ học tại thời điểm chia sẻ (cần bản 4Chinese mới)" : " chỉ gồm từ vựng"}. Nhập mã trong 4Chinese:\n${code}`,
       });
     } catch (error) {
-      const message = error instanceof ShortDeckShareError
-        ? error.message
-        : "Không thể tạo mã bộ từ. Hãy kiểm tra kết nối mạng rồi thử lại.";
-      Alert.alert("Chưa thể tạo mã 8 ký tự", message);
+      setShareError(error instanceof Error && error.name !== "AbortError" ? error.message
+        : "Chưa tạo hoặc chia sẻ được mã 8 ký tự. Hãy kiểm tra kết nối rồi thử lại; tiến độ vẫn được giữ nguyên.");
     } finally {
       setSharing(false);
+      progressAction.current = false;
+    }
+  };
+  const resetProgress = async () => {
+    if (!id || progressAction.current) return;
+    progressAction.current = true;
+    setResetting(true);
+    setResetError("");
+    try {
+      await resetDeckProgress(db, id);
+      setSelectedLevel(null);
+      setSharedCode("");
+      setResetVisible(false);
+      load();
+    } catch {
+      setResetError("Chưa reset được. Thay đổi đã được hoàn tác; tiến độ vẫn được giữ nguyên.");
+    } finally {
+      setResetting(false);
+      progressAction.current = false;
     }
   };
   const confirmRemoveWord = (word: Vocabulary) => {
@@ -236,6 +280,7 @@ export default function DeckDetail() {
   };
   return (
     <Screen
+      avoidKeyboard
       title={name}
       subtitle={`${words.length} từ do bạn tự chọn`}
       right={(
@@ -250,6 +295,17 @@ export default function DeckDetail() {
         </Pressable>
       )}
     >
+      {celebrating ? <View style={styles.celebration}>
+        <LearningGuide mood="celebrate" size={92} />
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text accessibilityRole="header" style={styles.celebrationTitle}>Hoàn thành buổi học!</Text>
+          <Text style={styles.celebrationCopy}>Thêm một bước trên hành trình tiếng Trung.</Text>
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Đóng lời chúc mừng" onPress={() => setCelebrating(false)} style={styles.celebrationClose}>
+          <Text style={{ color: theme.textSecondary, fontSize: 24 }}>×</Text>
+        </Pressable>
+      </View> : null}
+      <PrimaryButton label={dueWords.length ? `Ôn ${dueWords.length} từ đến hạn` : unlearnedCount ? `Học từ mới (${unlearnedCount})` : "Đã học hết · thêm từ mới"} loading={reviewLoading || learningLoading} onPress={() => dueWords.length ? void startReview() : unlearnedCount ? void startLearning() : router.push({ pathname: "/decks/bulk-add", params: { deckId: id } } as Href)} />
       {editingName ? (
         <View style={[card, styles.renameCard]}>
           <Text style={styles.renameLabel}>TÊN BỘ TỪ</Text>
@@ -281,7 +337,9 @@ export default function DeckDetail() {
           </View>
         </View>
       ) : null}
+      <Disclosure title="Công cụ bộ từ">
       <PrimaryButton
+        variant="secondary"
         icon="＋"
         label="Thêm từ"
         style={styles.addWordButton}
@@ -299,7 +357,8 @@ export default function DeckDetail() {
           label="Chia sẻ"
           loading={sharing}
           style={styles.compactAction}
-          onPress={() => void shareDeck()}
+          disabled={!words.length || resetting}
+          onPress={() => { setSharedCode(""); setShareNotice(""); setShareError(""); setShareVisible(true); }}
         />
         <PrimaryButton
           variant="secondary"
@@ -326,9 +385,10 @@ export default function DeckDetail() {
           onPress={() => router.push({ pathname: "/decks/pronunciation", params: { deckId: id } } as Href)}
         />
       </View>
+      <PrimaryButton variant="danger" label="Đưa bộ từ vào thùng rác" loading={deleting} onPress={confirmArchive} />
+      </Disclosure>
       <View style={[card, styles.searchCard]}>
         <Text style={styles.searchTitle}>TÌM TRONG BỘ</Text>
-        <Text style={styles.searchHint}>Tìm theo pinyin hoặc Hán tự.</Text>
         <View style={styles.searchInputRow}>
           <TextInput
             accessibilityLabel="Nhập pinyin để tìm trong bộ từ"
@@ -413,10 +473,12 @@ export default function DeckDetail() {
         <Text style={styles.progressMeta}>
           {knownCount} đã biết · {skippedCount} bỏ qua · {dueWords.length} đến hạn
         </Text>
-        <Text style={styles.chartTitle}>Mức nhớ</Text>
+        <PrimaryButton variant="ghost" label="Reset tiến độ bộ từ" disabled={!words.length || sharing}
+          onPress={() => { setResetError(""); setResetVisible(true); }} />
+        <Disclosure title={`Mức nhớ · ${learnedCount} từ đã học`}>
         <View style={styles.levelChart}>
           {levelCounts.map((count, index) => (
-            <Pressable key={index + 1} onPress={() => setSelectedLevel((level) => level === index + 1 ? null : index + 1)} style={[styles.levelColumn, selectedLevel === index + 1 && styles.levelColumnActive]}>
+            <Pressable accessibilityRole="button" accessibilityLabel={`${index === 5 ? "Nhớ sâu" : `Cấp ${index + 1}`}: ${count} từ`} accessibilityState={{ selected: selectedLevel === index + 1 }} key={index + 1} onPress={() => setSelectedLevel((level) => level === index + 1 ? null : index + 1)} style={[styles.levelColumn, selectedLevel === index + 1 && styles.levelColumnActive]}>
               <View style={styles.levelBarTrack}>
                 <View
                   style={[
@@ -431,13 +493,54 @@ export default function DeckDetail() {
                   ]}
                 />
               </View>
-              <Text style={styles.levelLabel}>{index + 1 === 6 ? "Sâu" : index + 1}</Text>
-              <Text style={styles.levelCount}>{count}</Text>
+              <Text adjustsFontSizeToFit minimumFontScale={0.7} numberOfLines={1} style={styles.levelLabel}>{index + 1 === 6 ? "Sâu" : index + 1}</Text>
+              <Text adjustsFontSizeToFit minimumFontScale={0.7} numberOfLines={1} style={styles.levelCount}>{count}</Text>
             </Pressable>
           ))}
         </View>
         <Text style={styles.chartHint}>{selectedLevel ? `Đang lọc: ${selectedLevel === 6 ? "Nhớ sâu" : `Cấp ${selectedLevel}`}` : "Chạm mức để lọc"}</Text>
+        </Disclosure>
+        {selectedLevel ? <PrimaryButton variant="ghost" label="Bỏ lọc mức nhớ" onPress={() => setSelectedLevel(null)} /> : null}
       </View>
+      <Modal visible={shareVisible} transparent animationType={modalAnimation}
+        onRequestClose={() => { if (!sharing) setShareVisible(false); }}>
+        <View style={styles.modalBackdrop}>
+          <ScrollView style={styles.modalScroll} contentContainerStyle={[card, styles.modalContent]} keyboardShouldPersistTaps="handled">
+            <Text accessibilityRole="header" style={styles.progressTitle}>Chia sẻ bộ từ</Text>
+            <View style={styles.shareToggle}>
+              <Text style={[styles.progressMeta, { flex: 1 }]}>Kèm tiến độ học</Text>
+              <Switch accessibilityLabel="Kèm tiến độ học" value={includeProgress} disabled={sharing}
+                onValueChange={(value) => { setIncludeProgress(value); setSharedCode(""); setShareNotice(""); setShareError(""); }} />
+            </View>
+            <Text style={styles.progressMeta}>{includeProgress
+              ? "Giữ từ đã học, mức nhớ và lịch ôn trên máy nhận. Tiến độ được chụp lúc tạo mã; hai máy tiếp tục học độc lập. Không chia sẻ ghi chú, XP hoặc lịch sử từng lượt ôn."
+              : "Chỉ gửi từ vựng. Người nhận giữ tiến độ riêng của họ."}</Text>
+            {sharedCode ? <>
+              <Text style={styles.progressMeta}>{shareNotice}</Text>
+              <TextInput accessibilityLabel="Mã bộ từ đã tạo" editable={false} selectTextOnFocus maxLength={8}
+                value={sharedCode} style={[styles.renameInput, styles.shareCode]} />
+              <Text style={styles.progressMeta}>Mã đã gửi không đổi khi bạn học thêm hoặc reset. Hãy tạo mã mới để chuyển tiến độ mới nhất.</Text>
+            </> : null}
+            {shareError ? <Text accessibilityRole="alert" style={{ color: theme.error }}>{shareError}</Text> : null}
+            <PrimaryButton label={sharedCode ? "Chia sẻ lại mã" : "Tạo mã và chia sẻ"} loading={sharing} onPress={() => void shareDeck()} />
+            <PrimaryButton variant="ghost" label="Đóng" disabled={sharing} onPress={() => setShareVisible(false)} />
+          </ScrollView>
+        </View>
+      </Modal>
+      <Modal visible={resetVisible} transparent animationType={modalAnimation}
+        onRequestClose={() => { if (!resetting) setResetVisible(false); }}>
+        <View style={styles.modalBackdrop}>
+          <ScrollView style={styles.modalScroll} contentContainerStyle={[card, styles.modalContent]}>
+            <Text accessibilityRole="header" style={styles.progressTitle}>Reset tiến độ bộ từ?</Text>
+            <Text style={styles.progressMeta}>Đưa {words.length} từ về chưa học, xóa lịch sử ôn và Sổ lỗi của các từ này. Nội dung, ghi chú, yêu thích, XP và thống kê tổng vẫn giữ nguyên.</Text>
+            <Text style={[styles.progressMeta, { color: theme.error }]}>Từ dùng chung trong bộ khác cũng bị reset tiến độ. Thao tác này không có nút hoàn tác; nên tạo mã kèm tiến độ hoặc sao lưu trước.</Text>
+            {resetError ? <Text accessibilityRole="alert" style={{ color: theme.error }}>{resetError}</Text> : null}
+            <PrimaryButton variant="danger" label="Xác nhận reset tiến độ" loading={resetting} onPress={() => void resetProgress()} />
+            <PrimaryButton variant="ghost" label="Hủy" disabled={resetting} onPress={() => setResetVisible(false)} />
+          </ScrollView>
+        </View>
+      </Modal>
+      <Disclosure title="Học và ôn trong bộ">
       <View style={[card, styles.learnCard]}>
         <Text style={styles.learnEyebrow}>HỌC NGAY</Text>
         <Text style={styles.learnTitle}>
@@ -445,9 +548,9 @@ export default function DeckDetail() {
             ? `${unlearnedCount} từ mới sẵn sàng`
             : "Đã học hết từ mới trong bộ"}
         </Text>
-        <Text style={styles.learnHint}>Chọn tối đa 10 từ mới cho lượt này.</Text>
+        <Text style={styles.learnHint}>Số từ theo cài đặt phiên học và mục tiêu hôm nay.</Text>
         <PrimaryButton
-          label={unlearnedCount ? `Chọn từ để học (0/${Math.min(10, unlearnedCount)})` : "Chưa có từ mới"}
+          label={unlearnedCount ? "Chọn từ để học" : "Chưa có từ mới"}
           disabled={!unlearnedCount}
           loading={learningLoading}
           onPress={() => void startLearning()}
@@ -496,13 +599,8 @@ export default function DeckDetail() {
           </Text>
         )}
       </View>
-      <PrimaryButton
-        variant="danger"
-        icon="🗑"
-        label="Đưa bộ từ vào thùng rác"
-        loading={deleting}
-        onPress={confirmArchive}
-      />
+      </Disclosure>
+      <Text style={{ color: theme.textPrimary, fontSize: 18, fontWeight: "800" }}>Danh sách từ · {visibleWords.length}</Text>
       {visibleWords.length ? (
         <View style={styles.list}>
           {visibleWords.map((word) => (
@@ -519,14 +617,18 @@ export default function DeckDetail() {
           icon="词"
           variant="vocabulary"
           scene="deck"
-          title="Bộ từ đang trống"
-          message="Thêm Hanzi bằng cách viết tay hoặc nhập bàn phím; app sẽ gợi ý Pinyin và nghĩa sẵn có."
+          title={words.length ? "Chưa có từ phù hợp bộ lọc" : "Bộ từ đang trống"}
+          message={words.length ? "Xóa tìm kiếm hoặc bỏ lọc mức nhớ để xem toàn bộ từ." : "Thêm Hanzi bằng cách viết tay hoặc nhập bàn phím; app sẽ gợi ý Pinyin và nghĩa sẵn có."}
         />
       )}
     </Screen>
   );
 }
 function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({
+  celebration: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm, paddingLeft: spacing.xs, borderRadius: radius.lg, backgroundColor: theme.skillSurfaces.review },
+  celebrationTitle: { color: theme.textPrimary, fontSize: 17, fontWeight: '900' },
+  celebrationCopy: { color: theme.textSecondary, fontSize: 13, lineHeight: 19 },
+  celebrationClose: { width: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   renameTrigger: { flexDirection: "row", alignItems: "center", gap: 4 },
   renameTriggerIcon: { color: colors.primaryText, fontSize: 17, fontWeight: "900" },
   renameCard: { gap: spacing.sm },
@@ -565,7 +667,12 @@ function createStyles(theme: ReturnType<typeof useTheme>) { const colors = desig
   progressPercent: { color: colors.primaryText, fontSize: 25, fontWeight: "900" },
   progressTrack: { height: 8, borderRadius: 99, overflow: "hidden", backgroundColor: colors.border },
   progressFill: { height: "100%", borderRadius: 99, backgroundColor: colors.primary },
-  progressMeta: { color: colors.textMuted, fontSize: 12 },
+  progressMeta: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  modalBackdrop: { flex: 1, justifyContent: "center", alignItems: "center", padding: spacing.lg, backgroundColor: theme.overlay },
+  modalScroll: { width: "100%", maxWidth: 480, maxHeight: "90%", flexGrow: 0 },
+  modalContent: { gap: spacing.md, backgroundColor: theme.surfaceElevated },
+  shareToggle: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  shareCode: { minHeight: 64, fontSize: 25, letterSpacing: 4, textAlign: "center", fontWeight: "800" },
   chartTitle: { color: colors.text, fontSize: 16, fontWeight: "900", marginTop: spacing.xs },
   levelChart: { height: 76, flexDirection: "row", alignItems: "flex-end", justifyContent: "space-around", gap: spacing.sm, paddingTop: spacing.xs },
   levelColumn: { flex: 1, height: "100%", alignItems: "center", justifyContent: "flex-end", gap: 2 },

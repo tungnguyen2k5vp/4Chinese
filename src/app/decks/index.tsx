@@ -1,21 +1,25 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
   Pressable,
+  Platform,
+  ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
 } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { radius, spacing, themedCard } from "@/constants/design";
 import {
   createPersonalDeck,
@@ -24,6 +28,8 @@ import {
   listDeletedPersonalDecks,
   listPersonalDecks,
 } from "@/db/repository";
+import { useModalAnimationType } from '@/hooks/use-reduced-motion';
+import type { SharedDeckPayload } from "@/services/decks/share-code";
 import { fetchSharedDeck, ShortDeckShareError } from "@/services/decks/short-share";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { PersonalDeck } from "@/types/models";
@@ -31,6 +37,7 @@ import type { PersonalDeck } from "@/types/models";
 export default function Decks() {
   const db = useSQLiteContext();
   const theme = useTheme();
+  const modalAnimation = useModalAnimationType();
   const styles = useThemeStyles(createStyles);
   const cardStyle = themedCard(theme);
   const [decks, setDecks] = useState<PersonalDeck[]>([]);
@@ -38,9 +45,14 @@ export default function Decks() {
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [createModalVisible, setCreateModalVisible] = useState(false);
   const [friendModalVisible, setFriendModalVisible] = useState(false);
   const [friendCode, setFriendCode] = useState("");
   const [importingFriendDeck, setImportingFriendDeck] = useState(false);
+  const importBusy = useRef(false);
+  const [friendPayload, setFriendPayload] = useState<SharedDeckPayload | null>(null);
+  const [restoreFriendProgress, setRestoreFriendProgress] = useState(true);
+  const [friendError, setFriendError] = useState("");
   const load = useCallback(() => {
     void Promise.all([listPersonalDecks(db), listDeletedPersonalDecks(db)]).then(
       ([activeDecks, deletedDecks]) => {
@@ -56,10 +68,16 @@ export default function Decks() {
       return;
     }
     setSaving(true);
-    const id = await createPersonalDeck(db, name);
-    setName("");
-    setSaving(false);
-    router.push(`/decks/${id}` as Href);
+    try {
+      const id = await createPersonalDeck(db, name);
+      setName("");
+      setCreateModalVisible(false);
+      router.push(`/decks/${id}` as Href);
+    } catch {
+      Alert.alert("Chưa tạo được bộ từ", "Dữ liệu vẫn được giữ nguyên. Vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
   };
   const archive = async (deck: PersonalDeck) => {
     if (deletingId) return;
@@ -89,69 +107,82 @@ export default function Decks() {
       ],
     );
   };
-  const addFriendDeck = async () => {
-    if (importingFriendDeck) return;
+  const previewFriendDeck = async () => {
+    if (importBusy.current) return;
+    importBusy.current = true;
     setImportingFriendDeck(true);
+    setFriendError("");
     try {
       const payload = await fetchSharedDeck(friendCode);
       if (!payload) {
-        Alert.alert("Mã không hợp lệ", "Nhập mã 8 ký tự mới hoặc dán mã HZD1 cũ mà bạn bè đã chia sẻ.");
+        setFriendError("Không tìm thấy bộ từ. Hãy kiểm tra lại mã 8 ký tự người chia sẻ đã gửi.");
         return;
       }
-      const outcome = await importSharedDeck(db, payload);
+      setFriendPayload(payload);
+      setRestoreFriendProgress(true);
+    } catch (error) {
+      setFriendError(error instanceof ShortDeckShareError ? error.message : "Không thể đọc mã bộ từ. Hãy kiểm tra kết nối và thử lại.");
+    } finally {
+      importBusy.current = false;
+      setImportingFriendDeck(false);
+    }
+  };
+  const addFriendDeck = async () => {
+    if (!friendPayload || importBusy.current) return;
+    importBusy.current = true;
+    setImportingFriendDeck(true);
+    setFriendError("");
+    try {
+      const outcome = await importSharedDeck(db, friendPayload, friendPayload.version === 2 && restoreFriendProgress);
       setFriendModalVisible(false);
       setFriendCode("");
+      setFriendPayload(null);
       load();
-      Alert.alert("Đã thêm bộ từ", `Đã nhập ${outcome.saved} từ trong “${payload.name}”.`, [
-        { text: "Mở bộ từ", onPress: () => router.push(`/decks/${outcome.deckId}` as Href) },
-        { text: "Đóng", style: "cancel" },
-      ]);
+      router.push(`/decks/${outcome.deckId}` as Href);
     } catch (error) {
-      const message = error instanceof ShortDeckShareError
-        ? error.message
-        : "Không thể kết nối máy chủ chia sẻ. Hãy thử lại.";
-      Alert.alert("Chưa thể thêm bộ từ", message);
+      setFriendError(error instanceof Error ? error.message : "Chưa thể thêm bộ từ. Dữ liệu học vẫn được giữ nguyên.");
     } finally {
+      importBusy.current = false;
       setImportingFriendDeck(false);
     }
   };
   return (
     <Screen
       title="Bộ từ riêng"
+      hideTitle
       subtitle="Tự chọn từ cần học, sửa nghĩa theo ngữ cảnh của bạn và ôn bằng lịch cấp nhớ."
     >
-      <View style={[cardStyle, styles.create]}>
-        <Text style={styles.label}>TẠO BỘ TỪ MỚI</Text>
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="Ví dụ: Tiếng Trung công việc"
-          placeholderTextColor={theme.textMuted}
-          style={styles.input}
-        />
-        <PrimaryButton
-          label="Tạo bộ từ"
-          loading={saving}
-          onPress={() => void create()}
-        />
+      <PrimaryButton
+        label="＋  Tạo bộ từ mới"
+        onPress={() => setCreateModalVisible(true)}
+      />
+      <View style={styles.secondaryActions}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push("/decks/trash" as Href)}
+          style={({ pressed }) => [styles.secondaryAction, pressed && styles.actionPressed]}
+        >
+          <Ionicons name="trash-outline" size={18} color={theme.primaryText} />
+          <Text style={styles.secondaryActionText} numberOfLines={1}>
+            {deletedCount ? `Thùng rác (${deletedCount})` : "Thùng rác"}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => { setFriendError(""); setFriendPayload(null); setFriendModalVisible(true); }}
+          style={({ pressed }) => [styles.secondaryAction, pressed && styles.actionPressed]}
+        >
+          <Ionicons name="people-outline" size={19} color={theme.primaryText} />
+          <Text style={styles.secondaryActionText} numberOfLines={1}>Thêm bộ bạn bè</Text>
+        </Pressable>
       </View>
-      <PrimaryButton
-        variant="ghost"
-        icon="♻"
-        label={deletedCount ? `Thùng rác (${deletedCount})` : "Thùng rác"}
-        onPress={() => router.push("/decks/trash" as Href)}
-      />
-      <PrimaryButton
-        variant="secondary"
-        icon="👥"
-        label="Thêm bộ từ của bạn bè"
-        onPress={() => setFriendModalVisible(true)}
-      />
       {decks.length ? (
         decks.map((deck) => (
           <View key={deck.id} style={[cardStyle, styles.deck]}>
             <Pressable
               style={styles.deckMain}
+              accessibilityRole="button"
+              accessibilityLabel={`Mở bộ ${deck.name}, ${deck.wordCount} từ, ${deck.dueCount} đến hạn`}
               onPress={() => router.push(`/decks/${deck.id}` as Href)}
             >
               <View
@@ -173,11 +204,16 @@ export default function Decks() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Đưa bộ ${deck.name} vào thùng rác`}
+              accessibilityLabel={`Tùy chọn bộ ${deck.name}`}
+              accessibilityHint="Mở bộ từ hoặc chuyển bộ từ vào thùng rác để có thể khôi phục sau."
               disabled={deletingId !== null}
-              onPress={() => confirmArchive(deck)}
+              onPress={() => Alert.alert(`Bộ từ: ${deck.name}`, "Chọn một thao tác.", [
+                { text: "Mở bộ từ", onPress: () => router.push(`/decks/${deck.id}` as Href) },
+                { text: "Đưa vào thùng rác", style: "destructive", onPress: () => confirmArchive(deck) },
+                { text: "Đóng", style: "cancel" },
+              ])}
               style={({ pressed }) => [
-                styles.deleteButton,
+                styles.moreButton,
                 pressed && styles.deletePressed,
                 deletingId !== null && styles.deleteDisabled,
               ]}
@@ -185,7 +221,7 @@ export default function Decks() {
               {deletingId === deck.id ? (
                 <ActivityIndicator color={theme.error} size="small" />
               ) : (
-                <Ionicons name="trash-outline" size={19} color={theme.error} />
+                <Ionicons name="ellipsis-vertical" size={20} color={theme.textMuted} />
               )}
             </Pressable>
           </View>
@@ -200,57 +236,111 @@ export default function Decks() {
         />
       )}
       <Modal
-        visible={friendModalVisible}
-        animationType="fade"
+        visible={createModalVisible}
+        animationType={modalAnimation}
         transparent
-        onRequestClose={() => setFriendModalVisible(false)}
+        onRequestClose={() => setCreateModalVisible(false)}
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalBackdrop}>
           <View style={[cardStyle, styles.modalCard]}>
-            <Text style={styles.modalTitle}>Nhập mã bộ từ</Text>
-            <Text style={styles.modalDescription}>
-              Nhập mã 8 ký tự mới hoặc dán mã HZD1 cũ từ nút “Chia sẻ bộ từ”.
-            </Text>
+            <Text style={styles.modalTitle}>Tạo bộ từ mới</Text>
+            <Text style={styles.modalDescription}>Đặt tên trước, bạn có thể thêm từ ngay sau đó.</Text>
             <TextInput
-              autoCapitalize="characters"
-              autoCorrect={false}
-              multiline
-              maxLength={1_000_000}
-              value={friendCode}
-              onChangeText={setFriendCode}
-              placeholder="Ví dụ: K7M9X2QF hoặc HZD1.…"
+              returnKeyType="done"
+              value={name}
+              onChangeText={setName}
+              onSubmitEditing={() => void create()}
+              placeholder="Ví dụ: Tiếng Trung công việc"
               placeholderTextColor={theme.textMuted}
-              style={styles.modalInput}
+              style={styles.input}
             />
             <View style={styles.modalActions}>
               <PrimaryButton
                 variant="secondary"
                 label="Hủy"
-                onPress={() => { setFriendModalVisible(false); setFriendCode(""); }}
+                onPress={() => { setCreateModalVisible(false); setName(""); }}
                 style={styles.modalAction}
               />
               <PrimaryButton
-                label="Thêm bộ từ"
-                loading={importingFriendDeck}
-                disabled={!friendCode.trim()}
-                onPress={() => void addFriendDeck()}
+                label="Tạo bộ từ"
+                loading={saving}
+                disabled={!name.trim()}
+                onPress={() => void create()}
                 style={styles.modalAction}
               />
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal
+        visible={friendModalVisible}
+        animationType={modalAnimation}
+        transparent
+        onRequestClose={() => { if (!importingFriendDeck) setFriendModalVisible(false); }}
+      >
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalBackdrop}>
+          <ScrollView style={styles.importScroll} contentContainerStyle={[cardStyle, styles.modalCard]} keyboardShouldPersistTaps="handled">
+            <Text style={styles.modalTitle}>Nhập mã bộ từ</Text>
+            <Text style={styles.modalDescription}>
+              Nhập mã 8 ký tự từ nút “Chia sẻ” của bộ từ. Mã mới có thể kèm tiến độ học.
+            </Text>
+            <TextInput
+              autoCapitalize="characters"
+              autoCorrect={false}
+              returnKeyType="done"
+              maxLength={1_000_000}
+              value={friendCode}
+              editable={!importingFriendDeck}
+              onChangeText={(value) => { setFriendCode(value); setFriendPayload(null); setFriendError(""); }}
+              placeholder="Ví dụ: K7M9X2QF"
+              placeholderTextColor={theme.textMuted}
+              style={styles.shareCodeInput}
+            />
+            {friendPayload ? <>
+              <Text style={styles.modalTitle}>{friendPayload.name}</Text>
+              <Text style={styles.modalDescription}>{friendPayload.words.length} từ{friendPayload.version === 2
+                ? ` · ${friendPayload.words.filter((word) => word.progress?.studied).length} đã học/đã biết`
+                : " · Mã này chỉ chứa từ vựng, không có tiến độ của người gửi."}</Text>
+              {friendPayload.version === 2 ? <>
+                <Text style={styles.modalDescription}>Tiến độ lúc {new Date(friendPayload.snapshotAt!).toLocaleString("vi-VN")}. Hai máy học độc lập sau khi nhập.</Text>
+                <View style={styles.shareToggle}>
+                  <Text style={[styles.modalDescription, { flex: 1 }]}>Nhập kèm tiến độ người chia sẻ</Text>
+                  <Switch accessibilityLabel="Nhập kèm tiến độ người chia sẻ" value={restoreFriendProgress}
+                    disabled={importingFriendDeck} onValueChange={setRestoreFriendProgress} />
+                </View>
+                <Text style={[styles.modalDescription, restoreFriendProgress && { color: theme.error }]}>{restoreFriendProgress
+                  ? "Tiến độ các từ trong mã sẽ thay thế tiến độ đang có, kể cả khi từ nằm trong bộ khác. Không nhập XP, ghi chú hoặc lịch sử từng lượt ôn."
+                  : "Chỉ thêm từ vựng; giữ tiến độ đang có trên máy này."}</Text>
+              </> : null}
+            </> : null}
+            {friendError ? <Text accessibilityRole="alert" style={{ color: theme.error }}>{friendError}</Text> : null}
+            <View style={styles.modalActions}>
+              <PrimaryButton
+                variant="secondary"
+                label="Hủy"
+                disabled={importingFriendDeck}
+                onPress={() => { setFriendModalVisible(false); setFriendCode(""); setFriendPayload(null); }}
+                style={styles.modalAction}
+              />
+              <PrimaryButton
+                label={friendPayload ? friendPayload.version === 2 && restoreFriendProgress ? "Nhập kèm tiến độ" : "Thêm bộ từ" : "Xem trước bộ từ"}
+                loading={importingFriendDeck}
+                disabled={!friendCode.trim()}
+                onPress={() => void (friendPayload ? addFriendDeck() : previewFriendDeck())}
+                style={styles.modalAction}
+              />
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
     </Screen>
   );
 }
 function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
-  create: { gap: spacing.md },
-  label: {
-    fontSize: 11,
-    fontWeight: "900",
-    letterSpacing: 1,
-    color: theme.primaryText,
-  },
+  secondaryActions: { flexDirection: "row", gap: spacing.sm },
+  secondaryAction: { flex: 1, minWidth: 0, minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: spacing.sm, borderRadius: radius.md, backgroundColor: theme.primarySoft },
+  secondaryActionText: { color: theme.primaryText, fontSize: 12, fontWeight: "800", flexShrink: 1 },
+  actionPressed: { opacity: 0.72 },
   input: {
     minHeight: 50,
     borderWidth: 1,
@@ -277,21 +367,23 @@ function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.cr
   copy: { flex: 1 },
   name: { fontSize: 17, fontWeight: "800", color: theme.textPrimary },
   meta: { fontSize: 12, color: theme.textMuted, marginTop: 4 },
-  deleteButton: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
+  moreButton: {
+    width: 44,
+    height: 44,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.errorSoft,
+    borderRadius: radius.pill,
+    backgroundColor: theme.surfaceElevated,
   },
   deletePressed: { opacity: 0.72 },
   deleteDisabled: { opacity: 0.45 },
   modalBackdrop: { flex: 1, justifyContent: "center", padding: spacing.lg, backgroundColor: theme.overlay },
   modalCard: { gap: spacing.md, borderRadius: radius.lg, backgroundColor: theme.surfaceElevated },
+  importScroll: { flexGrow: 0, maxHeight: "90%" },
+  shareToggle: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   modalTitle: { color: theme.textPrimary, fontSize: 23, fontWeight: "900" },
   modalDescription: { color: theme.textMuted, fontSize: 14, lineHeight: 21 },
-  modalInput: { minHeight: 92, borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, padding: spacing.md, color: theme.textPrimary, backgroundColor: theme.background, fontSize: 14, textAlignVertical: "top" },
+  shareCodeInput: { minHeight: 52, borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: theme.textPrimary, backgroundColor: theme.background, fontSize: 14 },
   modalActions: { flexDirection: "row", gap: spacing.sm },
   modalAction: { flex: 1 },
 }); }

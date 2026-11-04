@@ -1,21 +1,28 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router, useLocalSearchParams, type Href } from "expo-router";
+import { router, useIsFocused, useLocalSearchParams, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Animated, AppState, Easing, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { AudioButton } from "@/components/AudioButton";
 import { HskBadge, MasteryBadge } from "@/components/Badges";
 import { BilingualMeaningList } from "@/components/BilingualMeaningList";
+import { WordAIEntry } from "@/components/ChineseAIEntry";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
+import { ExampleSentence as Example } from '@/components/ExampleSentence';
 import { LexicalKnowledgeCard } from '@/components/LexicalKnowledgeCard';
 import { PersonalContextCard } from '@/components/PersonalContextCard';
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { StrokeWriter } from "@/components/StrokeWriter";
+import { AnswerFeedbackIcon } from "@/components/ui/AnswerFeedbackIcon";
+import { FlashcardFlip } from "@/components/ui/FlashcardFlip";
+import { MotionPressable } from "@/components/ui/MotionPressable";
+import { StudyTransition } from "@/components/ui/StudyTransition";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
+import { getHsk30WordLevels } from "@/db/hsk30";
 import { recordLessonActivityEvidence } from "@/db/learning-path";
 import {
   copyVocabularyBatchToDeck,
@@ -26,6 +33,7 @@ import {
   saveNotes,
   toggleFavorite,
 } from "@/db/repository";
+import { useModalAnimationType, useReducedMotion } from '@/hooks/use-reduced-motion';
 import { primaryEnglishMeaning } from "@/services/vocabulary/bilingual-meanings";
 import { analyzeVocabulary, buildMnemonicNote } from "@/services/vocabulary/character-analysis";
 import { useAppStore } from "@/stores/app-store";
@@ -34,13 +42,16 @@ import type { PersonalDeck, Vocabulary } from "@/types/models";
 
 type Tab = "overview" | "writing" | "examples" | "notes";
 export default function WordDetail() {
-  const { id, lessonActivityId } = useLocalSearchParams<{ id: string; lessonActivityId?: string }>();
+  const { id, lessonActivityId, hskSourceId } = useLocalSearchParams<{ id: string; lessonActivityId?: string; hskSourceId?: string }>();
+  const focused = useIsFocused();
   const db = useSQLiteContext();
   const theme = useTheme();
   const colors = designColors(theme);
   const card = themedCard(theme);
   const styles = useThemeStyles(createStyles);
+  const modalAnimation = useModalAnimationType();
   const [word, setWord] = useState<Vocabulary | null>();
+  const [hsk30Levels, setHsk30Levels] = useState<string[]>([]);
   const [tab, setTab] = useState<Tab>("overview");
   const [character, setCharacter] = useState("");
   const [notes, setNotes] = useState("");
@@ -61,10 +72,11 @@ export default function WordDetail() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setWord(undefined); setLoadFailed(false); setRelated([]); setSaveMessage("");
     if (!id) { setWord(null); return; }
-    void Promise.all([getVocabulary(db, id), getNotes(db, id)]).then(
-      ([value, note]) => {
+    void Promise.all([getVocabulary(db, id), getNotes(db, id), getHsk30WordLevels(db, id, hskSourceId)]).then(
+      ([value, note, levels]) => {
         if (!live) return;
         setWord(value);
+        setHsk30Levels(levels);
         setCharacter(value?.simplified[0] ?? "");
         setNotes(note);
         if (value) {
@@ -74,7 +86,7 @@ export default function WordDetail() {
       },
     ).catch(() => { if (live) setLoadFailed(true); });
     return () => { live = false; };
-  }, [db, id, lessonActivityId, reload]);
+  }, [db, id, lessonActivityId, hskSourceId, reload]);
   if (loadFailed) return <Screen><Text style={styles.loading}>Chưa tải được từ vựng. Dữ liệu của bạn vẫn được giữ nguyên.</Text><PrimaryButton label="Thử tải lại" onPress={() => setReload(value => value + 1)} /></Screen>;
   if (word === undefined)
     return (
@@ -185,6 +197,7 @@ export default function WordDetail() {
           <Text style={[styles.meaning, styles.meaningEn]}>{primaryEnglishMeaning(word.meaningsEn)}</Text>
         </View>
         <View style={styles.badges}>
+          {hsk30Levels.length ? <Text style={styles.pos}>HSK 3.0 · 11/2025: {hsk30Levels.map(level => 'HSK ' + level).join(', ')} · Cấp trong bộ từ gốc:</Text> : null}
           <HskBadge band={word.hskBand} />
           <MasteryBadge level={word.masteryLevel} status={word.status} />
           {word.pos.map((item) => (
@@ -194,26 +207,9 @@ export default function WordDetail() {
           ))}
         </View>
       </View>
-      <View style={styles.tabs}>
-        {(
-          [
-            ["overview", "Tổng quan"],
-            ["writing", "Cách viết"],
-            ["examples", "Ví dụ"],
-            ["notes", "Ghi chú"],
-          ] as const
-        ).map(([key, label]) => (
-          <Pressable
-            key={key}
-            onPress={() => setTab(key)}
-            style={[styles.tab, tab === key && styles.tabActive]}
-          >
-            <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>
-              {label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <WordAIEntry key={word.id} word={word} />
+      <WordTabs tab={tab} onChange={setTab} active={focused} />
+      <StudyTransition turnKey={tab} effect="reveal" testID="word-tab-content" style={{ gap: spacing.md }}>
       {tab === "overview" ? (
         <>
           {word.imageUri ? (
@@ -223,11 +219,7 @@ export default function WordDetail() {
               contentFit="cover"
             />
           ) : (
-            <View style={styles.illustration}>
-              <View style={styles.sun} />
-              <Text style={styles.illustrationHanzi}>{word.simplified}</Text>
-              <Text style={styles.illustrationLabel}>Minh hoạ từ vựng</Text>
-            </View>
+            <RecallCard key={word.id} word={word} />
           )}
           <View style={card}>
             <Text style={styles.section}>Nghĩa Việt–Anh tương ứng</Text>
@@ -241,7 +233,7 @@ export default function WordDetail() {
             </Text>
           </View>
           <LexicalKnowledgeCard vocabularyId={word.id} />
-          {word.examples[0] ? <Example item={word.examples[0]} /> : null}
+          {word.examples[0] ? <Example key={word.examples[0].id} item={word.examples[0]} /> : null}
           {related.length ? <View style={[card, styles.related]}>
             <Text style={styles.section}>Từ liên quan</Text>
             <Text style={styles.relatedHint}>Cùng Hán tự, ưu tiên cấp HSK phù hợp và từ bạn đang học.</Text>
@@ -258,7 +250,7 @@ export default function WordDetail() {
       {tab === "writing" ? (
         <View style={[card, styles.writing]}>
           <View style={styles.characters}>
-            {[...word.simplified].map((char) => (
+            {analyses.map(({ character: char }) => (
               <Pressable
                 key={char}
                 onPress={() => setCharacter(char)}
@@ -279,14 +271,15 @@ export default function WordDetail() {
             ))}
           </View>
           <Text style={styles.meta}>
-            Bộ thủ: {word.radical ?? "—"} · {word.strokeCount ?? "—"} nét (tổng
-            từ)
+            Bộ tra chữ {character}: {analyses.find(item => item.character === character)?.radical ?? "chưa xác minh"} · {word.strokeCount ?? "—"} nét (tổng mục từ)
           </Text>
           <StrokeWriter character={character} />
           <PrimaryButton
             label="Luyện viết bằng tay"
             onPress={() => router.push(`/writing/${character}`)}
           />
+          <PrimaryButton variant="secondary" label="Nhớ chữ rồi viết (che mẫu)" onPress={() => router.push({pathname:'/memory/session',params:{id:word.id,mode:'writing',assisted:'1'}} as Href)} />
+          <PrimaryButton variant="ghost" label="Cấu tạo chữ và mẹo nhớ cá nhân" onPress={() => router.push({pathname:'/memory/structure',params:{id:word.id,character}} as Href)} />
         </View>
       ) : null}
       {tab === "examples" ? (
@@ -309,7 +302,7 @@ export default function WordDetail() {
             <View style={styles.analysisHeader}>
               <View style={styles.analysisCopy}>
                 <Text style={styles.section}>Phân tích bộ thủ & mẹo nhớ</Text>
-                <Text style={styles.analysisHint}>Phân tích tự động cho từng Hán tự.</Text>
+                <Text style={styles.analysisHint}>Liên tưởng gợi ý để bạn tự chỉnh sửa, không phải giải thích nguồn gốc lịch sử.</Text>
               </View>
               <Text style={styles.analysisIcon}>忆</Text>
             </View>
@@ -320,16 +313,17 @@ export default function WordDetail() {
                   <Text style={styles.analysisRadical}>{analysis.radical ?? "·"}</Text>
                 </View>
                 <View style={styles.analysisBody}>
-                  <Text style={styles.analysisLabel}>Bộ thủ / thành phần</Text>
+                  <Text style={styles.analysisLabel}>Bộ tra từ điển</Text>
                   <Text style={styles.analysisText}>{analysis.radicalName} · {analysis.radicalMeaning}</Text>
                   <Text style={styles.analysisLabel}>Phân rã</Text>
                   <Text style={styles.analysisText}>{analysis.decomposition}</Text>
-                  <Text style={styles.analysisLabel}>Mnemonic</Text>
+                  <Text style={styles.analysisLabel}>Liên tưởng cá nhân</Text>
                   <Text style={styles.mnemonic}>{analysis.mnemonic}</Text>
                 </View>
               </View>
             ))}
             <PrimaryButton variant="secondary" label="Chèn mẹo nhớ vào ghi chú" onPress={insertMnemonic} />
+            <PrimaryButton variant="ghost" label="Xem cấu tạo có nguồn và viết mẹo của tôi" onPress={() => router.push({pathname:'/memory/structure',params:{id:word.id}} as Href)} />
           </View>
           <View style={card}>
           <Text style={styles.section}>Ghi chú cá nhân</Text>
@@ -351,12 +345,16 @@ export default function WordDetail() {
                 .finally(() => setSavingNotes(false));
             }}
           />
-          {saveMessage ? <Text accessibilityLiveRegion="polite" style={{ color: theme.textMuted }}>{saveMessage}</Text> : null}
+          {saveMessage ? <StudyTransition active={focused} turnKey={saveMessage} effect="reveal" durationMs={180} animateOnMount testID="word-save-feedback" accessibilityLiveRegion="polite" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <AnswerFeedbackIcon correct={saveMessage === 'Đã lưu ghi chú.'} active={false} turnKey={saveMessage} size={24} />
+            <Text style={{ flex: 1, color: theme.textSecondary }}>{saveMessage}</Text>
+          </StudyTransition> : null}
           </View>
         </>
       ) : null}
+      </StudyTransition>
     </Screen>
-      <Modal visible={deckPickerOpen} transparent animationType="fade" onRequestClose={() => setDeckPickerOpen(false)}>
+      <Modal visible={deckPickerOpen} transparent animationType={modalAnimation} onRequestClose={() => setDeckPickerOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.deckPicker}>
             <Text style={styles.deckPickerTitle}>{"Th\u00eam v\u00e0o b\u1ed9 t\u1eeb"}</Text>
@@ -397,26 +395,108 @@ export default function WordDetail() {
     </>
   );
 }
-function Example({ item }: { item: Vocabulary["examples"][number] }) {
+function RecallCard({ word }: { word: Vocabulary }) {
   const theme = useTheme();
-  const card = themedCard(theme);
-  const styles = useThemeStyles(createStyles);
-  return (
-    <View style={[card, styles.example]}>
-      <View style={styles.exampleHead}>
-        <Text style={styles.chinese}>{item.chinese}</Text>
-        <AudioButton text={item.chinese} />
+  const focused = useIsFocused();
+  const reduced = useReducedMotion();
+  const [revealed, setRevealed] = useState(false);
+  const [drag] = useState(() => new Animated.Value(0));
+  const [cardWidth, setCardWidth] = useState(320);
+  const dragging = useRef(false);
+  const ignorePress = useRef(false);
+  useEffect(() => {
+    const reset = () => { dragging.current = false; drag.stopAnimation(); drag.setValue(0); };
+    reset();
+    const subscription = AppState.addEventListener('change', state => { if (state !== 'active') reset(); });
+    return () => { subscription.remove(); reset(); };
+  }, [drag, focused, reduced, word.id, cardWidth]);
+  const pan = useMemo(() => {
+    const resetDrag = () => {
+      dragging.current = false;
+      if (reduced || !focused || (AppState.currentState && AppState.currentState !== 'active')) { drag.stopAnimation(); drag.setValue(0); }
+      else Animated.spring(drag, { toValue: 0, stiffness: 240, damping: 24, mass: 0.7, useNativeDriver: true, isInteraction: false }).start();
+    };
+    // PanResponder.create stores these callbacks; refs are read only when gesture events occur.
+    // eslint-disable-next-line react-hooks/refs
+    return PanResponder.create({
+      // ponytail: horizontal drag only on the detail card; keep vertical scrolling and review grading untouched.
+      onMoveShouldSetPanResponder: (_, gesture) => focused && Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderGrant: () => { dragging.current = true; ignorePress.current = true; drag.stopAnimation(); },
+      onPanResponderMove: (_, gesture) => { if (dragging.current && !reduced) drag.setValue(Math.max(-64, Math.min(64, gesture.dx * 0.45))); },
+      onPanResponderRelease: (_, gesture) => {
+        if (dragging.current && focused && (AppState.currentState == null || AppState.currentState === 'active') && Math.abs(gesture.dx) >= Math.min(80, cardWidth * 0.25)) setRevealed(value => !value);
+        resetDrag();
+      },
+      onPanResponderTerminate: resetDrag,
+      onPanResponderTerminationRequest: () => true,
+    });
+  }, [cardWidth, drag, focused, reduced]);
+  return <StudyTransition active={focused} turnKey={word.id} effect="reveal" animateOnMount testID="word-recall-card" style={{ gap: 10 }}>
+    <Animated.View {...pan.panHandlers} testID="word-recall-drag" onLayout={({ nativeEvent: { layout } }) => setCardWidth(layout.width)}
+      style={{ transform: [{ translateX: drag }, { rotate: drag.interpolate({ inputRange: [-64, 64], outputRange: ['-5deg', '5deg'], extrapolate: 'clamp' }) }] }}>
+    <MotionPressable accessibilityLabel={revealed ? 'Lật thẻ xem chữ Hán' : 'Lật thẻ xem nghĩa'} accessibilityState={{ expanded: revealed }}
+      onPressIn={() => { ignorePress.current = false; }} onPress={() => { if (!ignorePress.current) setRevealed(value => !value); }} pressedScale={0.98}
+      style={{ backgroundColor: theme.skillSurfaces.reading, borderRadius: 24, borderWidth: 1, borderColor: theme.border, padding: 20 }}>
+      <FlashcardFlip active={focused} revealed={revealed} turnKey={word.id} testID="word-recall-flip">{back => <View testID={back ? 'word-recall-back' : 'word-recall-front'} style={{ minHeight: 156, alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        <Text style={{ color: theme.skillColors.reading, fontSize: 11, letterSpacing: 1, fontWeight: '800' }}>{back ? 'NGHĨA & NGỮ CẢNH' : 'THẺ GHI NHỚ'}</Text>
+        <Text style={{ color: theme.textPrimary, fontSize: back ? 25 : 48, lineHeight: back ? 34 : 60, fontWeight: '800', textAlign: 'center' }}>{back ? word.primaryMeaningVi : word.simplified}</Text>
+        {back && word.examples[0] ? <Text style={{ color: theme.textSecondary, fontSize: 17, lineHeight: 25, textAlign: 'center' }}>{word.examples[0].chinese}</Text> : <PinyinText value={word.pinyin} />}
+      </View>}</FlashcardFlip>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 12 }}>
+        <Ionicons name="swap-horizontal" size={18} color={theme.primaryText} />
+        <Text style={{ color: theme.primaryText, fontWeight: '700', flexShrink: 1 }}>{revealed ? 'Chạm hoặc vuốt để xem chữ' : 'Chạm hoặc vuốt để xem nghĩa'}</Text>
       </View>
-      <PinyinText value={item.pinyin} />
-      <Text style={styles.exampleVi}>{item.vietnamese}</Text>
+    </MotionPressable>
+    </Animated.View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <Text style={{ flex: 1, color: theme.textSecondary, fontSize: 13 }}>Tự nhớ, rồi lật thẻ. Giữ loa để nghe chậm.</Text>
+      <AudioButton text={word.simplified} allowWhenSoundDisabled />
     </View>
-  );
+  </StudyTransition>;
 }
+
+function WordTabs({ tab, onChange, active }: { tab: Tab; onChange: (tab: Tab) => void; active: boolean }) {
+  const theme = useTheme();
+  const styles = useThemeStyles(createStyles);
+  const reduced = useReducedMotion();
+  const tabs = [['overview', 'Tổng quan'], ['writing', 'Cách viết'], ['examples', 'Ví dụ'], ['notes', 'Ghi chú']] as const;
+  const index = tabs.findIndex(([key]) => key === tab);
+  const previous = useRef(index);
+  const [width, setWidth] = useState(0);
+  const [position] = useState(() => new Animated.Value(index));
+  const [stretch] = useState(() => new Animated.Value(1));
+  useLayoutEffect(() => {
+    const changed = previous.current !== index;
+    previous.current = index;
+    const settle = () => { position.stopAnimation(); stretch.stopAnimation(); position.setValue(index); stretch.setValue(1); };
+    position.stopAnimation(); stretch.stopAnimation();
+    if (changed && active && !reduced && width > 0 && (AppState.currentState == null || AppState.currentState === 'active')) {
+      stretch.setValue(0);
+      Animated.parallel([
+        Animated.timing(position, { toValue: index, duration: 320, easing: Easing.inOut(Easing.cubic), useNativeDriver: true, isInteraction: false }),
+        Animated.timing(stretch, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true, isInteraction: false }),
+      ]).start();
+    } else settle();
+    const subscription = AppState.addEventListener('change', state => { if (state !== 'active') settle(); });
+    return () => { subscription.remove(); position.stopAnimation(); stretch.stopAnimation(); };
+  }, [active, index, position, reduced, stretch, width]);
+  const cell = Math.max(0, (width - 8) / tabs.length);
+  return <View style={styles.tabs} onLayout={({ nativeEvent: { layout } }) => setWidth(layout.width)}>
+    {cell > 0 ? <Animated.View testID="word-tab-indicator" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants"
+      style={{ position: 'absolute', left: 4, top: 4, bottom: 4, width: cell, borderRadius: 12, backgroundColor: theme.primarySoft, borderWidth: 1, borderColor: theme.primary,
+        transform: [{ translateX: Animated.multiply(position, cell) }, { scaleX: stretch.interpolate({ inputRange: [0, 0.45, 1], outputRange: [1, 1.12, 1] }) }] }} /> : null}
+    {tabs.map(([key, label]) => <MotionPressable key={key} accessibilityRole="tab" accessibilityLabel={label} accessibilityState={{ selected: tab === key }}
+      onPress={() => onChange(key)} style={styles.tab}>
+      <Text style={[styles.tabText, tab === key && styles.tabTextActive]}>{label}</Text>
+    </MotionPressable>)}
+  </View>;
+}
+
 function createStyles(theme: ReturnType<typeof useTheme>) { const colors = designColors(theme); return StyleSheet.create({
   loading: { marginTop: 60, textAlign: "center", color: colors.textMuted },
   hero: { marginTop: spacing.lg, gap: spacing.md },
-  heroTop: { flexDirection: "row", justifyContent: "space-between" },
-  wordBlock: { flex: 1, gap: 3 },
+  heroTop: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, justifyContent: "space-between" },
+  wordBlock: { flexGrow: 1, flexBasis: 144, gap: 3 },
   hanzi: { color: colors.text, fontSize: 52, fontWeight: "800" },
   pinyin: { fontSize: 21 },
   traditional: { color: colors.textMuted, fontSize: 12 },
@@ -441,38 +521,22 @@ function createStyles(theme: ReturnType<typeof useTheme>) { const colors = desig
   pos: { color: colors.textMuted, fontSize: 12 },
   tabs: {
     flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    padding: 4,
+    borderRadius: 16,
+    backgroundColor: colors.background,
+    overflow: 'hidden',
   },
   tab: {
     flex: 1,
     minHeight: 48,
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 3,
+    paddingVertical: 8,
   },
-  tabActive: { borderBottomWidth: 3, borderBottomColor: colors.primary },
-  tabText: { color: colors.textMuted, fontSize: 12, fontWeight: "700" },
+  tabText: { color: colors.textMuted, fontSize: 12, fontWeight: "700", textAlign: 'center' },
   tabTextActive: { color: colors.primaryText },
   wordImage: { height: 210, width: "100%", borderRadius: radius.lg },
-  illustration: {
-    height: 170,
-    borderRadius: radius.lg,
-    backgroundColor: theme.mode === "dark" ? theme.warningSoft : "#FFF1E3",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-  },
-  sun: {
-    position: "absolute",
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: theme.mode === "dark" ? "#674C24" : "#FFD89A",
-    right: -25,
-    top: -30,
-  },
-  illustrationHanzi: { color: colors.warning, fontSize: 64, fontWeight: "800" },
-  illustrationLabel: { color: colors.warning, fontSize: 11, fontWeight: "800" },
   section: {
     color: colors.text,
     fontSize: 17,
@@ -481,14 +545,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) { const colors = desig
   },
   bullet: { color: colors.text, fontSize: 15, lineHeight: 24 },
   source: { color: colors.textMuted, fontSize: 10, marginTop: spacing.md },
-  example: { gap: spacing.sm },
-  exampleHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  chinese: { color: colors.text, fontSize: 22, fontWeight: "700", flex: 1 },
-  exampleVi: { color: colors.textMuted, fontSize: 14, lineHeight: 21 },
   writing: { alignItems: "center", gap: spacing.md },
   characters: { flexDirection: "row", gap: spacing.sm },
   character: {

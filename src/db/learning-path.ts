@@ -80,9 +80,17 @@ async function seedExpandedLearningPath(db: SQLiteDatabase): Promise<void> {
     try {
       for (const band of bands) {
         const courseId = 'hsk-' + band + '-path';
-        const wordCount = await db.getFirstAsync<{ total: number }>(`SELECT COUNT(*) AS total FROM vocabulary v
+        const wordCount = await db.getFirstAsync<{ total: number }>(`SELECT COUNT(*) AS total FROM (
+          SELECT v.simplified,LOWER(REPLACE(v.pinyin,' ','')) AS pinyin_key,
+            ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+              ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+                COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+                COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,v.id) AS identity_rank
+          FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
           WHERE v.hsk_band=? AND (v.deck_id IS NULL OR EXISTS (
-            SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))`, band);
+            SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id
+            WHERE m.vocabulary_id=v.id AND d.deleted_at IS NULL))) unique_hsk_words
+          WHERE identity_rank=1`, band);
         const totalWords = Math.max(0, Number(wordCount?.total ?? 0));
         const chunkSize = band === '7-9' ? advancedVocabularyChunkSize : vocabularyChunkSize;
         const pageCount = Math.ceil(totalWords / chunkSize);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { groupVocabularyByTopic, vocabularyTopicId } from "./vocabulary-topics";
+import { groupLearningTopics, groupVocabularyByTopic, vocabularyTopicId } from "./vocabulary-topics";
 
 import type { Vocabulary } from "@/types/models";
 
@@ -17,6 +17,14 @@ function word(simplified: string, meaning: string, pos = "danh từ"): Vocabular
 }
 
 describe("vocabulary topics", () => {
+  it('yields without losing topic order and cancels work when a source is changed', async () => {
+    const words = Array.from({ length: 250 }, (_, index) => word(String(index), index % 2 ? 'quả táo' : 'trường học'));
+    expect(await groupLearningTopics(words, () => true)).toEqual(groupVocabularyByTopic(words));
+    let active = true;
+    const pending = groupLearningTopics(words, () => active);
+    active = false;
+    expect(await pending).toBeNull();
+  });
   it("classifies common meanings into useful themes", () => {
     expect(vocabularyTopicId(word("苹果", "quả táo; trái cây"))).toBe("food");
     expect(vocabularyTopicId(word("学校", "trường học"))).toBe("school-work");

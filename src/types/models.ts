@@ -197,6 +197,6 @@ export interface UserSettings {
   dailyReminderMinute: number;
   onboardingCompleted: boolean;
   reviewStyle: "automatic" | "self-rating";
-  reviewSessionSize: 10 | 20 | 30 | 50;
+  reviewSessionSize: 5 | 10 | 15 | 20;
   practiceWritingEarly: boolean;
 }

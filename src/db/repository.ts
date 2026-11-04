@@ -1,15 +1,20 @@
 import type { SQLiteDatabase } from "expo-sqlite";
 
 import { getOfflineVocabulary } from "@/db/database";
+import { restoreSharedWordProgress } from "@/db/deck-progress";
 import { awardActivityXp } from '@/db/gamification';
 import { practiceSkillForExercise, recordPracticeResult } from '@/db/mistakes';
 import {
+  decodeSharedDeckPayload,
   sharedWordToVocabulary,
   type SharedDeckPayload,
+  type SharedWordProgress,
 } from "@/services/decks/share-code";
+import { HSK30_LEVELS, HSK30_VERSION } from '@/services/hsk/hsk30-source';
 import { illustrationForVocabulary } from "@/services/media/illustration";
 import { normalizePinyinInput } from "@/services/pinyin/pinyin";
 import { exerciseTypeForReviewMode } from "@/services/review/exercise";
+import { normalizeReviewSessionSize } from "@/services/review/session-size";
 import {
   assessWeakness,
   isWeakWord,
@@ -32,6 +37,7 @@ import {
   withSingleContextualExample,
 } from "@/services/vocabulary/contextual-example";
 import { dailyWordOffset } from "@/services/vocabulary/daily-word";
+import { normalizeHanziIdentity, normalizePinyinIdentity, vocabularyIdentityKey } from "@/services/vocabulary/identity";
 import { cleanLearnerMeanings, vocabularySearchAliases } from "@/services/vocabulary/quality";
 import { rankRelatedWords } from "@/services/vocabulary/related-words";
 import type {
@@ -83,6 +89,115 @@ type DbWord = {
   is_custom: number;
   deck_id: string | null;
 };
+
+type VocabularyIdentityRow = Pick<DbWord, "id" | "simplified" | "traditional" | "pinyin" | "pinyin_numeric">;
+
+function sameHanziForm(left: Pick<VocabularyIdentityRow, "simplified" | "traditional">, right: Pick<VocabularyIdentityRow, "simplified" | "traditional">): boolean {
+  const leftForms = new Set([normalizeHanziIdentity(left.simplified), normalizeHanziIdentity(left.traditional)]);
+  return [normalizeHanziIdentity(right.simplified), normalizeHanziIdentity(right.traditional)].some((form) => leftForms.has(form));
+}
+
+function hasPinyinTone(pinyin: string, pinyinNumeric: string): boolean {
+  return /[1-5]/u.test(pinyinNumeric) || /[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]/iu.test(pinyin);
+}
+
+async function findVocabularyIdentityMatch(
+  db: SQLiteDatabase,
+  input: Pick<Vocabulary, "simplified" | "traditional" | "pinyin" | "pinyinNumeric">,
+  excludeId?: string,
+): Promise<VocabularyIdentityRow | null> {
+  const forms = Array.from(new Set([normalizeHanziIdentity(input.simplified), normalizeHanziIdentity(input.traditional)].filter(Boolean)));
+  if (!forms.length) return null;
+  const placeholders = forms.map(() => "?").join(",");
+  const candidates = await db.getAllAsync<VocabularyIdentityRow>(
+    `SELECT v.id,v.simplified,v.traditional,v.pinyin,v.pinyin_numeric
+     FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+     WHERE (v.simplified IN (${placeholders}) OR v.traditional IN (${placeholders}))
+       ${excludeId ? "AND v.id<>?" : ""}
+     ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+       COALESCE(p.review_count,0) DESC,COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,
+       CASE WHEN v.is_custom=0 THEN 0 ELSE 1 END,v.id`,
+    ...forms,
+    ...forms,
+    ...(excludeId ? [excludeId] : []),
+  );
+  const related = candidates.filter((candidate) => sameHanziForm(candidate, input));
+  const inputPronunciation = normalizePinyinIdentity(input.pinyin, input.pinyinNumeric);
+  const exact = related.find((candidate) => normalizePinyinIdentity(candidate.pinyin, candidate.pinyin_numeric) === inputPronunciation);
+  if (exact) return exact;
+
+  // If the user entered untoned pinyin, only use it as a match when the same
+  // Hanzi/base pronunciation has a single known tone pattern in the store.
+  if (!hasPinyinTone(input.pinyin, input.pinyinNumeric)) {
+    const base = normalizePinyinInput(input.pinyin || input.pinyinNumeric);
+    const sameBase = related.filter((candidate) => normalizePinyinInput(candidate.pinyin || candidate.pinyin_numeric) === base);
+    const tonePatterns = new Set(sameBase.map((candidate) => normalizePinyinIdentity(candidate.pinyin, candidate.pinyin_numeric)));
+    if (tonePatterns.size === 1) return sameBase[0] ?? null;
+  }
+  return null;
+}
+
+function safeStringArray(value: string, fallback: string[] = []): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function mergeDuplicateWordMetadata(
+  db: SQLiteDatabase,
+  existingId: string,
+  input: EditableVocabulary,
+  now: string,
+): Promise<void> {
+  const existing = await db.getFirstAsync<{
+    simplified: string;
+    traditional: string;
+    pinyin: string;
+    pinyin_numeric: string;
+    primary_meaning_vi: string;
+    meanings_vi: string;
+    meanings_en: string;
+    pos: string;
+  }>(`SELECT simplified,traditional,pinyin,pinyin_numeric,primary_meaning_vi,meanings_vi,meanings_en,pos
+      FROM vocabulary WHERE id=?`, existingId);
+  if (!existing) return;
+  const merge = (left: string[], right: string[]) => {
+    const result = new Map<string, string>();
+    for (const item of [...left, ...right].map((value) => value.trim()).filter(Boolean)) {
+      const key = normalizeSearch(item);
+      if (key && !result.has(key)) result.set(key, item);
+    }
+    return Array.from(result.values());
+  };
+  const meaningsVi = merge(safeStringArray(existing.meanings_vi, [existing.primary_meaning_vi]), input.meaningsVi);
+  const meaningsEn = merge(safeStringArray(existing.meanings_en), input.meaningsEn);
+  const pos = merge(safeStringArray(existing.pos), input.pos);
+  const primaryMeaning = existing.primary_meaning_vi.trim() || meaningsVi[0] || "";
+  const searchText = normalizeSearch([
+    existing.simplified, existing.traditional, existing.pinyin, existing.pinyin_numeric,
+    primaryMeaning, ...meaningsVi, ...meaningsEn, ...pos,
+  ].join(" "));
+  await db.runAsync(`UPDATE vocabulary SET primary_meaning_vi=?,meanings_vi=?,meanings_en=?,pos=?,search_text=?,updated_at=? WHERE id=?`,
+    primaryMeaning, JSON.stringify(meaningsVi), JSON.stringify(meaningsEn), JSON.stringify(pos), searchText, now, existingId);
+}
+
+function uniqueVocabularyWords(words: Vocabulary[]): Vocabulary[] {
+  const byIdentity = new Map<string, Vocabulary>();
+  const score = (word: Vocabulary) =>
+    (word.studied || word.status === "KNOWN" ? 1_000_000 : 0) +
+    (word.status === "LEARNING" ? 100_000 : 0) +
+    Math.max(0, word.masteryLevel ?? 0) * 1_000 +
+    Math.max(0, word.reviewCount ?? 0);
+  for (const word of words) {
+    const key = vocabularyIdentityKey(word);
+    const previous = byIdentity.get(key);
+    if (!previous || score(word) > score(previous)) byIdentity.set(key, word);
+  }
+  return Array.from(byIdentity.values());
+}
 
 export type BulkLookupQuery = {
   value: string;
@@ -204,7 +319,7 @@ export const defaultSettings: UserSettings = {
   dailyReminderMinute: 0,
   onboardingCompleted: false,
   reviewStyle: "automatic",
-  reviewSessionSize: 20,
+  reviewSessionSize: 10,
   practiceWritingEarly: false,
 };
 
@@ -222,9 +337,13 @@ export async function listVocabulary(
   } = {},
 ): Promise<Vocabulary[]> {
   const clauses: string[] = [
-    "(v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))",
+    "(v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id WHERE m.vocabulary_id=v.id AND d.deleted_at IS NULL))",
   ];
   const values: (string | number)[] = [];
+  const resultClauses: string[] = [];
+  const resultValues: (string | number)[] = [];
+  let identityPreference = "";
+  let identityPreferenceValues: (string | number)[] = [];
   if (options.search?.trim()) {
     clauses.push("v.search_text LIKE ?");
     values.push(`%${normalizeSearch(options.search)}%`);
@@ -237,46 +356,79 @@ export async function listVocabulary(
     const sliceOffset = Math.max(0, Math.trunc(options.bandSlice.offset));
     const sliceLimit = Math.min(100, Math.max(1, Math.trunc(options.bandSlice.limit)));
     clauses.push(`v.id IN (
-      SELECT page_word.id FROM vocabulary page_word
-      WHERE page_word.hsk_band=? AND (page_word.deck_id IS NULL OR EXISTS (
-        SELECT 1 FROM personal_deck d WHERE d.id=page_word.deck_id AND d.deleted_at IS NULL))
-      ORDER BY COALESCE(page_word.frequency_rank,999999),page_word.pinyin_numeric,page_word.id
-      LIMIT ? OFFSET ?)`);
+      SELECT unique_page.id FROM (
+        SELECT page_word.id,page_word.frequency_rank,page_word.pinyin_numeric,
+          ROW_NUMBER() OVER (PARTITION BY page_word.simplified,LOWER(REPLACE(page_word.pinyin,' ',''))
+            ORDER BY CASE WHEN COALESCE(page_progress.studied,0)=1 OR page_progress.status='KNOWN' THEN 0 ELSE 1 END,
+              COALESCE(page_progress.memory_level,0) DESC,COALESCE(page_progress.review_count,0) DESC,
+              COALESCE(page_progress.updated_at,page_word.updated_at,page_word.created_at,'') DESC,page_word.id) AS identity_rank
+        FROM vocabulary page_word LEFT JOIN user_vocabulary_progress page_progress ON page_progress.vocabulary_id=page_word.id
+        WHERE page_word.hsk_band=? AND (page_word.deck_id IS NULL OR EXISTS (
+          SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id
+          WHERE m.vocabulary_id=page_word.id AND d.deleted_at IS NULL))) unique_page
+      WHERE identity_rank=1 ORDER BY COALESCE(frequency_rank,999999),pinyin_numeric,id LIMIT ? OFFSET ?)`);
     values.push(String(options.band), sliceLimit, sliceOffset);
   }
   if (options.memoryLevel && options.memoryLevel >= 1 && options.memoryLevel <= 6) {
-    clauses.push("p.status = 'LEARNING' AND p.studied = 1 AND p.memory_level = ?");
-    values.push(Math.trunc(options.memoryLevel));
+    resultClauses.push("status = 'LEARNING' AND studied = 1 AND memory_level = ?");
+    resultValues.push(Math.trunc(options.memoryLevel));
+    identityPreference = `CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.memory_level=${Math.trunc(options.memoryLevel)} THEN 0 ELSE 1 END,`;
   }
   if (options.deckId?.trim()) {
-    clauses.push("v.deck_id = ?");
+    clauses.push("EXISTS (SELECT 1 FROM personal_deck_vocabulary m WHERE m.vocabulary_id=v.id AND m.deck_id=?)");
     values.push(options.deckId.trim());
   }
   if (options.filter === "learned")
-    clauses.push("COALESCE(p.status, 'NEW') = 'LEARNING' AND COALESCE(p.studied, 0) = 1");
+    resultClauses.push("COALESCE(status, 'NEW') = 'LEARNING' AND COALESCE(studied, 0) = 1");
   if (options.filter === "unlearned")
-    clauses.push("COALESCE(p.status, 'NEW') = 'NEW' AND COALESCE(p.is_suspended, 0) = 0");
+    resultClauses.push("COALESCE(status, 'NEW') = 'NEW' AND COALESCE(is_suspended, 0) = 0");
   if (options.filter === "due") {
-    clauses.push("p.studied = 1 AND p.status = 'LEARNING' AND p.is_suspended = 0");
-    clauses.push("p.next_review_at <= ?");
-    values.push(new Date().toISOString());
+    resultClauses.push("studied = 1 AND status = 'LEARNING' AND is_suspended = 0");
+    resultClauses.push("next_review_at <= ?");
+    const now = new Date().toISOString();
+    resultValues.push(now);
+    identityPreference = "CASE WHEN p.studied=1 AND p.status='LEARNING' AND p.is_suspended=0 AND p.next_review_at<=? THEN 0 ELSE 1 END,";
+    identityPreferenceValues = [now];
   }
-  if (options.filter === "favorite") clauses.push("p.is_favorite = 1");
-  if (options.filter === "mastered")
-    clauses.push("p.status = 'LEARNING' AND p.studied = 1 AND p.memory_level >= 6");
-  if (options.filter === "known") clauses.push("p.status = 'KNOWN'");
-  if (options.filter === "skipped") clauses.push("p.status = 'SKIPPED'");
+  if (options.filter === "favorite") {
+    resultClauses.push("is_favorite = 1");
+    identityPreference = "CASE WHEN p.is_favorite=1 THEN 0 ELSE 1 END,";
+  }
+  if (options.filter === "mastered") {
+    resultClauses.push("status = 'LEARNING' AND studied = 1 AND memory_level >= 6");
+    identityPreference = "CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.memory_level>=6 THEN 0 ELSE 1 END,";
+  }
+  if (options.filter === "known") {
+    resultClauses.push("status = 'KNOWN'");
+    identityPreference = "CASE WHEN p.status='KNOWN' THEN 0 ELSE 1 END,";
+  }
+  if (options.filter === "skipped") {
+    resultClauses.push("status = 'SKIPPED'");
+    identityPreference = "CASE WHEN p.status='SKIPPED' THEN 0 ELSE 1 END,";
+  }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  values.push(options.limit ?? 50, options.offset ?? 0);
+  const resultWhere = resultClauses.length ? `AND ${resultClauses.join(" AND ")}` : "";
+  values.push(...resultValues, options.limit ?? 50, options.offset ?? 0);
   const rows = await db.getAllAsync<DbWord>(
-    `SELECT v.*, p.mastery_level, p.is_favorite, p.due, p.status, p.studied,
-      p.is_known, p.next_review_at, p.review_count
-    FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id = v.id
-    ${where} ORDER BY CASE v.hsk_band WHEN '7-9' THEN 7 ELSE CAST(v.hsk_band AS INTEGER) END,
-    COALESCE(v.frequency_rank, 999999), v.pinyin_numeric LIMIT ? OFFSET ?`,
-    values,
+    `WITH ranked_vocabulary AS (
+      SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,
+        p.is_suspended,p.memory_level,p.next_review_at,p.review_count,
+        ROW_NUMBER() OVER (
+          PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY ${identityPreference}CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+            COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+            COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,
+            CASE WHEN v.is_custom=0 THEN 0 ELSE 1 END,v.id
+        ) AS identity_rank
+      FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+      ${where}
+    )
+    SELECT * FROM ranked_vocabulary WHERE identity_rank=1 ${resultWhere}
+    ORDER BY CASE hsk_band WHEN '7-9' THEN 7 ELSE CAST(hsk_band AS INTEGER) END,
+      COALESCE(frequency_rank,999999),pinyin_numeric LIMIT ? OFFSET ?`,
+    [...identityPreferenceValues, ...values],
   );
-  return attachSingleExamples(db, rows.map(mapWord));
+  return attachSingleExamples(db, uniqueVocabularyWords(rows.map(mapWord)));
 }
 
 export type SharedVocabularySentence = {
@@ -300,7 +452,8 @@ export async function getVocabulary(
       p.is_known, p.next_review_at, p.review_count
     FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id = v.id
     WHERE v.id = ? AND (v.deck_id IS NULL OR EXISTS (
-      SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+      SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id
+      WHERE m.vocabulary_id=v.id AND d.deleted_at IS NULL
     ))`,
     id,
   );
@@ -557,8 +710,8 @@ export async function getDueVocabulary(
     ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
     : "";
   const deckClause = deckId?.trim()
-    ? "AND v.deck_id=? AND EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL)"
-    : "AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))";
+    ? "AND EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id AND m.deck_id=?)"
+    : "AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))";
   const values: (string | number)[] = [
     new Date().toISOString(),
     ...(bands?.map(String) ?? []),
@@ -566,14 +719,19 @@ export async function getDueVocabulary(
     limit,
   ];
   const rows = await db.getAllAsync<DbWord>(
-    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
-      p.is_known,p.next_review_at,p.review_count FROM vocabulary v
-    JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-    WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
-      AND p.next_review_at <= ? ${bandClause} ${deckClause}
-    ORDER BY p.next_review_at, p.memory_level,
-      CASE WHEN p.lapse_count>=3 OR p.consecutive_wrong>=2 OR (p.review_count>0 AND CAST(p.wrong_count AS REAL)/p.review_count>=0.4) THEN 0 ELSE 1 END,
-      LENGTH(v.id) % 7 LIMIT ?`,
+    `WITH due_vocabulary AS (
+      SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,p.next_review_at,p.review_count,
+        p.memory_level,p.lapse_count,p.consecutive_wrong,p.wrong_count,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY COALESCE(p.updated_at,'') DESC,p.memory_level DESC,p.review_count DESC,v.id) AS identity_rank
+      FROM vocabulary v JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+      WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
+        AND p.next_review_at <= ? ${bandClause} ${deckClause}
+    )
+    SELECT * FROM due_vocabulary WHERE identity_rank=1
+    ORDER BY next_review_at,memory_level,
+      CASE WHEN lapse_count>=3 OR consecutive_wrong>=2 OR (review_count>0 AND CAST(wrong_count AS REAL)/review_count>=0.4) THEN 0 ELSE 1 END,
+      LENGTH(id) % 7 LIMIT ?`,
     values,
   );
   return attachSingleExamples(db, rows.map(mapWord));
@@ -589,10 +747,10 @@ export async function getDueCount(
     ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
     : "";
   const deckClause = deckId?.trim()
-    ? "AND v.deck_id=? AND EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL)"
-    : "AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))";
+    ? "AND EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id AND m.deck_id=?)"
+    : "AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))";
   const row = await db.getFirstAsync<{ count: number }>(
-    `SELECT COUNT(*) count
+    `SELECT COUNT(DISTINCT v.simplified || '|' || LOWER(REPLACE(v.pinyin,' ',''))) count
      FROM vocabulary v
      JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
      WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
@@ -614,22 +772,56 @@ export async function getUpcomingReviewVocabulary(
     ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
     : "";
   const rows = await db.getAllAsync<DbWord>(
-    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
-      p.is_known,p.next_review_at,p.review_count
-     FROM vocabulary v
-     JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-     WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
-       AND p.next_review_at > ? ${bandClause}
-       AND (v.deck_id IS NULL OR EXISTS (
-         SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-       ))
-     ORDER BY p.next_review_at ASC
-     LIMIT ?`,
+    `WITH upcoming_vocabulary AS (
+      SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,p.next_review_at,p.review_count,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY COALESCE(p.updated_at,'') DESC,p.memory_level DESC,p.review_count DESC,v.id) AS identity_rank
+      FROM vocabulary v JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+      WHERE p.studied=1 AND p.status='LEARNING' AND p.is_known=0 AND p.is_suspended=0
+        AND p.next_review_at > ? ${bandClause}
+        AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+          JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
+    )
+    SELECT * FROM upcoming_vocabulary WHERE identity_rank=1
+    ORDER BY next_review_at ASC LIMIT ?`,
     new Date().toISOString(),
     ...(bands?.map(String) ?? []),
     Math.max(1, Math.min(50, Math.trunc(limit))),
   );
-  return rows.map(mapWord);
+  return uniqueVocabularyWords(rows.map(mapWord));
+}
+
+export const LEARNED_REVIEW_PAGE_SIZE = 50;
+export type LearnedReviewWord = Vocabulary & { isKnown: boolean; isSuspended: boolean };
+export type LearnedReviewPage = { words: LearnedReviewWord[]; total: number; page: number; totalPages: number };
+
+/** All learned cards across HSK bands and active decks, including due cards.
+ * Known/suspended cards remain visible, but the UI must not claim they are due. */
+export async function getLearnedReviewPage(db: SQLiteDatabase, requestedPage = 1): Promise<LearnedReviewPage> {
+  const scope = `FROM vocabulary v JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+    WHERE (p.studied=1 OR p.status='KNOWN')
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))`;
+  const count = await db.getFirstAsync<{ count: number }>(
+    `SELECT COUNT(DISTINCT v.simplified || '|' || LOWER(REPLACE(v.pinyin,' ',''))) count ${scope}`,
+  );
+  const total = count?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / LEARNED_REVIEW_PAGE_SIZE));
+  const page = Math.min(totalPages, Math.max(1, Number.isFinite(requestedPage) ? Math.trunc(requestedPage) : 1));
+  const rows = await db.getAllAsync<DbWord & { is_suspended: number }>(
+    `WITH learned_vocabulary AS (
+      SELECT v.*,p.memory_level mastery_level,p.is_favorite,p.due,p.status,p.studied,
+        p.is_known,p.is_suspended,p.next_review_at,p.review_count,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY COALESCE(p.updated_at,'') DESC,p.memory_level DESC,p.review_count DESC,v.id) AS identity_rank
+      ${scope}
+    )
+    SELECT * FROM learned_vocabulary WHERE identity_rank=1
+    ORDER BY CASE WHEN status='LEARNING' AND is_known=0 AND is_suspended=0 AND next_review_at IS NOT NULL THEN 0 ELSE 1 END,
+      next_review_at ASC,id ASC LIMIT ? OFFSET ?`,
+    LEARNED_REVIEW_PAGE_SIZE, (page - 1) * LEARNED_REVIEW_PAGE_SIZE,
+  );
+  return { words: rows.map(row => ({ ...mapWord(row), isKnown: row.is_known === 1 || row.status === 'KNOWN', isSuspended: row.is_suspended === 1 })), total, page, totalPages };
 }
 
 /**
@@ -643,26 +835,23 @@ export async function getWeakVocabulary(
 ): Promise<WeakVocabulary[]> {
   const now = new Date().toISOString();
   const rows = await db.getAllAsync<DbWeakWord>(
-    `SELECT v.*, p.mastery_level, p.is_favorite, p.due, p.status, p.studied,
-      p.is_known, p.next_review_at, p.review_count, p.correct_count,
-      p.wrong_count, p.lapse_count, p.consecutive_wrong, p.hint_used_count
-    FROM vocabulary v
-    JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-    WHERE p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.is_suspended=0
-      AND (v.deck_id IS NULL OR EXISTS (
-        SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-      ))
-      AND (
-        p.consecutive_wrong>=1 OR p.lapse_count>=1 OR p.wrong_count>=2
-        OR p.hint_used_count>=3
-      )
-    ORDER BY
-      p.consecutive_wrong DESC,
-      p.lapse_count DESC,
-      CASE WHEN p.review_count>0 THEN CAST(p.wrong_count AS REAL)/p.review_count ELSE 0 END DESC,
-      p.hint_used_count DESC,
-      p.next_review_at ASC
-    LIMIT ?`,
+    `WITH weak_candidates AS (
+      SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,p.next_review_at,
+        p.review_count,p.correct_count,p.wrong_count,p.lapse_count,p.consecutive_wrong,p.hint_used_count,
+        p.memory_level,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY COALESCE(p.updated_at,'') DESC,p.memory_level DESC,p.review_count DESC,v.id) AS identity_rank
+      FROM vocabulary v JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+      WHERE p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.is_suspended=0
+        AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+          JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
+    )
+    SELECT * FROM weak_candidates WHERE identity_rank=1 AND (
+      consecutive_wrong>=1 OR lapse_count>=1 OR wrong_count>=2 OR hint_used_count>=3
+    )
+    ORDER BY consecutive_wrong DESC,lapse_count DESC,
+      CASE WHEN review_count>0 THEN CAST(wrong_count AS REAL)/review_count ELSE 0 END DESC,
+      hint_used_count DESC,next_review_at ASC LIMIT ?`,
     [limit],
   );
   const words = await attachSingleExamples(db, rows.map(mapWord));
@@ -696,15 +885,95 @@ export async function getUnlearnedVocabulary(
   limit: number,
   deckId?: string,
 ): Promise<Vocabulary[]> {
+  const rows = await getUnlearnedRows<DbWord>(db, bands, limit, deckId, '*');
+  return attachSingleExamples(db, rows.map(mapWord));
+}
+
+export type LearningCatalogWord = Pick<Vocabulary,
+  'id' | 'simplified' | 'pinyin' | 'pinyinNumeric' | 'pos' | 'hskBand' |
+  'primaryMeaningVi' | 'meaningsVi' | 'meaningsEn' | 'isCustom'>;
+
+/** Only source-picker metadata crosses the SQLite bridge; examples are loaded per page. */
+export async function getUnlearnedCatalog(db: SQLiteDatabase, deckId?: string): Promise<LearningCatalogWord[]> {
+  deckId = deckId?.trim() || undefined;
+  const rows = await getUnlearnedRows<Pick<DbWord,
+    'id' | 'simplified' | 'pinyin' | 'pinyin_numeric' | 'pos' | 'hsk_band' |
+    'primary_meaning_vi' | 'meanings_vi' | 'meanings_en' | 'is_custom'>>(
+    db, [1, 2, 3, 4, 5, 6, '7-9'], -1, deckId,
+    'id,simplified,pinyin,pinyin_numeric,pos,hsk_band,primary_meaning_vi,meanings_vi,meanings_en,is_custom,frequency_rank',
+  );
+  return rows.filter(row => deckId || !row.is_custom).map(row => ({
+    id: row.id, simplified: row.simplified, pinyin: row.pinyin, pinyinNumeric: row.pinyin_numeric,
+    pos: parseArray(row.pos), hskBand: row.hsk_band === '7-9' ? '7-9' : Number(row.hsk_band) as HskBand,
+    primaryMeaningVi: row.primary_meaning_vi, meaningsVi: parseArray(row.meanings_vi),
+    meaningsEn: parseArray(row.meanings_en), isCustom: row.is_custom === 1,
+  }));
+}
+
+/** Reuse the installed, sense-matched syllabus index; never classify by legacy HSK bands. */
+export async function getHskLearningGroups(db: SQLiteDatabase): Promise<Map<string, string[]> | null> {
+  const installed = await db.getFirstAsync('SELECT version_id FROM hsk_syllabus_imports WHERE version_id=?', HSK30_VERSION);
+  if (!installed) return null;
+  const rows = await getUnlearnedRows<{ id: string; level: string }>(
+    db, [1, 2, 3, 4, 5, 6, '7-9'], -1, undefined, 'id,frequency_rank,is_custom', true,
+  );
+  const groups = new Map<string, string[]>(HSK30_LEVELS.map(level => [level, []]));
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const key = `${row.level}:${row.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.get(row.level)?.push(row.id);
+  }
+  return groups;
+}
+
+/** Bounded page, rechecking progress so a stale catalog cannot relearn a known/studied word. */
+export async function getLearningWordPage(db: SQLiteDatabase, ids: string[], deckId?: string): Promise<Vocabulary[]> {
+  if (!ids.length) return [];
+  if (ids.length > 40) throw new Error('LEARNING_PAGE_TOO_LARGE');
+  const rows = await db.getAllAsync<DbWord>(
+    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,p.next_review_at,p.review_count
+     FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+     WHERE v.id IN (${ids.map(() => '?').join(',')})
+       AND COALESCE(p.status,'NEW')='NEW' AND COALESCE(p.studied,0)=0 AND COALESCE(p.is_suspended,0)=0
+       AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+         JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
+       AND (? IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id
+         AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id AND m.deck_id=?))`,
+    ...ids, deckId ?? null, deckId ?? null,
+  );
+  const byId = new Map(rows.map(row => [row.id, row]));
+  return attachSingleExamples(db, ids.flatMap(id => byId.has(id) ? [mapWord(byId.get(id)!)] : []));
+}
+
+export async function getLearningWordBatch(db: SQLiteDatabase, ids: string[], start = 0, deckId?: string) {
+  if (!Number.isSafeInteger(start) || start < 0) throw new Error('INVALID_LEARNING_OFFSET');
+  let nextOffset = start;
+  while (nextOffset < ids.length) {
+    const words = await getLearningWordPage(db, ids.slice(nextOffset, nextOffset + 40), deckId);
+    nextOffset = Math.min(ids.length, nextOffset + 40);
+    if (words.length) return { words, nextOffset };
+  }
+  return { words: [] as Vocabulary[], nextOffset };
+}
+
+export async function getNewWordsLearnedToday(db: SQLiteDatabase): Promise<number> {
+  const row = await db.getFirstAsync<{ new_words: number }>(
+    'SELECT new_words FROM daily_stats WHERE date=?', toLocalDateKey(new Date()),
+  );
+  return row?.new_words ?? 0;
+}
+
+async function getUnlearnedRows<T>(
+  db: SQLiteDatabase, bands: HskBand[], limit: number, deckId: string | undefined, columns: string, hsk = false,
+): Promise<T[]> {
   const clauses = [
-    "COALESCE(p.status,'NEW')='NEW'",
-    "COALESCE(p.studied,0)=0",
-    "COALESCE(p.is_suspended,0)=0",
-    "(v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))",
+    "(v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))",
   ];
   const values: (string | number)[] = [];
   if (deckId?.trim()) {
-    clauses.push("v.deck_id=?");
+    clauses.push("EXISTS (SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id AND m.deck_id=?)");
     values.push(deckId.trim());
   } else if (bands.length) {
     const placeholders = bands.map(() => "?").join(",");
@@ -713,15 +982,25 @@ export async function getUnlearnedVocabulary(
   } else {
     return [];
   }
-  const rows = await db.getAllAsync<DbWord>(
-    `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
-      p.is_known,p.next_review_at,p.review_count FROM vocabulary v
-    LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-    WHERE ${clauses.join(" AND ")}
-    ORDER BY COALESCE(v.frequency_rank,999999) LIMIT ?`,
-    [...values, limit],
+  return db.getAllAsync<T>(
+    `WITH ranked_vocabulary AS (
+      SELECT ${columns.split(',').map(column => `v.${column}`).join(',')},p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,p.is_suspended,
+        p.memory_level,p.next_review_at,p.review_count,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+            COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+            COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,v.id) AS identity_rank
+      FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+      WHERE ${clauses.join(" AND ")}
+    )
+    SELECT ${hsk ? 'r.id,i.level' : columns} FROM ranked_vocabulary r
+    ${hsk ? `JOIN hsk_syllabus_links l ON l.vocabulary_id=r.id AND l.kind='vocabulary' AND l.status='MATCHED'
+      JOIN hsk_syllabus_items i ON i.version_id=l.version_id AND i.kind=l.kind AND i.source_id=l.source_id
+      WHERE l.version_id=? AND r.is_custom=0 AND ` : 'WHERE '}
+      r.identity_rank=1 AND COALESCE(r.status,'NEW')='NEW' AND COALESCE(r.studied,0)=0 AND COALESCE(r.is_suspended,0)=0
+    ORDER BY ${hsk ? 'i.source_order,i.source_id' : 'COALESCE(frequency_rank,999999)'} LIMIT ?`,
+    [...values, ...(hsk ? [HSK30_VERSION] : []), limit],
   );
-  return attachSingleExamples(db, rows.map(mapWord));
 }
 
 /**
@@ -737,36 +1016,44 @@ export async function getDailyVocabulary(
   const bandClause = `v.hsk_band IN (${bands.map(() => "?").join(",")})`;
   const commonClause = `
     ${bandClause}
-    AND COALESCE(p.status, 'NEW') != 'SKIPPED'
-    AND (v.deck_id IS NULL OR EXISTS (
-      SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-    ))`;
-  const preferredClause = `${commonClause}
-    AND COALESCE(p.status, 'NEW') != 'KNOWN'
-    AND COALESCE(p.memory_level, 0) < 6`;
-  const find = async (clause: string) => {
+    AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+      JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))`;
+  const preferredClause = "COALESCE(status,'NEW')!='SKIPPED' AND COALESCE(status,'NEW')!='KNOWN' AND COALESCE(memory_level,0)<6";
+  const find = async (resultClause: string) => {
     const count = await db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) count FROM vocabulary v
-       LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-       WHERE ${clause}`,
+      `WITH daily_candidates AS (
+        SELECT v.simplified,v.pinyin,p.status,p.memory_level,
+          ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+            ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+              COALESCE(p.memory_level,0) DESC,COALESCE(p.updated_at,'') DESC,v.id) AS identity_rank
+        FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+        WHERE ${commonClause}
+      ) SELECT COUNT(*) count FROM daily_candidates
+        WHERE identity_rank=1 AND ${resultClause}`,
       ...bands.map(String),
     );
     const candidateCount = count?.count ?? 0;
     if (!candidateCount) return null;
     const row = await db.getFirstAsync<DbWord>(
-      `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
-        p.is_known,p.next_review_at,p.review_count FROM vocabulary v
-       LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-       WHERE ${clause}
-       ORDER BY CASE v.hsk_band WHEN '7-9' THEN 7 ELSE CAST(v.hsk_band AS INTEGER) END,
-         COALESCE(v.frequency_rank,999999),v.pinyin_numeric,v.id LIMIT 1 OFFSET ?`,
+      `WITH daily_candidates AS (
+        SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,p.is_known,p.next_review_at,
+          p.review_count,p.memory_level,
+          ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+            ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+              COALESCE(p.memory_level,0) DESC,COALESCE(p.updated_at,'') DESC,v.id) AS identity_rank
+        FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+        WHERE ${commonClause}
+      )
+      SELECT * FROM daily_candidates WHERE identity_rank=1 AND ${resultClause}
+      ORDER BY CASE hsk_band WHEN '7-9' THEN 7 ELSE CAST(hsk_band AS INTEGER) END,
+        COALESCE(frequency_rank,999999),pinyin_numeric,id LIMIT 1 OFFSET ?`,
       ...bands.map(String),
       dailyWordOffset(localDate, bands, candidateCount),
     );
     if (!row) return null;
     return (await attachSingleExamples(db, [mapWord(row)]))[0] ?? null;
   };
-  return (await find(preferredClause)) ?? find(commonClause);
+  return (await find(preferredClause)) ?? find("COALESCE(status,'NEW')!='SKIPPED'");
 }
 
 export type DailyActivity = {
@@ -800,6 +1087,14 @@ export async function getDashboardStats(
   const bandClause = bands?.length
     ? `AND v.hsk_band IN (${bands.map(() => "?").join(",")})`
     : "";
+  const progressScope = `FROM (
+    SELECT p.*,ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+      ORDER BY CASE WHEN p.studied=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+        COALESCE(p.updated_at,'') DESC,p.memory_level DESC,p.review_count DESC,v.id) AS identity_rank
+    FROM user_vocabulary_progress p JOIN vocabulary v ON p.vocabulary_id=v.id
+    WHERE (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+      JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id)) ${bandClause}
+  ) p WHERE p.identity_rank=1`;
   const progress = await db.getFirstAsync<{
     learned: number;
     known: number;
@@ -813,11 +1108,7 @@ export async function getDashboardStats(
     SUM(CASE WHEN p.status='SKIPPED' THEN 1 ELSE 0 END) skipped,
     SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.memory_level>=6 THEN 1 ELSE 0 END) mastered,
     SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.is_known=0 AND p.next_review_at<=? AND p.is_suspended=0 THEN 1 ELSE 0 END) due
-    FROM user_vocabulary_progress p
-    JOIN vocabulary v ON p.vocabulary_id=v.id
-    WHERE (v.deck_id IS NULL OR EXISTS (
-      SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-    )) ${bandClause}`,
+    ${progressScope}`,
     now.toISOString(),
     ...(bands?.map(String) ?? []),
   );
@@ -831,11 +1122,8 @@ export async function getDashboardStats(
     mastery_level: number;
     count: number;
   }>(
-    `SELECT p.memory_level mastery_level,COUNT(*) count
-    FROM user_vocabulary_progress p JOIN vocabulary v ON p.vocabulary_id=v.id
-    WHERE p.status='LEARNING' AND p.studied=1 AND p.memory_level BETWEEN 1 AND 6 AND (v.deck_id IS NULL OR EXISTS (
-      SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-    )) ${bandClause} GROUP BY p.memory_level`,
+    `SELECT p.memory_level mastery_level,COUNT(*) count ${progressScope}
+    AND p.status='LEARNING' AND p.studied=1 AND p.memory_level BETWEEN 1 AND 6 GROUP BY p.memory_level`,
     ...(bands?.map(String) ?? []),
   );
   const mastery = Array.from({ length: 7 }, () => 0);
@@ -911,13 +1199,20 @@ export async function getHskProgress(db: SQLiteDatabase) {
     total: number;
     learned: number;
     mastered: number;
-  }>(`SELECT v.hsk_band band,
-    COUNT(*) total,SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 THEN 1 ELSE 0 END) learned,
-    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.memory_level>=6 THEN 1 ELSE 0 END) mastered FROM vocabulary v
-    LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
-    WHERE (v.deck_id IS NULL OR EXISTS (
-      SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
-    )) GROUP BY v.hsk_band`);
+  }>(`WITH unique_vocabulary AS (
+    SELECT v.hsk_band,p.status,p.studied,p.memory_level,
+      ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+        ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+          COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+          COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,v.id) AS identity_rank
+    FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
+    WHERE v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+      JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id)
+  )
+  SELECT hsk_band band,COUNT(*) total,
+    SUM(CASE WHEN status='LEARNING' AND studied=1 THEN 1 ELSE 0 END) learned,
+    SUM(CASE WHEN status='LEARNING' AND studied=1 AND memory_level>=6 THEN 1 ELSE 0 END) mastered
+  FROM unique_vocabulary WHERE identity_rank=1 GROUP BY hsk_band`);
 }
 
 export async function getSettings(db: SQLiteDatabase): Promise<UserSettings> {
@@ -926,9 +1221,11 @@ export async function getSettings(db: SQLiteDatabase): Promise<UserSettings> {
   );
   if (!row) return defaultSettings;
   try {
+    const saved = JSON.parse(row.value) as Partial<UserSettings>;
     return {
       ...defaultSettings,
-      ...(JSON.parse(row.value) as Partial<UserSettings>),
+      ...saved,
+      reviewSessionSize: normalizeReviewSessionSize(saved.reviewSessionSize),
     };
   } catch {
     return defaultSettings;
@@ -1004,9 +1301,12 @@ export async function listPersonalDecks(
     due_count: number;
   }>(
     `SELECT d.*,
-    COUNT(v.id) word_count,
-    SUM(CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.next_review_at<=? AND p.is_suspended=0 THEN 1 ELSE 0 END) due_count
-    FROM personal_deck d LEFT JOIN vocabulary v ON v.deck_id=d.id
+    COUNT(DISTINCT v.simplified || '|' || LOWER(REPLACE(v.pinyin,' ',''))) word_count,
+    COUNT(DISTINCT CASE WHEN p.status='LEARNING' AND p.studied=1 AND p.is_known=0
+      AND p.next_review_at<=? AND p.is_suspended=0
+      THEN v.simplified || '|' || LOWER(REPLACE(v.pinyin,' ','')) END) due_count
+    FROM personal_deck d LEFT JOIN personal_deck_vocabulary m ON m.deck_id=d.id
+    LEFT JOIN vocabulary v ON v.id=m.vocabulary_id
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     ${options.includeDeleted ? "" : "WHERE d.deleted_at IS NULL"}
     GROUP BY d.id ORDER BY d.updated_at DESC`,
@@ -1094,47 +1394,73 @@ export async function renamePersonalDeck(
   if (!result.changes) throw new Error("DECK_NOT_FOUND");
 }
 
-/**
- * Removes only the copy owned by a personal deck.  Global dictionary rows
- * always have a null deck_id and therefore cannot be deleted through this
- * function.
- */
+/** Removes a deck membership without deleting the shared word or its SRS data. */
 export async function removeVocabularyFromDeck(
   db: SQLiteDatabase,
   deckId: string,
   vocabularyId: string,
 ): Promise<boolean> {
-  const result = await db.runAsync(
-    "DELETE FROM vocabulary WHERE id=? AND deck_id=?",
-    vocabularyId.trim(),
-    deckId.trim(),
+  const cleanDeckId = deckId.trim();
+  const cleanVocabularyId = vocabularyId.trim();
+  const target = await db.getFirstAsync<VocabularyIdentityRow>(
+    "SELECT id,simplified,traditional,pinyin,pinyin_numeric FROM vocabulary WHERE id=?",
+    cleanVocabularyId,
   );
-  if (result.changes) {
-    await db.runAsync(
-      "UPDATE personal_deck SET updated_at=? WHERE id=?",
-      new Date().toISOString(),
-      deckId.trim(),
-    );
-  }
-  return result.changes > 0;
+  if (!target) return false;
+  const members = await db.getAllAsync<VocabularyIdentityRow>(
+    `SELECT v.id,v.simplified,v.traditional,v.pinyin,v.pinyin_numeric
+     FROM personal_deck_vocabulary m JOIN vocabulary v ON v.id=m.vocabulary_id
+     WHERE m.deck_id=?`,
+    cleanDeckId,
+  );
+  const matchingIds = members.filter((member) =>
+    sameHanziForm(member, target) &&
+    normalizePinyinIdentity(member.pinyin, member.pinyin_numeric) === normalizePinyinIdentity(target.pinyin, target.pinyin_numeric),
+  ).map((member) => member.id);
+  if (!matchingIds.length) return false;
+  let removed = false;
+  await db.withTransactionAsync(async () => {
+    for (const id of matchingIds) {
+      const result = await db.runAsync(
+        "DELETE FROM personal_deck_vocabulary WHERE vocabulary_id=? AND deck_id=?",
+        id,
+        cleanDeckId,
+      );
+      removed ||= result.changes > 0;
+    }
+    if (removed) {
+      await db.runAsync(
+        "UPDATE personal_deck SET updated_at=? WHERE id=?",
+        new Date().toISOString(),
+        cleanDeckId,
+      );
+    }
+  });
+  return removed;
 }
 
 /**
- * Imports a friend's self-contained share payload as a new personal deck.
- * Progress is intentionally reset so the recipient gets a clean learning
- * session instead of inheriting the sender's SRS history.
+ * Imports a friend's payload as a new personal deck. Existing words are linked
+ * to the single local vocabulary entry. V2 snapshots restore SRS state only
+ * when the learner explicitly confirms it; v1 retains local progress.
  */
 export async function importSharedDeck(
   db: SQLiteDatabase,
   payload: SharedDeckPayload,
+  restoreProgress = false,
 ): Promise<{ deckId: string; saved: number; skipped: number }> {
+  const clean = decodeSharedDeckPayload(payload);
+  if (!clean) throw new Error("Mã bộ từ hoặc tiến độ không hợp lệ. Dữ liệu chưa bị thay đổi.");
+  payload = clean;
   const name = `${payload.name.trim() || "Bộ từ của bạn"} (bạn bè)`.slice(0, 80);
   const deckId = await createPersonalDeck(db, name);
   try {
     const words = payload.words.map((word, index) =>
       sharedWordToVocabulary(word, `shared-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`, deckId),
     );
-    const outcome = await copyVocabularyBatchToDeck(db, deckId, words);
+    const progress = restoreProgress && payload.version === 2
+      ? new Map(payload.words.map((word) => [vocabularyIdentityKey(word), word.progress ?? null])) : undefined;
+    const outcome = await copyVocabularyBatchToDeck(db, deckId, words, progress);
     return { deckId, ...outcome };
   } catch (error) {
     // Keep the operation recoverable while avoiding a half-filled active deck.
@@ -1149,13 +1475,16 @@ export async function getDeckVocabulary(
 ): Promise<Vocabulary[]> {
   const rows = await db.getAllAsync<DbWord>(
     `SELECT v.*,p.mastery_level,p.is_favorite,p.due,p.status,p.studied,
-      p.is_known,p.next_review_at,p.review_count FROM vocabulary v
-    JOIN personal_deck d ON d.id=v.deck_id AND d.deleted_at IS NULL
-    LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id WHERE v.deck_id=?
-    ORDER BY v.updated_at DESC,v.pinyin_numeric`,
+      p.is_known,p.next_review_at,p.review_count FROM personal_deck_vocabulary m
+    JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL
+    JOIN vocabulary v ON v.id=m.vocabulary_id
+    LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id WHERE m.deck_id=?
+    ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+      COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+      COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,v.pinyin_numeric`,
     deckId,
   );
-  return attachSingleExamples(db, rows.map(mapWord));
+  return attachSingleExamples(db, uniqueVocabularyWords(rows.map(mapWord)));
 }
 
 export async function findHanziCandidates(
@@ -1171,7 +1500,8 @@ export async function findHanziCandidates(
       p.is_known,p.next_review_at,p.review_count FROM vocabulary v
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     WHERE (v.simplified=? OR v.traditional=? OR v.simplified LIKE ? OR v.traditional LIKE ?)
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
     ORDER BY CASE WHEN v.simplified=? OR v.traditional=? THEN 0 ELSE 1 END,COALESCE(v.frequency_rank,999999) LIMIT ?`,
     value,
     value,
@@ -1181,7 +1511,7 @@ export async function findHanziCandidates(
     value,
     limit,
   );
-  const words = rows.map(mapWord);
+  const words = uniqueVocabularyWords(rows.map(mapWord));
   if (words.length) return includeExamples ? attachSingleExamples(db, words) : words;
 
   // The bundled dictionary is canonical and may contain an entry that an old
@@ -1218,7 +1548,8 @@ export async function getRelatedVocabulary(
     JOIN vocabulary_character_index c ON c.vocabulary_id=v.id
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     WHERE v.id<>? AND c.character IN (${placeholders})
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
     GROUP BY v.id
     ORDER BY CASE v.hsk_band WHEN ? THEN 0 ELSE 1 END,
       COALESCE(v.frequency_rank,999999), LENGTH(v.simplified)
@@ -1227,7 +1558,7 @@ export async function getRelatedVocabulary(
     ...characters,
     String(source.hskBand),
   );
-  return rankRelatedWords(source, rows.map(mapWord), limit);
+  return rankRelatedWords(source, uniqueVocabularyWords(rows.map(mapWord)), limit);
 }
 
 async function replaceVocabularyCharacterIndex(
@@ -1264,14 +1595,15 @@ export async function findVocabularyByExactHanzi(
       p.is_known,p.next_review_at,p.review_count FROM vocabulary v
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     WHERE (v.simplified IN (${placeholders}) OR v.traditional IN (${placeholders}))
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
     ORDER BY COALESCE(v.frequency_rank,999999), LENGTH(v.simplified)`,
       ...batch,
       ...batch,
     );
     for (const row of rows) matches.set(row.id, row);
   }
-  return Array.from(matches.values()).map(mapWord);
+  return uniqueVocabularyWords(Array.from(matches.values()).map(mapWord));
 }
 
 function firstRecognizedHanzi(value: string): string {
@@ -1329,8 +1661,9 @@ export async function findHanziWordCandidates(
   const customRows = await db.getAllAsync<{
     simplified: string;
     traditional: string;
-  }>(`SELECT simplified,traditional FROM vocabulary WHERE is_custom=1
-      AND (deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=vocabulary.deck_id AND d.deleted_at IS NULL))`);
+  }>(`SELECT v.simplified,v.traditional FROM vocabulary v WHERE v.is_custom=1
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))`);
   for (const word of customRows) {
     addWord({ simplified: word.simplified, traditional: word.traditional, hskBand: 1, frequencyRank: null });
   }
@@ -1362,7 +1695,8 @@ export async function findPinyinCandidates(
       p.is_known,p.next_review_at,p.review_count FROM vocabulary v
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     WHERE ${compactPinyin} LIKE ?
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
     ORDER BY CASE WHEN ${compactPinyin} = ? THEN 0 ELSE 1 END,
       CASE WHEN CAST(v.hsk_band AS TEXT) IN ('1','2') THEN 0 ELSE 1 END,
       COALESCE(v.frequency_rank,999999), LENGTH(v.simplified), v.pinyin_numeric
@@ -1371,7 +1705,7 @@ export async function findPinyinCandidates(
     normalized,
     Math.max(1, Math.min(100, Math.trunc(limit))),
   );
-  const words = rows.map(mapWord);
+  const words = uniqueVocabularyWords(rows.map(mapWord));
   return includeExamples ? attachSingleExamples(db, words) : words;
 }
 
@@ -1410,7 +1744,8 @@ export async function findMeaningCandidates(
       p.is_known,p.next_review_at,p.review_count FROM vocabulary v
     LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
     WHERE (${matchClause}${tokenClause ? ` OR (${tokenClause})` : ""})
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
+      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+        JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
     ORDER BY CASE
         WHEN v.primary_meaning_vi = ? THEN 0
         WHEN v.primary_meaning_vi LIKE ? THEN 1
@@ -1430,7 +1765,7 @@ export async function findMeaningCandidates(
     ...alternatives.map((item) => `% ${item} %`),
     Math.max(1, Math.min(256, Math.trunc(limit))),
   );
-  const words = rows.map(mapWord);
+  const words = uniqueVocabularyWords(rows.map(mapWord));
   return includeExamples ? attachSingleExamples(db, words) : words;
 }
 
@@ -1645,7 +1980,8 @@ async function findBulkFtsCandidateIds(
        WHERE vocabulary_search_fts MATCH ?
          AND (v.is_custom=1 OR (v.is_custom=0 AND v.hsk_band IN ('5','6','7-9')))
          AND (v.is_custom=0 OR v.deck_id IS NULL OR EXISTS (
-           SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL
+           SELECT 1 FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id
+           WHERE m.vocabulary_id=v.id AND d.deleted_at IS NULL
          ))
        ORDER BY bm25(vocabulary_search_fts), COALESCE(v.frequency_rank,999999)
        LIMIT ?`,
@@ -1702,7 +2038,9 @@ async function getBulkLookupIndex(db: SQLiteDatabase): Promise<BulkLookupIndex> 
     // hold the whole analysis screen hostage.
     const customRows = await withFallbackTimeout(
       () => db.getAllAsync<BulkLookupIndexDbRow>(`SELECT id,simplified,traditional,pinyin_numeric,
-        search_text,hsk_band,frequency_rank,deck_id FROM vocabulary WHERE is_custom=1`),
+        search_text,hsk_band,frequency_rank,deck_id FROM vocabulary v WHERE is_custom=1
+        AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+          JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))`),
       [],
       BULK_CUSTOM_LOOKUP_TIMEOUT_MS,
     );
@@ -1736,7 +2074,8 @@ async function fetchBulkCandidatesById(
       () => db.getAllAsync<DbWord>(
         `SELECT v.* FROM vocabulary v
          WHERE v.id IN (${placeholders})
-           AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))`,
+           AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+             JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))`,
         ...chunk,
       ),
       [],
@@ -1900,7 +2239,26 @@ export async function saveCustomVocabulary(
     hskBand: input.hskBand,
   });
   const example = providedExample ?? generatedExample;
+  let savedId = id;
   await db.withTransactionAsync(async () => {
+    const existing = await findVocabularyIdentityMatch(db, {
+      simplified: input.simplified.trim(),
+      traditional: input.traditional?.trim() || input.simplified.trim(),
+      pinyin: input.pinyin.trim(),
+      pinyinNumeric,
+    }, input.id);
+    if (existing) {
+      savedId = existing.id;
+      await mergeDuplicateWordMetadata(db, existing.id, input, now);
+      if (input.deckId?.trim()) {
+        await db.runAsync(
+          "INSERT OR IGNORE INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at) VALUES(?,?,?)",
+          input.deckId.trim(), existing.id, now,
+        );
+        await db.runAsync("UPDATE personal_deck SET updated_at=? WHERE id=?", now, input.deckId.trim());
+      }
+      return;
+    }
     await db.runAsync(
       `INSERT INTO vocabulary(id,simplified,traditional,pinyin,pinyin_numeric,primary_meaning_vi,
       meanings_vi,meanings_en,pos,hsk_band,frequency_rank,classifiers,radical,stroke_count,visual_type,image_uri,
@@ -1928,10 +2286,16 @@ export async function saveCustomVocabulary(
       imageLicense,
       imageAttribution,
       searchText,
-      input.deckId,
+      input.deckId?.trim() || null,
       now,
       now,
     );
+    if (input.deckId?.trim()) {
+      await db.runAsync(
+        "INSERT OR IGNORE INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at) VALUES(?,?,?)",
+        input.deckId.trim(), id, now,
+      );
+    }
     await syncImageAssetMetadata(db, id, imageUri, now);
     await db.runAsync("DELETE FROM example_sentence WHERE vocabulary_id=?", id);
     if (example) await db.runAsync(
@@ -1956,37 +2320,47 @@ export async function saveCustomVocabulary(
     );
   });
   invalidateBulkLookupIndex(db);
-  return id;
+  return savedId;
 }
 
-/**
- * Copies resolved dictionary entries into one personal deck in a single
- * transaction. Existing copies with the same Hanzi + pinyin are skipped so a
- * repeated bulk import is safe and fast.
- */
+/** Adds existing words to a deck by reference; vocabulary itself stays unique. */
 export async function copyVocabularyBatchToDeck(
   db: SQLiteDatabase,
   deckId: string,
   words: Vocabulary[],
+  progress?: ReadonlyMap<string, SharedWordProgress | null>,
 ): Promise<{ saved: number; skipped: number }> {
   const cleanDeckId = deckId.trim();
   if (!cleanDeckId || !words.length) return { saved: 0, skipped: 0 };
-  const existing = await db.getAllAsync<{ simplified: string; pinyin_numeric: string }>(
-    "SELECT simplified,pinyin_numeric FROM vocabulary WHERE deck_id=?",
-    cleanDeckId,
-  );
-  const keys = new Set(
-    existing.map((item) => `${item.simplified}|${normalizeSearch(item.pinyin_numeric)}`),
-  );
-  const unique = words.filter((word) => {
-    const key = `${word.simplified}|${normalizeSearch(word.pinyinNumeric || word.pinyin)}`;
-    if (keys.has(key)) return false;
-    keys.add(key);
-    return true;
-  });
+  const unique = new Map<string, Vocabulary>();
+  for (const word of words) {
+    const key = vocabularyIdentityKey(word);
+    if (!unique.has(key)) unique.set(key, word);
+  }
   const now = new Date().toISOString();
+  let saved = 0;
   await db.withTransactionAsync(async () => {
-    for (const [index, word] of unique.entries()) {
+    const restored = new Set<string>();
+    const restore = async (word: Vocabulary, id: string) => {
+      const key = vocabularyIdentityKey(word);
+      if (!progress?.has(key)) return;
+      if (restored.has(id)) throw new Error("Mã chứa các từ trùng nhau với tiến độ khác nhau. Chưa nhập bộ từ.");
+      restored.add(id);
+      await restoreSharedWordProgress(db, id, progress.get(key) ?? null);
+    };
+    for (const [index, word] of Array.from(unique.values()).entries()) {
+      const existing = await findVocabularyIdentityMatch(db, word);
+      if (existing) {
+        const link = await db.runAsync(
+          "INSERT OR IGNORE INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at) VALUES(?,?,?)",
+          cleanDeckId,
+          existing.id,
+          now,
+        );
+        if (link.changes) saved += 1;
+        await restore(word, existing.id);
+        continue;
+      }
       const id = `custom-bulk-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
       const example = withContextualExamples({ ...word, id }).examples[0];
       const meanings = word.meaningsVi.length ? word.meaningsVi : [word.primaryMeaningVi];
@@ -2044,6 +2418,13 @@ export async function copyVocabularyBatchToDeck(
         now,
         now,
       );
+      await db.runAsync(
+        "INSERT OR IGNORE INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at) VALUES(?,?,?)",
+        cleanDeckId,
+        id,
+        now,
+      );
+      saved += 1;
       if (example) await db.runAsync(
         `INSERT INTO example_sentence(id,vocabulary_id,chinese,pinyin,vietnamese,english,difficulty)
         VALUES(?,?,?,?,?,?,?)`,
@@ -2056,8 +2437,9 @@ export async function copyVocabularyBatchToDeck(
         example.difficulty,
       );
       await replaceVocabularyCharacterIndex(db, id, word.simplified, word.traditional || word.simplified);
+      await restore(word, id);
     }
-    if (unique.length) {
+    if (saved) {
       await db.runAsync(
         "UPDATE personal_deck SET updated_at=? WHERE id=?",
         now,
@@ -2066,7 +2448,7 @@ export async function copyVocabularyBatchToDeck(
     }
   });
   invalidateBulkLookupIndex(db);
-  return { saved: unique.length, skipped: words.length - unique.length };
+  return { saved, skipped: words.length - saved };
 }
 
 export async function updateVocabularyContent(

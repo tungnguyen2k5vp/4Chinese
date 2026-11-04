@@ -3,6 +3,8 @@ import type { SQLiteDatabase } from 'expo-sqlite';
 import { migrationV35Sql } from './confusable-words';
 import { migrationV33Sql } from './exam-schema';
 import { migrationV32Sql } from './hsk-standard-schema';
+import { migrationV45Sql } from './hsk30-schema';
+import { nativePracticeSchemaSql } from './native-practice';
 import { roleplaySchemaSQL } from './roleplay-history';
 import {
   DATABASE_VERSION,
@@ -33,11 +35,13 @@ import {
   migrationV27Sql,
   migrationV28Sql,
   migrationV29Sql,
+  migrationV46Sql,
 } from './schema';
 import { migrationV37Sql } from './speaking-attempt-schema';
 import { migrationV36Sql } from './v5-content-schema';
 import { migrationV41Sql } from './v5-context-schema';
 import { migrationV42Sql } from './v5-sense-schema';
+import { migrationV44Sql } from './v6-learning-schema';
 import { migrationV34Sql } from './written-practice-schema';
 
 // CREATE TABLE IF NOT EXISTS does not upgrade an existing table. In particular,
@@ -160,6 +164,10 @@ export async function migrateDatabaseSchema(db: SQLiteDatabase): Promise<number>
     await db.execAsync(roleplaySchemaSQL);
     await db.execAsync(migrationV41Sql);
     await ensureColumns(db, migrationV42Sql);
+    await db.execAsync(migrationV44Sql);
+    await db.execAsync(migrationV45Sql);
+    if (currentVersion < 46) await db.execAsync(migrationV46Sql);
+    if (currentVersion < 47) await db.execAsync(nativePracticeSchemaSql);
     await db.execAsync(latestIndexSql);
     await assertDatabaseIntegrity(db);
   });

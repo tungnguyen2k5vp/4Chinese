@@ -11,11 +11,14 @@ const { renderToStaticMarkup } = createRequire(import.meta.url)('react-dom/serve
 };
 
 // Native views are shimmed; the real components render against the actual bundled paths.
+vi.mock('expo-router', () => ({ useIsFocused: () => true }));
 vi.mock('react-native', () => ({
+  useWindowDimensions: () => ({ width: 375, height: 812, scale: 1, fontScale: 1 }),
   StyleSheet: { create: (value: unknown) => value },
   PanResponder: { create: () => ({ panHandlers: {} }) },
   View: ({ children, accessibilityLabel }: { children: ReactNode; accessibilityLabel?: string }) =>
     createElement('div', { 'aria-label': accessibilityLabel }, children),
+  ScrollView: ({ children }: { children: ReactNode }) => createElement('div', null, children),
   Text: ({ children }: { children: ReactNode }) => createElement('span', null, children),
   Pressable: ({ children, disabled, accessibilityLabel }: { children: ReactNode; disabled?: boolean; accessibilityLabel?: string }) =>
     createElement('button', { disabled, 'aria-label': accessibilityLabel }, children),
@@ -64,6 +67,9 @@ describe('missing exact-character stroke UX (headless native-view shims)', () =>
     expect(html).toContain('Mẫu thứ tự nét của chữ 年');
     expect(html).toContain('<path');
     expect(html).toContain('Phát lại thứ tự nét');
+    expect(html).toContain('Tốc độ nét viết 0.5 lần');
+    expect(html).toContain('Tốc độ nét viết 1.5 lần');
+    expect(html).toContain('Hiện nét mờ gợi ý');
     expect(html).not.toContain('Hình chữ 年 từ phông chữ');
   });
 });

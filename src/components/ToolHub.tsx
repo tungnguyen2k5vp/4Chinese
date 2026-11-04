@@ -2,8 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, type Href } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 
-import { Screen } from "@/components/Screen";
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { MotionPressable } from "@/components/ui/MotionPressable";
+import { StudyTransition } from "@/components/ui/StudyTransition";
+import { LearningGuide } from "@/components/visual/LearningGuide";
 import { LearningLandscape, type LandscapeMood } from "@/components/visual/LearningLandscape";
 import type { SceneName } from "@/components/visual/scene-registry";
 import { radius, spacing } from "@/constants/design";
@@ -21,11 +23,13 @@ function toolIcon(id: string): keyof typeof Ionicons.glyphMap {
 }
 
 function toolTone(id: string, theme: ReturnType<typeof useTheme>) {
-  if (["reader", "stories", "listening-library"].includes(id)) return { color: theme.skillColors.reading, soft: theme.mode === "dark" ? "#17382F" : "#E8F3EC" };
-  if (["speaking", "conversation", "tones", "shadowing", "pronunciation-pairs", "recording-library"].includes(id)) return { color: theme.skillColors.speaking, soft: theme.mode === "dark" ? "#3A2E39" : "#F5EAF0" };
-  if (["exam", "written", "timed-speaking"].includes(id)) return { color: theme.skillColors.exam, soft: theme.mode === "dark" ? "#27324B" : "#E9EDF6" };
-  if (["grammar", "grammar-focus", "grammar-reference"].includes(id)) return { color: theme.skillColors.grammar, soft: theme.mode === "dark" ? "#302A4A" : "#F0EDFA" };
-  if (["review", "weak", "mistakes", "upcoming"].includes(id)) return { color: theme.skillColors.review, soft: theme.mode === "dark" ? "#3C341E" : "#F8F0DB" };
+  if (["reader", "stories"].includes(id)) return { color: theme.skillColors.reading, soft: theme.skillSurfaces.reading };
+  if (["listening", "listening-library"].includes(id)) return { color: theme.skillColors.listening, soft: theme.skillSurfaces.listening };
+  if (["speaking", "conversation", "tones", "shadowing", "pronunciation-pairs", "recording-library"].includes(id)) return { color: theme.skillColors.speaking, soft: theme.skillSurfaces.speaking };
+  if (["exam", "written", "timed-speaking"].includes(id)) return { color: theme.skillColors.exam, soft: theme.skillSurfaces.exam };
+  if (["grammar", "grammar-focus", "grammar-reference"].includes(id)) return { color: theme.skillColors.grammar, soft: theme.skillSurfaces.grammar };
+  if (["review", "weak", "mistakes", "upcoming"].includes(id)) return { color: theme.skillColors.review, soft: theme.skillSurfaces.review };
+  if (id === 'hanzi') return { color: theme.skillColors.hanzi, soft: theme.skillSurfaces.hanzi };
   return { color: theme.primaryText, soft: theme.primarySoft };
 }
 
@@ -55,33 +59,36 @@ export function ToolHub({
     groupTitle: { flex: 1, color: theme.textPrimary, fontSize: 15, fontWeight: "900" },
     groupCount: { color: theme.textMuted, fontSize: 11, fontWeight: "800" },
     grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-    tile: { width: "47%", flexGrow: 1, minHeight: 152, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, justifyContent: "space-between", gap: spacing.sm },
+    tile: { flexBasis: "46%", flexGrow: 1, minHeight: 96, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, gap: spacing.sm },
     tileIcon: { width: 42, height: 42, borderRadius: 15, alignItems: "center", justifyContent: "center" },
     tileBottom: { gap: 5 },
-    tileTitle: { color: theme.textPrimary, fontSize: 14, lineHeight: 19, fontWeight: "900" },
-    tileDescription: { color: theme.textMuted, fontSize: 11, lineHeight: 16 },
+    tileTitle: { color: theme.textPrimary, fontSize: 16, lineHeight: 23, fontWeight: "800" },
+    tileDescription: { color: theme.textMuted, fontSize: 13, lineHeight: 19 },
     tileArrow: { position: "absolute", right: spacing.md, top: spacing.md },
   });
   return (
     <Screen title={title} subtitle={subtitle} hideHeader>
       <View style={styles.hero}>
-        <View style={styles.heroArt}><LearningLandscape mood={mood} scene={scene ?? (title === "Thư viện" ? "read" : "learn")} height={116} /><Text style={styles.heroLabel}>{title === "Thư viện" ? "GÓC ĐỌC VÀ KHÁM PHÁ" : "LUYỆN TẬP MỖI NGÀY"}</Text></View>
-        <View style={styles.heroBody}><Text style={styles.heroKicker}>{title === "Thư viện" ? "KHÔNG GIAN KHÁM PHÁ" : "PHÒNG LUYỆN TẬP"}</Text><Text style={styles.heroTitle}>{title === "Thư viện" ? "Đọc sâu, nghe kỹ, lưu điều hay" : "Chọn đúng kỹ năng cho hôm nay"}</Text><Text style={styles.heroCopy}>{title === "Thư viện" ? "Từ truyện ngắn đến nội dung cá nhân, mọi thứ bạn đọc đều ở trong tầm tay." : "Mỗi công cụ có mục tiêu riêng. Tiến độ và lịch ôn hiện tại được giữ nguyên."}</Text></View>
+        <View style={styles.heroArt}><LearningLandscape mood={mood} scene={scene ?? (title === "Thư viện" ? "read" : "learn")} height={64} /><Text style={styles.heroLabel}>{title === "Thư viện" ? "GÓC ĐỌC VÀ KHÁM PHÁ" : "LUYỆN TẬP MỖI NGÀY"}</Text></View>
+        <View style={[styles.heroBody, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 12 }]}>
+          <View style={{ flex: 1, minWidth: 140, gap: 4 }}><Text style={styles.heroKicker}>{title === "Thư viện" ? "KHÔNG GIAN KHÁM PHÁ" : "PHÒNG LUYỆN TẬP"}</Text><Text style={styles.heroTitle}>{title === "Thư viện" ? "Đọc sâu, nghe kỹ, lưu điều hay" : "Chọn đúng kỹ năng cho hôm nay"}</Text><Text style={styles.heroCopy}>{title === "Thư viện" ? "Từ truyện ngắn đến nội dung cá nhân, mọi thứ bạn đọc đều ở trong tầm tay." : "Mỗi công cụ là một cách khám phá. Cùng nghe, nói, đọc và viết nhé!"}</Text></View>
+          <LearningGuide mood={title === 'Thư viện' ? 'reading' : 'curious'} size={104} active={false} />
+        </View>
       </View>
       {groups.map((group, groupIndex) => (
-        <View key={group.title} style={styles.group}>
+        <StudyTransition key={group.title} turnKey={group.title} effect="reveal" animateOnMount={groupIndex < 3} delayMs={groupIndex * 60} style={styles.group}>
           <View style={styles.groupHead}><Text accessibilityRole="header" style={styles.groupTitle}>{group.title}</Text><Text style={styles.groupCount}>{String(groupIndex + 1).padStart(2, "0")} / {String(groups.length).padStart(2, "0")}</Text></View>
           <View style={styles.grid}>
             {group.tools.map((tool) => {
               const tone = toolTone(tool.id, theme);
-              return <MotionPressable key={tool.id} haptic accessibilityLabel={`${tool.title}. ${tool.description}`} onPress={() => router.push(tool.href as unknown as Href)} style={styles.tile}>
-                <View style={[styles.tileIcon, { backgroundColor: tone.soft }]}><Ionicons name={toolIcon(tool.id)} size={21} color={tone.color} /></View>
-                <View style={styles.tileBottom}><Text style={styles.tileTitle} numberOfLines={2}>{tool.title}</Text><Text style={styles.tileDescription} numberOfLines={3}>{tool.description}</Text></View>
+              return <MotionPressable key={tool.id} haptic pressedScale={0.96} accessibilityLabel={`${tool.title}. ${tool.description}`} onPress={() => router.push(tool.href as unknown as Href)} style={[styles.tile, { backgroundColor: tone.soft }]}>
+                <View style={[styles.tileIcon, { backgroundColor: theme.surface }]}><Ionicons name={toolIcon(tool.id)} size={21} color={tone.color} /></View>
+                <View style={styles.tileBottom}><Text style={styles.tileTitle}>{tool.title}</Text><Text style={styles.tileDescription}>{tool.description}</Text></View>
                 <Ionicons name="arrow-forward" size={15} color={tone.color} style={styles.tileArrow} />
               </MotionPressable>;
             })}
           </View>
-        </View>
+        </StudyTransition>
       ))}
     </Screen>
   );

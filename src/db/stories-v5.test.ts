@@ -15,6 +15,7 @@ function publishedFixture(index = 0): StoryDraft {
   const evidence = { reviewer: 'TEST FIXTURE — not an actual reviewer', reviewedAt: '2026-10-01T00:00:00.000Z',
     reviewNotes: 'Synthetic test evidence only', sourceRef: 'test-fixture', licenseEvidence: 'Synthetic test rights',
     verificationEvidence: 'Synthetic verification, no academic approval' };
+  review = transitionContentReview(review, { actor: 'HUMAN', next: 'PENDING_REVIEW', expectedRevision: review.revision });
   for (const next of ['REVIEWED', 'VERIFIED', 'PUBLISHED'] as const) {
     review = transitionContentReview(review, { actor: 'HUMAN', next, expectedRevision: review.revision, evidence });
   }

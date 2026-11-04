@@ -4,7 +4,7 @@ import { clusterObservedMistakes } from './error-intelligence';
 
 import type { Mistake } from '@/db/mistakes';
 
-const mistake=(id:string,wrong_count=1):Mistake=>({id,vocabulary_id:id,grammar_id:null,skill_type:'MEANING',exercise_type:'choice',wrong_count,correct_streak:0,last_wrong_at:null,resolved:0,title:id,pinyin:null});
+const mistake=(id:string,wrong_count=1):Mistake=>({id,vocabulary_id:id,grammar_id:null,skill_type:'MEANING',exercise_type:'choice',wrong_count,correct_streak:0,last_wrong_at:null,resolved:0,title:id,pinyin:null,attempts_30d:0,errors_30d:0});
 describe('observed error clusters',()=>{
   it('deduplicates, excludes resolved/invalid items, distinguishes repeated errors from many single errors',()=>{
     const a=mistake('a');const result=clusterObservedMistakes([a,a,mistake('b'),mistake('c'),{...mistake('old'),resolved:1},mistake('bad',NaN)]);

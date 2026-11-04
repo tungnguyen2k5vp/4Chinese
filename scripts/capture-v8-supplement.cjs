@@ -1,0 +1,74 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { DatabaseSync } = require('node:sqlite');
+const { chromium } = require('C:/Users/Admin/.vscode/extensions/vscjava.migrate-java-to-azure-1.24.0-win32-x64/node_modules/playwright');
+const root = path.resolve(__dirname, '..');
+const out = path.join(root, process.env.V8_SUPPLEMENT_OUTPUT || 'artifacts/v8-web-functional-supplement-2026-10-13');
+const source = path.join(root, 'artifacts/v7-2026-10-10/sources/skypedia-388adc0/dictionary_en_vi.db');
+const bytes = fs.readFileSync(source);
+if (crypto.createHash('sha256').update(bytes).digest('hex') !== '2b65bea9577c2a4149caa90940c806f321d1c6cfac503ed8bbd9f93e43a0033a') throw new Error('Pinned dictionary mismatch');
+if (fs.existsSync(out)) throw new Error('Refusing to overwrite QA supplement');
+fs.mkdirSync(path.join(out, 'screenshots'), { recursive: true });
+const db = new DatabaseSync(source, { readOnly: true });
+const words = db.prepare("SELECT DISTINCT lower(w.word) AS word FROM words w WHERE w.lang_code='en' AND length(w.word)>=3 AND w.word NOT GLOB '*[^a-zA-Z]*' AND EXISTS(SELECT 1 FROM word_definitions wd JOIN definitions d ON d.id=wd.definition_id WHERE wd.word_id=w.id AND d.definition_lang='vi') ORDER BY w.word LIMIT 100").all().map(row => row.word);
+db.close();
+if (words.length !== 100) throw new Error('100 distinct source words required');
+const images = [];
+const failures = [];
+let browser, context, page;
+async function go(route) {
+  await page.goto(`http://localhost:8123${route}`, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  await page.waitForTimeout(700);
+}
+async function capture(name, note) {
+  const file = `${String(images.length + 1).padStart(2,'0')}-${name}.png`;
+  await page.screenshot({ path: path.join(out, 'screenshots', file), fullPage: true, animations: 'disabled', timeout: 120000 });
+  images.push({ file, name, note, route: new URL(page.url()).pathname, platform: 'Expo Web 412x915 CSS px DPR2; disposable learner DB', sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(out,'screenshots',file))).digest('hex') });
+  console.log(`SUPPLEMENT ${file}`);
+}
+async function run() {
+  browser = await chromium.launch({ channel: 'msedge', headless: true });
+  context = await browser.newContext({ viewport: { width: 412, height: 915 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, reducedMotion: 'reduce' });
+  await context.route('**/dictionary_en_vi.db', route => route.fulfill({ status: 200, contentType: 'application/octet-stream', body: bytes, headers: { 'access-control-allow-origin': '*' } }));
+  page = await context.newPage();
+  page.on('pageerror', error => failures.push(error.message));
+  page.on('console', event => { if(event.type() === 'error') failures.push(event.text()); });
+  await go('/profile');
+  await page.getByRole('radio', { name: 'Chọn học Tiếng Anh' }).click();
+  await page.getByText('Đã lưu lựa chọn ngôn ngữ trên thiết bị.', { exact: true }).waitFor();
+  await go('/english/bulk');
+  await page.getByLabel('Tên bộ từ muốn học').fill('V8 QA 100 words');
+  await page.getByLabel('Danh sách từ tiếng Anh, mỗi dòng một từ').fill(words.join('\n'));
+  await page.getByRole('button', { name: 'Nhận diện từ' }).click();
+  await page.getByTestId('english-bulk-preview-list').waitFor({ timeout: 120000 });
+  await page.getByText(/^100 nhập/).waitFor();
+  await capture('bulk-100-source-words', '100 distinct dictionary words recognized as a reviewable draft; no cards saved.');
+  await go('/english/decks');
+  await page.getByLabel('Tên bộ từ tiếng Anh mới').fill('V8 QA personal deck');
+  await page.getByRole('button', { name: 'Tạo bộ từ', exact: true }).click();
+  await page.getByRole('button', { name: 'Đổi tên bộ từ' }).waitFor();
+  const deckRoute = new URL(page.url()).pathname;
+  await capture('created-deck-empty', 'Real deck creation in an isolated learner DB.');
+  await go('/');
+  await page.getByRole('button', { name: 'Tra từ tiếng Anh hoặc nghĩa tiếng Việt' }).click();
+  await page.getByRole('textbox', { name: 'Tra từ tiếng Anh hoặc nghĩa tiếng Việt' }).fill('hello');
+  await page.getByRole('button', { name: /hello/ }).first().waitFor({ timeout: 120000 });
+  await page.getByRole('button', { name: /hello/ }).first().click();
+  await page.getByRole('button', { name: /Chọn nghĩa phù hợp trong/ }).click();
+  await page.getByTestId('english-sense-list').getByRole('radio').first().click();
+  await page.getByRole('button', { name: 'Chọn nghĩa này' }).click();
+  await page.getByRole('button', { name: 'Lưu nghĩa này' }).click();
+  await page.getByText(/Đã lưu “hello” vào bộ/).waitFor();
+  await capture('dictionary-save-to-deck', 'Explicitly selected hello sense saved to the created deck, with confirmation.');
+  await go(deckRoute);
+  await page.getByText('1 từ do bạn tự chọn', { exact: true }).waitFor();
+  await capture('deck-detail-populated', 'Saved card remains after reloading the deck route.');
+  await page.getByRole('button', { name: 'Chọn từ để học (0/1)', exact: true }).click();
+  await page.getByTestId('english-new-word-card').waitFor();
+  await capture('new-word-selection', 'New-word screen uses the saved source sense; no grade or scheduler change without a user action.');
+  fs.writeFileSync(path.join(out, 'capture-manifest.json'), JSON.stringify({ screenshots: images, runtimeIssues: failures, sourceWords: words.length, platform: 'Expo Web supplement, no phone data' }, null, 2));
+  await context.close(); await browser.close();
+  if (failures.length) throw new Error(`Runtime errors: ${failures.join('; ')}`);
+}
+run().catch(async error => { console.error(error.message); try { if(page && !page.isClosed()) await page.screenshot({ path:path.join(out,'failed-state.png') }); } catch {} try{await context?.close();await browser?.close();}catch{}process.exitCode=1; });

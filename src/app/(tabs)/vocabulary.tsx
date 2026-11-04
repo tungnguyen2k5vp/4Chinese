@@ -3,7 +3,9 @@ import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-ro
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
+import EnglishWorkspace from "@/app/english/index";
 import { EmptyState } from "@/components/EmptyState";
 import { HskBandSelect } from "@/components/HskBandSelect";
 import { MasteryChart } from "@/components/MasteryChart";
@@ -12,6 +14,8 @@ import { VocabularyCard } from "@/components/VocabularyCard";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { parseLearningVocabularyTarget } from "@/db/learning-path";
 import { getDashboardStats, listVocabulary, restoreSkipped, setKnown, toggleFavorite } from "@/db/repository";
+import { useLearningLanguage } from "@/services/languages/LanguageProvider";
+import { EnglishAvailability } from "@/services/languages/LanguageRuntime";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { DashboardStats, HskBand, Vocabulary } from "@/types/models";
 
@@ -19,6 +23,11 @@ const filters = ["all", "unlearned", "learned", "due", "favorite", "mastered", "
 const labels = { all: "Tất cả", unlearned: "Chưa học", learned: "Đã học", due: "Đến hạn", favorite: "Đã lưu", mastered: "Nhớ sâu", known: "Đã biết", skipped: "Bỏ qua" };
 
 export default function VocabularyScreen() {
+  const { preferences } = useLearningLanguage();
+  return preferences.learningLanguage === "en" ? <EnglishAvailability><EnglishWorkspace /></EnglishAvailability> : <ChineseVocabularyScreen />;
+}
+
+export function ChineseVocabularyScreen({ fromStats = false }: { fromStats?: boolean } = {}) {
   const db = useSQLiteContext();
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
@@ -26,8 +35,13 @@ export default function VocabularyScreen() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number]>((filters.includes(params.filter as never) ? params.filter : "all") as (typeof filters)[number]);
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
+  // Stats shortcuts can target a tab that is already mounted.
+  useFocusEffect(useCallback(() => {
+    if (filters.includes(params.filter as never)) { setFilter(params.filter as (typeof filters)[number]); setSelectedLevel(null); }
+  }, [params.filter]));
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [masteryExpanded, setMasteryExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -108,16 +122,13 @@ export default function VocabularyScreen() {
   };
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView edges={fromStats ? ["bottom"] : ["top"]} style={styles.screen}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View style={styles.headerCopy}>
-            <Text style={styles.brand}>HANZI 3.0</Text>
             <Text style={styles.title}>Kho từ vựng{band !== "all" ? ` · HSK ${band}` : ""}</Text>
           </View>
-          <View style={styles.headerMark}>
-            <Ionicons name="library" size={24} color="#FFFFFF" />
-          </View>
+          <Ionicons name="library-outline" size={23} color={theme.primaryText} />
         </View>
         <Text style={styles.subtitle}>
           {lessonBatch
@@ -125,6 +136,9 @@ export default function VocabularyScreen() {
             : "Học theo lịch SRS"}
         </Text>
         {!lessonBatch ? <SearchBar value={query} onChangeText={setQuery} /> : null}
+        {!lessonBatch ? <Pressable accessibilityRole="button" onPress={() => router.push({ pathname: '/hsk/syllabus', params: { band: band === 'all' ? '1' : String(band) } } as Href)} style={styles.syllabusLink}>
+          <Text style={styles.returnText}>Tra cứu cấp HSK 3.0 · 11/2025</Text>
+        </Pressable> : null}
         {!lessonBatch ? <HskBandSelect value={band} onChange={(value) => { setSelectedLevel(null); router.setParams({ band: value === "all" ? "" : String(value) }); }} /> : null}
         {returnTo ? (
           <Pressable
@@ -176,22 +190,33 @@ export default function VocabularyScreen() {
           <>
             {!lessonBatch ? <View style={[themedCard(theme), styles.summary]}>
               <View style={styles.summaryHeader}>
-                <View style={styles.summaryHeading}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: masteryExpanded || !!selectedLevel }}
+                  accessibilityLabel={`Mức nhớ, ${stats?.learned ?? 0} từ đã học, ${stats?.due ?? 0} từ đến hạn`}
+                  onPress={() => setMasteryExpanded((expanded) => !expanded)}
+                  style={styles.summaryHeading}
+                >
                   <View style={styles.summaryIcon}>
                     <Ionicons name="stats-chart" size={17} color={theme.primary} />
                   </View>
-                  <View>
-                    <Text style={styles.summaryTitle}>Cấp độ nhớ</Text>
-                    <Text style={styles.summaryMeta}>{stats?.learned ?? 0} từ đang học · {stats?.due ?? 0} đến hạn</Text>
+                  <View style={styles.summaryCopy}>
+                    <Text style={styles.summaryTitle}>Mức nhớ</Text>
+                    <Text style={styles.summaryMeta}>{stats?.learned ?? 0} từ đã học · {stats?.due ?? 0} đến hạn</Text>
                   </View>
-                </View>
+                  <Ionicons name={masteryExpanded || selectedLevel ? "chevron-up" : "chevron-down"} size={20} color={theme.textMuted} />
+                </Pressable>
                 {selectedLevel ? (
                   <Pressable accessibilityRole="button" onPress={() => setSelectedLevel(null)} style={styles.clearButton}>
                     <Text style={styles.clear}>Xem tất cả</Text>
                   </Pressable>
                 ) : null}
               </View>
-              <MasteryChart values={stats?.mastery ?? [0, 0, 0, 0, 0, 0, 0]} selectedLevel={selectedLevel} onLevelPress={(level) => { setFilter("learned"); setSelectedLevel((current) => current === level ? null : level); }} />
+              {masteryExpanded || selectedLevel ? (
+                <MasteryChart values={stats?.mastery ?? [0, 0, 0, 0, 0, 0, 0]} selectedLevel={selectedLevel} onLevelPress={(level) => { setFilter("learned"); setSelectedLevel((current) => current === level ? null : level); setMasteryExpanded(true); }} />
+              ) : (
+                <Text style={styles.summaryHint}>Chạm để xem số từ ở từng cấp nhớ</Text>
+              )}
             </View> : null}
             <View style={styles.resultHeader}>
               <View>
@@ -213,7 +238,7 @@ export default function VocabularyScreen() {
         )}
         ListEmptyComponent={loading ? <ActivityIndicator style={styles.loader} color={theme.primary} /> : <EmptyState title="Chưa tìm thấy từ" message={lessonBatch ? "Lô từ này hiện không có mục nào trong kho offline." : "Thử Hanzi, pinyin không dấu, nghĩa tiếng Việt hoặc chọn cấp độ khác."} />}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -221,30 +246,31 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
   const colors = designColors(theme);
   return StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  header: { backgroundColor: colors.primary, paddingTop: 50, paddingHorizontal: spacing.lg, paddingBottom: 18, gap: spacing.sm },
-  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
+  header: { backgroundColor: colors.background, paddingTop: 8, paddingHorizontal: spacing.lg, paddingBottom: 8, gap: spacing.xs },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, minHeight: 38 },
   headerCopy: { flex: 1, gap: 3 },
-  headerMark: { width: 46, height: 46, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.14)", borderWidth: 1, borderColor: "rgba(255,255,255,0.2)" },
-  brand: { color: theme.onPrimary, fontWeight: "900", fontSize: 11, letterSpacing: 1.5 },
-  title: { color: "#fff", fontSize: 28, lineHeight: 34, fontWeight: "900" },
-  subtitle: { color: "#DCE4FF", fontSize: 13, marginBottom: spacing.xs },
+  title: { color: colors.text, fontSize: 28, lineHeight: 34, fontWeight: "900" },
+  subtitle: { color: colors.textMuted, fontSize: 13, marginBottom: 0 },
+  syllabusLink: { alignSelf: "flex-start", justifyContent: "center", minHeight: 32, paddingHorizontal: spacing.sm },
   returnButton: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 40, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.16)" },
-  returnText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
-  filterSection: { height: 66, justifyContent: "center", borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background },
+  returnText: { color: colors.primaryText, fontSize: 13, fontWeight: "800" },
+  filterSection: { minHeight: 58, justifyContent: "center", borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.background },
   filters: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, gap: spacing.sm, alignItems: "center" },
-  chip: { minHeight: 38, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  chip: { minHeight: 48, justifyContent: "center", paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipPressed: { opacity: 0.72 },
   chipText: { color: colors.textMuted, fontSize: 12, fontWeight: "800" },
   chipTextActive: { color: "#fff" },
   wordList: { flex: 1 },
   list: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, paddingBottom: 32 },
-  summary: { marginBottom: spacing.xl, gap: spacing.md, paddingTop: spacing.md },
+  summary: { marginBottom: spacing.md, gap: spacing.sm, paddingTop: spacing.md, paddingBottom: spacing.md },
   summaryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
-  summaryHeading: { flexDirection: "row", alignItems: "center", flex: 1, gap: spacing.sm },
+  summaryHeading: { flexDirection: "row", alignItems: "center", flex: 1, gap: spacing.sm, minHeight: 44 },
   summaryIcon: { width: 36, height: 36, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: colors.primarySoft },
-  summaryTitle: { color: colors.text, fontSize: 19, fontWeight: "900" },
+  summaryCopy: { flex: 1, minWidth: 0 },
+  summaryTitle: { color: colors.text, fontSize: 16, fontWeight: "900" },
   summaryMeta: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  summaryHint: { color: colors.textMuted, fontSize: 11, marginLeft: 44 },
   clearButton: { minHeight: 36, justifyContent: "center", paddingHorizontal: spacing.sm },
   clear: { color: colors.primaryText, fontSize: 12, fontWeight: "900" },
   resultHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md, paddingHorizontal: spacing.xs },

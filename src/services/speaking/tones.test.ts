@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildToneSamples, nextShadowingIndex, parseTones, toneChoices } from './tones';
+import { buildToneSamples, nextShadowingIndex, parseTones, toneChoices, withoutPinyinToneMarks } from './tones';
 
 import vocabulary from '@/data/hsk-vocabulary.json';
 
@@ -11,6 +11,10 @@ describe('tone trainer uses real dictionary entries', () => {
     expect(parseTones('nu:3')).toEqual([3]);
     expect(parseTones('ma5')).toEqual([5]);
     for (const value of ['ma', 'ma0', 'xing2/hang2', 'ni3!', '', 'hello3/world2']) expect(parseTones(value)).toEqual([]);
+  });
+  it('hides tone answers before grading but preserves umlaut and syllable spelling', () => {
+    expect(withoutPinyinToneMarks('Měi lǜ sè mǎi ma3')).toBe('Mei lü se mai ma');
+    expect(withoutPinyinToneMarks('nǚ')).toBe('nü');
   });
   it('covers all five tones and all sixteen pairs without copying vocabulary', () => {
     const words = [...vocabulary].filter((word) => [1, 2].includes([...word.simplified].length))

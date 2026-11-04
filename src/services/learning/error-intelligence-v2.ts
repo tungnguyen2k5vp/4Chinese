@@ -3,8 +3,12 @@ import { clusterObservedMistakes, type ErrorCluster } from './error-intelligence
 import type { Mistake, PracticeSkill } from '@/db/mistakes';
 
 export type ErrorIntelligenceOptions = {
-  /** Minimum observed wrong answers before a cluster becomes actionable. */
-  minimumWrongAttempts?: number;
+  /** Minimum recent denominator before a cluster can be called a weakness. */
+  minimumAttempts?: number;
+  /** Minimum recent error count before a cluster can be called a weakness. */
+  minimumErrors?: number;
+  /** Minimum error proportion among attempts on the currently open error items. */
+  minimumErrorRate?: number;
   /** Minimum distinct open records before a cluster becomes actionable. */
   minimumOpenItems?: number;
 };
@@ -15,19 +19,26 @@ export type RemedialMicroLesson = {
   explanation: string;
   steps: readonly string[];
   exerciseTypes: readonly string[];
+  practiceItemIds: readonly string[];
   source: 'OFFLINE_OBSERVED_ERRORS';
 };
 
 export type ErrorClusterV2 = ErrorCluster & {
   skill: PracticeSkill | 'CONFUSABLE';
   exerciseTypes: readonly string[];
+  attempts30d: number;
+  errors30d: number;
+  errorRate30d: number | null;
+  supportedPracticeItems: number;
   eligible: boolean;
   thresholdReason: string;
   microLesson: RemedialMicroLesson | null;
 };
 
 const DEFAULTS: Required<ErrorIntelligenceOptions> = {
-  minimumWrongAttempts: 5,
+  minimumAttempts: 10,
+  minimumErrors: 5,
+  minimumErrorRate: 0.35,
   minimumOpenItems: 2,
 };
 
@@ -74,7 +85,7 @@ const lessonCopy: Record<ErrorClusterV2['key'], { explanation: string; steps: re
   },
 };
 
-function buildLesson(cluster: ErrorCluster): RemedialMicroLesson {
+function buildLesson(cluster: ErrorCluster, practiceItemIds: readonly string[]): RemedialMicroLesson {
   const copy = lessonCopy[cluster.key];
   return {
     id: `remedial-${cluster.key.toLowerCase()}`,
@@ -82,6 +93,7 @@ function buildLesson(cluster: ErrorCluster): RemedialMicroLesson {
     explanation: copy.explanation,
     steps: copy.steps,
     exerciseTypes: copy.exerciseTypes,
+    practiceItemIds: practiceItemIds.slice(0,5),
     source: 'OFFLINE_OBSERVED_ERRORS',
   };
 }
@@ -95,25 +107,44 @@ export function clusterObservedMistakesV2(
   options: ErrorIntelligenceOptions = {},
 ): ErrorClusterV2[] {
   const thresholds = { ...DEFAULTS, ...options };
-  const safeMinimumWrong = Number.isSafeInteger(thresholds.minimumWrongAttempts) && thresholds.minimumWrongAttempts > 0
-    ? thresholds.minimumWrongAttempts : DEFAULTS.minimumWrongAttempts;
+  const safeMinimumAttempts = Number.isSafeInteger(thresholds.minimumAttempts) && thresholds.minimumAttempts > 0
+    ? thresholds.minimumAttempts : DEFAULTS.minimumAttempts;
+  const safeMinimumErrors = Number.isSafeInteger(thresholds.minimumErrors) && thresholds.minimumErrors > 0
+    ? thresholds.minimumErrors : DEFAULTS.minimumErrors;
+  const safeMinimumRate = Number.isFinite(thresholds.minimumErrorRate) && thresholds.minimumErrorRate > 0 && thresholds.minimumErrorRate <= 1
+    ? thresholds.minimumErrorRate : DEFAULTS.minimumErrorRate;
   const safeMinimumOpen = Number.isSafeInteger(thresholds.minimumOpenItems) && thresholds.minimumOpenItems > 0
     ? thresholds.minimumOpenItems : DEFAULTS.minimumOpenItems;
   return clusterObservedMistakes(items).map((cluster) => {
-    const exerciseTypes = [...new Set(cluster.examples.map((item) => item.exercise_type))];
-    const enoughWrong = cluster.wrongAttempts >= safeMinimumWrong;
+    const relevant = items.filter(item => (item.exercise_type.startsWith('confusable_') ? 'CONFUSABLE' : item.skill_type) === cluster.key);
+    const exerciseTypes = [...new Set(relevant.map((item) => item.exercise_type))];
+    const attempts30d = relevant.reduce((sum,item) => sum + (Number.isSafeInteger(item.attempts_30d) && item.attempts_30d >= 0 ? item.attempts_30d : 0),0);
+    const errors30d = relevant.reduce((sum,item) => sum + (Number.isSafeInteger(item.errors_30d) && item.errors_30d >= 0 ? item.errors_30d : 0),0);
+    const validRateEvidence = errors30d <= attempts30d;
+    const errorRate30d = attempts30d > 0 && validRateEvidence ? errors30d / attempts30d : null;
+    const enoughAttempts = attempts30d >= safeMinimumAttempts;
+    const enoughErrors = errors30d >= safeMinimumErrors;
+    const enoughRate = errorRate30d !== null && errorRate30d >= safeMinimumRate;
     const enoughItems = cluster.openItems >= safeMinimumOpen;
-    const eligible = enoughWrong && enoughItems;
+    const practiceItemIds = relevant.filter(item => item.vocabulary_id !== null).slice(0,5).map(item => item.id);
+    const enoughPracticeItems = practiceItemIds.length >= safeMinimumOpen;
+    const eligible = enoughAttempts && enoughErrors && enoughRate && enoughItems && enoughPracticeItems;
     const thresholdReason = eligible
-      ? `Đủ mẫu: ${cluster.wrongAttempts}/${safeMinimumWrong} lần sai, ${cluster.openItems}/${safeMinimumOpen} mục mở.`
-      : `Chưa đủ mẫu để kết luận: cần ${safeMinimumWrong} lần sai và ${safeMinimumOpen} mục mở.`;
+      ? `Có bằng chứng gần đây: ${errors30d}/${attempts30d} lần sai (${Math.round(errorRate30d! * 100)}%), ${cluster.openItems} mục đang mở.`
+      : !enoughPracticeItems
+        ? 'Chưa đủ mục từ vựng có thể mở trong chuỗi luyện hiện tại.'
+        : `Chưa đủ bằng chứng 30 ngày: cần ${safeMinimumAttempts} lượt, ${safeMinimumErrors} lỗi, tỷ lệ ${Math.round(safeMinimumRate * 100)}% và ${safeMinimumOpen} mục mở.`;
     return {
       ...cluster,
       skill: cluster.key,
       exerciseTypes,
+      attempts30d,
+      errors30d: validRateEvidence ? errors30d : 0,
+      errorRate30d,
+      supportedPracticeItems: practiceItemIds.length,
       eligible,
       thresholdReason,
-      microLesson: eligible ? buildLesson(cluster) : null,
+      microLesson: eligible ? buildLesson(cluster,practiceItemIds) : null,
     };
   });
 }

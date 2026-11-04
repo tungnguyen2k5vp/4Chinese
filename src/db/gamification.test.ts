@@ -9,6 +9,18 @@ import { parseLocalBackup } from '@/services/backup/format';
 import { localWeek, longestStudyStreak } from '@/services/stats/gamification';
 
 describe('gamification uses evidence, without resetting legacy state', () => {
+  it('serializes overlapping dashboard reads without nested transactions or changing XP', async () => {
+    const sqlite = createLegacyDatabase();
+    try {
+      const db = expoAdapter(sqlite);
+      await migrateDatabaseSchema(db);
+      const now = new Date(2026, 9, 20);
+      await awardActivityXp(db, 'learn', 'synthetic-word', now);
+      const results = await Promise.all(Array.from({ length: 4 }, () => getGamificationSummary(db, 30, now)));
+      for (const result of results) expect(result.totalXp).toBe(10);
+      expect(sqlite.prepare('SELECT COUNT(*) AS count FROM xp_events').get()).toMatchObject({ count: 1 });
+    } finally { sqlite.close(); }
+  });
   it('calculates local Monday–Sunday across year boundaries and deduplicates streak days', () => {
     expect(localWeek(new Date(2026, 0, 1))).toEqual({ start: '2025-12-29', end: '2026-01-04' });
     expect(longestStudyStreak(['2025-12-31', '2026-01-02', '2026-01-01', '2026-01-01', '2026-01-04'])).toBe(3);
@@ -33,6 +45,10 @@ describe('gamification uses evidence, without resetting legacy state', () => {
       expect(result.todayXp).toBe(16);
       expect(result.weeklyMinutes).toBe(120);
       expect(result.weeklySeconds).toBe(720);
+      expect(result.weeklyDays).toHaveLength(7);
+      expect(result.weeklyDays[0]).toEqual({ date: '2026-09-21', seconds: 120 });
+      expect(result.weeklyDays[6]).toEqual({ date: '2026-09-27', seconds: 600 });
+      expect(result.weeklyDays.reduce((sum, day) => sum + day.seconds, 0)).toBe(result.weeklySeconds);
       expect(result.achievements.find((item) => item.id === 'listening-100')?.progress).toBe(1);
       expect(sqlite.prepare('SELECT * FROM user_vocabulary_progress').all()).toEqual(old);
       const backup = parseLocalBackup(JSON.stringify(await exportLocalBackup(db, 'test')));

@@ -1,7 +1,22 @@
 import { useEffect, useState } from 'react';
 import { AccessibilityInfo } from 'react-native';
 
+import { resolveModalAnimationType, type ModalAnimationType } from '@/services/ui/modal-animation';
 import { useAppStore } from '@/stores/app-store';
+
+export type { ModalAnimationType } from '@/services/ui/modal-animation';
+
+export function useModalAnimationType(): ModalAnimationType {
+  const mode = useAppStore((state) => state.settings?.motionMode ?? 'full');
+  const [systemReduced, setSystemReduced] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => { if (active) setSystemReduced(enabled); }).catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setSystemReduced);
+    return () => { active = false; subscription.remove(); };
+  }, []);
+  return resolveModalAnimationType(mode, systemReduced);
+}
 
 /** System accessibility preference always wins; app setting can further reduce motion. */
 export function useReducedMotion() {

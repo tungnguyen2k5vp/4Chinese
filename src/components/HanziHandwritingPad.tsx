@@ -1,26 +1,42 @@
-import { useCallback, useMemo, useState } from "react";
-import { PanResponder, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useSQLiteContext } from "expo-sqlite";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AppState,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from "react-native";
 import Svg, { G, Line, Path, Polyline } from "react-native-svg";
 
 import { radius, spacing } from "@/constants/design";
+import { listNativePractice, recordNativePractice, type NativePracticeHistory } from "@/db/native-practice";
 import {
+  acknowledgeNativePractice,
+  getPendingNativePractice,
   isChineseInkRecognitionAvailable,
+  isNativePracticeAvailable,
+  openNativePractice,
   recognizeChineseInk,
   type InkPoint,
   type InkStroke,
 } from "@/services/handwriting/recognizer";
 import { combineCharacterCandidates } from "@/services/handwriting/segmentation";
 import { getStrokePaths } from "@/services/handwriting/stroke-data";
+import type { InkEvidence } from "@/services/memory/hanzi-memory";
 import { useTheme } from "@/theme/ThemeProvider";
 import type { ThemeTokens } from "@/theme/tokens";
 
-const size = 286;
 const eraserRadius = 18;
 const PAPER_INK = "#172033";
 
 function touchesPoint(stroke: InkStroke, point: InkPoint): boolean {
   return stroke.points.some(
-    (candidate) => Math.hypot(candidate.x - point.x, candidate.y - point.y) <= eraserRadius,
+    (candidate) =>
+      Math.hypot(candidate.x - point.x, candidate.y - point.y) <= eraserRadius,
   );
 }
 
@@ -30,6 +46,9 @@ export function HanziHandwritingPad({
   characterCount = 1,
   targetWord = "",
   resolveWordCandidates,
+  onInkEvidence,
+  editable = true,
+  onAttemptChanged,
 }: {
   onSelect: (hanzi: string) => void;
   onHintUsed?: () => void;
@@ -38,10 +57,22 @@ export function HanziHandwritingPad({
   /** Used only to reveal one faint reference stroke at a time. */
   targetWord?: string;
   /** Filters ML candidates against the app dictionary before showing whole words. */
-  resolveWordCandidates?: (characterCandidates: string[][]) => Promise<string[]>;
+  resolveWordCandidates?: (
+    characterCandidates: string[][],
+  ) => Promise<string[]>;
+  /** Optional evidence for supplemental recall; candidate selection is not stroke grading. */
+  onInkEvidence?: (evidence: InkEvidence | null) => void;
+  editable?: boolean;
+  onAttemptChanged?: (ready: boolean) => void;
 }) {
   const theme = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const db = useSQLiteContext();
+  const [nativeBusy, setNativeBusy] = useState(false);
+  const [nativeRevision, setNativeRevision] = useState(0);
+  const [nativeHistory, setNativeHistory] = useState<NativePracticeHistory[]>([]);
+  const { width } = useWindowDimensions();
+  const size = Math.max(1, Math.min(286, width - 96));
+  const styles = useMemo(() => createStyles(theme, size), [theme, size]);
   const recognitionAvailable = isChineseInkRecognitionAvailable();
   const pageCount = Math.max(1, Math.trunc(characterCount));
   const [currentPage, setCurrentPage] = useState(0);
@@ -63,15 +94,50 @@ export function HanziHandwritingPad({
   const [message, setMessage] = useState(
     recognitionAvailable
       ? "Viết một chữ trên mỗi trang rồi nhấn Nhận diện."
-      : "Expo Go không chứa ML Kit. Bạn vẫn có thể nhập một Hán tự cho từng trang.",
+      : "Nhận diện nét chưa khả dụng ở bản chạy này. Bạn có thể tự viết và đối chiếu mẫu, hoặc nhập chữ cho từng trang.",
   );
   const [busy, setBusy] = useState(false);
+  const request = useRef(0);
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [editable],
+  );
+  useEffect(() => {
+    onAttemptChanged?.(
+      strokesByPage.every(
+        (page, index) => page.length > 0 || Boolean(fallbackByPage[index]),
+      ),
+    );
+  }, [strokesByPage, fallbackByPage, onAttemptChanged]);
 
   const strokes = strokesByPage[currentPage] ?? [];
   const targetCharacters = Array.from(targetWord).slice(0, pageCount);
   const currentTarget = targetCharacters[currentPage] ?? "";
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        for (const result of await getPendingNativePractice()) {
+          await recordNativePractice(db, result);
+          await acknowledgeNativePractice(result.id);
+        }
+        const history = await listNativePractice(db, currentTarget);
+        if (active) setNativeHistory(history);
+      } catch {
+        if (active) setMessage("Chưa lưu được lịch sử luyện viết. Kết quả được giữ để thử lại khi trở lại ứng dụng.");
+      }
+    };
+    void refresh();
+    const listener = AppState.addEventListener("change", state => { if (state === "active") void refresh(); });
+    return () => { active = false; listener.remove(); };
+  }, [db, currentTarget, nativeRevision]);
   const currentHintPaths = getStrokePaths(currentTarget);
-  const currentHintCount = Math.min(hintCounts[currentPage] ?? 0, currentHintPaths.length);
+  const currentHintCount = Math.min(
+    hintCounts[currentPage] ?? 0,
+    currentHintPaths.length,
+  );
   const selectedWord = selectedCharacters.join("");
   const allPagesReady = recognitionAvailable
     ? strokesByPage.every((page) => page.length > 0)
@@ -79,13 +145,17 @@ export function HanziHandwritingPad({
 
   const updateCurrentStrokes = useCallback(
     (update: (items: InkStroke[]) => InkStroke[]) => {
+      onInkEvidence?.(null);
       setStrokesByPage((pages) => {
-        const next = Array.from({ length: pageCount }, (_, index) => pages[index] ?? []);
+        const next = Array.from(
+          { length: pageCount },
+          (_, index) => pages[index] ?? [],
+        );
         next[currentPage] = update(next[currentPage] ?? []);
         return next;
       });
     },
-    [currentPage, pageCount],
+    [currentPage, pageCount, onInkEvidence],
   );
 
   const eraseAt = useCallback(
@@ -108,12 +178,17 @@ export function HanziHandwritingPad({
   const responder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => editable && !busy,
+        onMoveShouldSetPanResponder: () => editable && !busy,
         onPanResponderGrant: (event) => {
+          if (busy || !editable) return;
           const nativeEvent = event.nativeEvent;
           if (!nativeEvent) return;
-          const point = { x: nativeEvent.locationX, y: nativeEvent.locationY, t: nativeEvent.timestamp };
+          const point = {
+            x: nativeEvent.locationX,
+            y: nativeEvent.locationY,
+            t: nativeEvent.timestamp,
+          };
           if (eraserMode) {
             eraseAt(point);
             return;
@@ -127,9 +202,14 @@ export function HanziHandwritingPad({
           updateCurrentStrokes((items) => [...items, { points: [point] }]);
         },
         onPanResponderMove: (event) => {
+          if (busy || !editable) return;
           const nativeEvent = event.nativeEvent;
           if (!nativeEvent) return;
-          const point = { x: nativeEvent.locationX, y: nativeEvent.locationY, t: nativeEvent.timestamp };
+          const point = {
+            x: nativeEvent.locationX,
+            y: nativeEvent.locationY,
+            t: nativeEvent.timestamp,
+          };
           if (eraserMode) {
             eraseAt(point);
             return;
@@ -138,12 +218,25 @@ export function HanziHandwritingPad({
             const last = items.at(-1);
             if (!last) return items;
             const previous = last.points.at(-1);
-            if (previous && Math.hypot(previous.x - point.x, previous.y - point.y) < 2.5) return items;
+            if (
+              previous &&
+              Math.hypot(previous.x - point.x, previous.y - point.y) < 2.5
+            )
+              return items;
             return [...items.slice(0, -1), { points: [...last.points, point] }];
           });
         },
       }),
-    [eraseAt, eraserMode, onSelect, pageCount, selectedWord, updateCurrentStrokes],
+    [
+      busy,
+      editable,
+      eraseAt,
+      eraserMode,
+      onSelect,
+      pageCount,
+      selectedWord,
+      updateCurrentStrokes,
+    ],
   );
 
   const emitSelection = (characters: string[]) => {
@@ -161,9 +254,15 @@ export function HanziHandwritingPad({
   };
 
   const recognize = async () => {
-    if (!allPagesReady || busy) return;
+    if (!allPagesReady || busy || !editable) return;
+    const token = ++request.current;
     if (!recognitionAvailable) {
       const fallbackWord = fallbackByPage.join("");
+      onInkEvidence?.({
+        source: "MANUAL",
+        strokeCounts: strokesByPage.map((page) => page.length),
+        candidates: fallbackByPage.map((char) => [char]),
+      });
       setSelectedCharacters([...fallbackByPage]);
       onSelect(fallbackWord);
       setMessage(`Đã xác nhận cả từ ${fallbackWord}.`);
@@ -176,29 +275,39 @@ export function HanziHandwritingPad({
       const results = await Promise.all(
         strokesByPage.map((page) => recognizeChineseInk(page, size, size)),
       );
+      if (token !== request.current) return;
       const characterCandidates = results.map((result) => result.candidates);
+      onInkEvidence?.({
+        source: "DIGITAL_INK",
+        strokeCounts: strokesByPage.map((page) => page.length),
+        candidates: characterCandidates,
+      });
       const rawCandidates = combineCharacterCandidates(characterCandidates, 16);
       let dictionaryCandidates: string[] = [];
       let dictionaryLookupSucceeded = !resolveWordCandidates;
       if (resolveWordCandidates) {
         try {
-          dictionaryCandidates = await resolveWordCandidates(characterCandidates);
+          dictionaryCandidates =
+            await resolveWordCandidates(characterCandidates);
           dictionaryLookupSucceeded = true;
         } catch {
           // Keep the raw ML candidates usable for custom words if the local
           // dictionary lookup itself fails.
         }
       }
-      const candidates = (resolveWordCandidates && dictionaryLookupSucceeded
-        ? dictionaryCandidates
-        : rawCandidates).slice(0, 16);
+      if (token !== request.current) return;
+      const candidates = (
+        resolveWordCandidates && dictionaryLookupSucceeded
+          ? dictionaryCandidates
+          : rawCandidates
+      ).slice(0, 16);
       const fallbackCandidate = rawCandidates[0] ?? "";
       const useManualCandidate = Boolean(
         resolveWordCandidates &&
-          dictionaryLookupSucceeded &&
-          !dictionaryCandidates.length &&
-          fallbackCandidate &&
-          Array.from(fallbackCandidate).length === pageCount,
+        dictionaryLookupSucceeded &&
+        !dictionaryCandidates.length &&
+        fallbackCandidate &&
+        Array.from(fallbackCandidate).length === pageCount,
       );
       setWordCandidates(candidates);
       setManualCandidate(useManualCandidate ? fallbackCandidate : "");
@@ -213,15 +322,18 @@ export function HanziHandwritingPad({
           : resolveWordCandidates && dictionaryLookupSucceeded
             ? "Không có từ ghép tương ứng trong kho. Hãy viết lại hoặc thêm thủ công."
             : candidates.length
-            ? "Kho chưa có từ ghép khớp hoàn toàn; bạn vẫn có thể chọn để thêm thủ công."
-            : "Chưa nhận ra cả từ, hãy kiểm tra lại từng mặt.",
+              ? "Kho chưa có từ ghép khớp hoàn toàn; bạn vẫn có thể chọn để thêm thủ công."
+              : "Chưa nhận ra cả từ, hãy kiểm tra lại từng mặt.",
       );
     } catch {
+      if (token !== request.current) return;
       setWordCandidates([]);
       setManualCandidate("");
-      setMessage("Nhận diện thất bại. Hãy kiểm tra mô hình ML Kit rồi thử lại.");
+      setMessage(
+        "Nhận diện thất bại. Hãy kiểm tra mô hình ML Kit rồi thử lại.",
+      );
     } finally {
-      setBusy(false);
+      if (token === request.current) setBusy(false);
     }
   };
 
@@ -232,7 +344,10 @@ export function HanziHandwritingPad({
     const next = Array.from({ length: pageCount }, () => "");
     setSelectedCharacters(next);
     setFallbackByPage((pages) => {
-      const values = Array.from({ length: pageCount }, (_, index) => pages[index] ?? "");
+      const values = Array.from(
+        { length: pageCount },
+        (_, index) => pages[index] ?? "",
+      );
       values[currentPage] = "";
       return values;
     });
@@ -248,15 +363,21 @@ export function HanziHandwritingPad({
   };
 
   const revealNextStroke = () => {
-    if (!currentHintPaths.length || currentHintCount >= currentHintPaths.length) return;
+    if (!currentHintPaths.length || currentHintCount >= currentHintPaths.length)
+      return;
     const nextCount = currentHintCount + 1;
     setHintCounts((counts) => {
-      const next = Array.from({ length: pageCount }, (_, index) => counts[index] ?? 0);
+      const next = Array.from(
+        { length: pageCount },
+        (_, index) => counts[index] ?? 0,
+      );
       next[currentPage] = nextCount;
       return next;
     });
     onHintUsed?.();
-    setMessage(`Đã gợi ý nét ${nextCount}/${currentHintPaths.length} trên trang này.`);
+    setMessage(
+      `Đã gợi ý nét ${nextCount}/${currentHintPaths.length} trên trang này.`,
+    );
   };
 
   return (
@@ -268,13 +389,20 @@ export function HanziHandwritingPad({
           accessibilityState={{ disabled: currentPage === 0 }}
           disabled={currentPage === 0}
           onPress={() => goToPage(currentPage - 1)}
-          style={[styles.pageArrow, currentPage === 0 && styles.pageArrowDisabled]}
+          style={[
+            styles.pageArrow,
+            currentPage === 0 && styles.pageArrowDisabled,
+          ]}
         >
           <Text style={styles.pageArrowText}>‹</Text>
         </Pressable>
         <View style={styles.pageCopy}>
-          <Text style={styles.pageTitle}>Chữ {currentPage + 1}/{pageCount}</Text>
-          <Text style={styles.pageValue}>{selectedCharacters[currentPage] || "Chưa chọn"}</Text>
+          <Text style={styles.pageTitle}>
+            Chữ {currentPage + 1}/{pageCount}
+          </Text>
+          <Text style={styles.pageValue}>
+            {selectedCharacters[currentPage] || "Chưa chọn"}
+          </Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -282,7 +410,10 @@ export function HanziHandwritingPad({
           accessibilityState={{ disabled: currentPage === pageCount - 1 }}
           disabled={currentPage === pageCount - 1}
           onPress={() => goToPage(currentPage + 1)}
-          style={[styles.pageArrow, currentPage === pageCount - 1 && styles.pageArrowDisabled]}
+          style={[
+            styles.pageArrow,
+            currentPage === pageCount - 1 && styles.pageArrowDisabled,
+          ]}
         >
           <Text style={styles.pageArrowText}>›</Text>
         </Pressable>
@@ -292,29 +423,53 @@ export function HanziHandwritingPad({
         accessible
         accessibilityRole="image"
         accessibilityLabel={`Vùng giấy viết chữ ${currentPage + 1} trên ${pageCount}`}
-        accessibilityHint={eraserMode ? "Quét lên nét cần xóa." : "Dùng ngón tay để viết một chữ Hán trên vùng giấy này."}
+        accessibilityHint={
+          eraserMode
+            ? "Quét lên nét cần xóa."
+            : "Dùng ngón tay để viết một chữ Hán trên vùng giấy này."
+        }
         style={[styles.canvas, eraserMode && styles.canvasErasing]}
         {...responder.panHandlers}
       >
         <Svg width={size} height={size}>
-          <Line x1={size / 2} y1="0" x2={size / 2} y2={size} stroke={theme.border} strokeDasharray="5 5" />
-          <Line x1="0" y1={size / 2} x2={size} y2={size / 2} stroke={theme.border} strokeDasharray="5 5" />
+          <Line
+            x1={size / 2}
+            y1="0"
+            x2={size / 2}
+            y2={size}
+            stroke={theme.border}
+            strokeDasharray="5 5"
+          />
+          <Line
+            x1="0"
+            y1={size / 2}
+            x2={size}
+            y2={size / 2}
+            stroke={theme.border}
+            strokeDasharray="5 5"
+          />
           {currentHintCount ? (
-            <G transform={`translate(0 ${900 * size / 1024}) scale(${size / 1024} ${-size / 1024})`}>
-              {currentHintPaths.slice(0, currentHintCount).map((path, index) => (
-                <Path
-                  key={`${currentTarget}-${index}`}
-                  d={path}
-                  fill={theme.primary}
-                  opacity={index === currentHintCount - 1 ? 0.2 : 0.1}
-                />
-              ))}
+            <G
+              transform={`translate(0 ${(900 * size) / 1024}) scale(${size / 1024} ${-size / 1024})`}
+            >
+              {currentHintPaths
+                .slice(0, currentHintCount)
+                .map((path, index) => (
+                  <Path
+                    key={`${currentTarget}-${index}`}
+                    d={path}
+                    fill={theme.primary}
+                    opacity={index === currentHintCount - 1 ? 0.2 : 0.1}
+                  />
+                ))}
             </G>
           ) : null}
           {strokes.map((stroke, index) => (
             <Polyline
               key={index}
-              points={stroke.points.map((point) => `${point.x},${point.y}`).join(" ")}
+              points={stroke.points
+                .map((point) => `${point.x},${point.y}`)
+                .join(" ")}
               fill="none"
               stroke={PAPER_INK}
               strokeWidth="7"
@@ -324,156 +479,409 @@ export function HanziHandwritingPad({
           ))}
         </Svg>
       </View>
-      <Text accessibilityLiveRegion="polite" style={styles.message}>{eraserMode ? "Chạm hoặc quét lên nét thừa để tẩy riêng nét đó." : message}</Text>
+      <Text accessibilityLiveRegion="polite" style={styles.message}>
+        {eraserMode
+          ? "Chạm hoặc quét lên nét thừa để tẩy riêng nét đó."
+          : message}
+      </Text>
 
-      {!recognitionAvailable ? (
-        <View style={styles.fallback}>
-          <Text style={styles.fallbackLabel}>NHẬP CHỮ {currentPage + 1} TRONG EXPO GO</Text>
-          <TextInput
-            accessibilityLabel={`Nhập chữ Hán cho trang ${currentPage + 1}`}
-            value={fallbackByPage[currentPage] ?? ""}
-            onChangeText={(value) => {
-              const character = Array.from(value.trim().replace(/\s+/g, ""))[0] ?? "";
-              setFallbackByPage((pages) => {
-                const next = Array.from({ length: pageCount }, (_, index) => pages[index] ?? "");
-                next[currentPage] = character;
-                return next;
-              });
-              setSelectedCharacters(Array.from({ length: pageCount }, () => ""));
-              setWordCandidates([]);
-              setManualCandidate("");
-              onSelect("");
-            }}
-            placeholder="例如: 学"
-            placeholderTextColor={theme.textMuted}
-            autoCorrect={false}
-            style={styles.fallbackInput}
-          />
-        </View>
-      ) : null}
+      {editable ? (
+        <View pointerEvents={busy ? "none" : "auto"} style={styles.wrapper}>
+          {!recognitionAvailable ? (
+            <View style={styles.fallback}>
+              <Text style={styles.fallbackLabel}>
+                NHẬP CHỮ {currentPage + 1} ĐỂ TỰ ĐỐI CHIẾU
+              </Text>
+              <TextInput
+                accessibilityLabel={`Nhập chữ Hán cho trang ${currentPage + 1}`}
+                value={fallbackByPage[currentPage] ?? ""}
+                onChangeText={(value) => {
+                  onInkEvidence?.(null);
+                  const character =
+                    Array.from(value.trim().replace(/\s+/g, ""))[0] ?? "";
+                  setFallbackByPage((pages) => {
+                    const next = Array.from(
+                      { length: pageCount },
+                      (_, index) => pages[index] ?? "",
+                    );
+                    next[currentPage] = character;
+                    return next;
+                  });
+                  setSelectedCharacters(
+                    Array.from({ length: pageCount }, () => ""),
+                  );
+                  setWordCandidates([]);
+                  setManualCandidate("");
+                  onSelect("");
+                }}
+                placeholder="Nhập Hán tự bạn nhớ"
+                placeholderTextColor={theme.textMuted}
+                autoCorrect={false}
+                style={styles.fallbackInput}
+              />
+            </View>
+          ) : null}
 
-      {wordCandidates.length ? (
-        <View style={styles.candidates}>
-          {wordCandidates.map((item) => (
+          {wordCandidates.length ? (
+            <View style={styles.candidates}>
+              {wordCandidates.map((item) => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Chọn từ ${item}`}
+                  accessibilityState={{ selected: selectedWord === item }}
+                  key={item}
+                  style={[styles.candidate, styles.wordCandidate]}
+                  onPress={() => selectWord(item)}
+                >
+                  <Text numberOfLines={1} style={styles.hanzi}>
+                    {item}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {!wordCandidates.length && manualCandidate ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Chọn từ ${item}`}
-              accessibilityState={{ selected: selectedWord === item }}
-              key={item}
-              style={[styles.candidate, styles.wordCandidate]}
-              onPress={() => selectWord(item)}
+              accessibilityLabel={`Chọn chữ ${manualCandidate} để nhập thông tin từ thủ công`}
+              onPress={() => selectWord(manualCandidate)}
+              style={styles.manualCandidate}
             >
-              <Text numberOfLines={1} style={styles.hanzi}>{item}</Text>
+              <Text style={styles.manualCandidateTitle}>
+                Không có trong kho từ
+              </Text>
+              <Text style={styles.manualCandidateText}>
+                Đã điền “{manualCandidate}”. Nhập pinyin và nghĩa để thêm thủ
+                công
+              </Text>
             </Pressable>
-          ))}
-        </View>
-      ) : null}
-      {!wordCandidates.length && manualCandidate ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Chọn chữ ${manualCandidate} để nhập thông tin từ thủ công`}
-          onPress={() => selectWord(manualCandidate)}
-          style={styles.manualCandidate}
-        >
-          <Text style={styles.manualCandidateTitle}>Không có trong kho từ</Text>
-          <Text style={styles.manualCandidateText}>
-            Đã điền “{manualCandidate}”. Nhập pinyin và nghĩa để thêm thủ công
-          </Text>
-        </Pressable>
-      ) : null}
+          ) : null}
 
-      {currentHintPaths.length ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Gợi ý nét tiếp theo cho chữ ${currentPage + 1}`}
-          accessibilityState={{ disabled: currentHintCount >= currentHintPaths.length }}
-          disabled={currentHintCount >= currentHintPaths.length}
-          onPress={revealNextStroke}
-          style={({ pressed }) => [
-            styles.strokeHint,
-            currentHintCount >= currentHintPaths.length && styles.strokeHintDisabled,
-            pressed && styles.strokeHintPressed,
-          ]}
-        >
-          <Text style={styles.strokeHintIcon}>✦</Text>
-          <View style={styles.strokeHintCopy}>
-            <Text style={styles.strokeHintTitle}>
-              {currentHintCount >= currentHintPaths.length ? "Đã gợi ý hết các nét" : "Gợi ý một nét mờ"}
+          {currentHintPaths.length ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Gợi ý nét tiếp theo cho chữ ${currentPage + 1}`}
+              accessibilityState={{
+                disabled: currentHintCount >= currentHintPaths.length,
+              }}
+              disabled={currentHintCount >= currentHintPaths.length}
+              onPress={revealNextStroke}
+              style={({ pressed }) => [
+                styles.strokeHint,
+                currentHintCount >= currentHintPaths.length &&
+                  styles.strokeHintDisabled,
+                pressed && styles.strokeHintPressed,
+              ]}
+            >
+              <Text style={styles.strokeHintIcon}>✦</Text>
+              <View style={styles.strokeHintCopy}>
+                <Text style={styles.strokeHintTitle}>
+                  {currentHintCount >= currentHintPaths.length
+                    ? "Đã gợi ý hết các nét"
+                    : "Gợi ý một nét mờ"}
+                </Text>
+                <Text style={styles.strokeHintMeta}>
+                  Nét {currentHintCount}/{currentHintPaths.length} · chỉ áp dụng
+                  cho trang hiện tại
+                </Text>
+              </View>
+            </Pressable>
+          ) : targetWord ? (
+            <Text style={styles.noStrokeHint}>
+              Chữ này chưa có dữ liệu thứ tự nét ngoại tuyến.
             </Text>
-            <Text style={styles.strokeHintMeta}>Nét {currentHintCount}/{currentHintPaths.length} · chỉ áp dụng cho trang hiện tại</Text>
+          ) : null}
+
+          {isNativePracticeAvailable() && currentTarget && (
+            <View style={styles.wrapper}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Mở luyện viết toàn màn hình, không thay đổi tiến độ học"
+              accessibilityState={{ disabled: busy || nativeBusy, busy: nativeBusy }}
+              style={[styles.action, { flex: 0, width: size }]}
+              disabled={busy || nativeBusy}
+              onPress={async () => {
+                if (nativeBusy) return;
+                setNativeBusy(true);
+                try {
+                  const result = await openNativePractice(currentTarget);
+                  if (result) {
+                    setMessage(`Gợi ý đã chọn: ${result.candidate}. Lượt luyện được lưu riêng, không thay đổi lịch ôn.`);
+                    setNativeRevision(value => value + 1);
+                  }
+                } catch {
+                  setMessage("Chưa hoàn tất luyện viết. Bạn có thể tiếp tục viết tại đây; kết quả đã lưu trên thiết bị sẽ được thử lưu lại.");
+                  setNativeRevision(value => value + 1);
+                } finally { setNativeBusy(false); }
+              }}
+            >
+              <Text style={styles.actionText}>Luyện viết toàn màn hình ↗</Text>
+            </Pressable>
+            {nativeHistory.some(item => item.target === currentTarget) && <View accessibilityLabel="Lịch sử luyện viết">
+              <Text style={styles.message}>Gợi ý đã lưu · không chấm đúng/sai</Text>
+              {nativeHistory.filter(item => item.target === currentTarget).map(item => <Text key={item.id} style={styles.message}>
+                {item.candidate} · {item.stroke_count} nét · {new Date(item.completed_at).toLocaleString("vi-VN")}
+              </Text>)}
+            </View>}
+            </View>
+          )}
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                eraserMode ? "Tắt chế độ tẩy nét" : "Bật chế độ tẩy nét"
+              }
+              accessibilityState={{ selected: eraserMode }}
+              style={[styles.action, eraserMode && styles.eraserActive]}
+              onPress={() => setEraserMode((value) => !value)}
+            >
+              <Text
+                style={[
+                  styles.actionText,
+                  eraserMode && styles.eraserActiveText,
+                ]}
+              >
+                {eraserMode ? "Xong tẩy" : "Tẩy nét"}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Xóa toàn bộ nét trên trang hiện tại"
+              style={styles.action}
+              onPress={clearCurrentPage}
+            >
+              <Text style={styles.actionText}>Xóa trang</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                busy
+                  ? "Đang nhận diện chữ"
+                  : recognitionAvailable
+                    ? "Nhận diện cả từ"
+                    : "Xác nhận cả từ"
+              }
+              accessibilityState={{ disabled: busy || !allPagesReady, busy }}
+              style={[styles.action, styles.recognize]}
+              disabled={busy || !allPagesReady}
+              onPress={() => void recognize()}
+            >
+              <Text
+                style={[
+                  styles.actionText,
+                  styles.recognizeText,
+                  !allPagesReady && styles.disabledText,
+                ]}
+              >
+                {busy
+                  ? "Đang nhận diện…"
+                  : recognitionAvailable
+                    ? "Nhận diện cả từ"
+                    : "Xác nhận cả từ"}
+              </Text>
+            </Pressable>
           </View>
-        </Pressable>
-      ) : targetWord ? (
-        <Text style={styles.noStrokeHint}>Chữ này chưa có dữ liệu thứ tự nét ngoại tuyến.</Text>
-      ) : null}
 
-      <View style={styles.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={eraserMode ? "Tắt chế độ tẩy nét" : "Bật chế độ tẩy nét"}
-          accessibilityState={{ selected: eraserMode }}
-          style={[styles.action, eraserMode && styles.eraserActive]}
-          onPress={() => setEraserMode((value) => !value)}
-        >
-          <Text style={[styles.actionText, eraserMode && styles.eraserActiveText]}>{eraserMode ? "Xong tẩy" : "Tẩy nét"}</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Xóa toàn bộ nét trên trang hiện tại" style={styles.action} onPress={clearCurrentPage}>
-          <Text style={styles.actionText}>Xóa trang</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={busy ? "Đang nhận diện chữ" : recognitionAvailable ? "Nhận diện cả từ" : "Xác nhận cả từ"}
-          accessibilityState={{ disabled: busy || !allPagesReady, busy }}
-          style={[styles.action, styles.recognize]}
-          disabled={busy || !allPagesReady}
-          onPress={() => void recognize()}
-        >
-          <Text style={[styles.actionText, styles.recognizeText, !allPagesReady && styles.disabledText]}>
-            {busy ? "Đang nhận diện…" : recognitionAvailable ? "Nhận diện cả từ" : "Xác nhận cả từ"}
+          <Text accessibilityLiveRegion="polite" style={styles.sequence}>
+            {selectedCharacters.map((character) => character || "□").join("")} ·{" "}
+            {selectedCharacters.filter(Boolean).length}/{pageCount}
           </Text>
-        </Pressable>
-      </View>
-
-      <Text accessibilityLiveRegion="polite" style={styles.sequence}>
-        {selectedCharacters.map((character) => character || "□").join("")} · {selectedCharacters.filter(Boolean).length}/{pageCount}
-      </Text>
-      {selectedWord.length === pageCount ? <Text accessibilityLiveRegion="polite" style={styles.complete}>Đã chọn đủ Hán tự.</Text> : null}
+          {selectedWord.length === pageCount ? (
+            <Text accessibilityLiveRegion="polite" style={styles.complete}>
+              Đã chọn đủ Hán tự.
+            </Text>
+          ) : null}
+        </View>
+      ) : (
+        <Text style={styles.message}>
+          Bài viết của bạn được giữ lại để đối chiếu.
+        </Text>
+      )}
     </View>
   );
 }
 
-function createStyles(theme: ThemeTokens) {
+function createStyles(theme: ThemeTokens, size: number) {
   return StyleSheet.create({
     wrapper: { alignItems: "center", gap: spacing.sm },
-    pageNavigation: { width: size, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-    pageArrow: { width: 48, height: 48, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: theme.primarySoft },
-    pageArrowDisabled: { opacity: 0.45 }, pageArrowText: { color: theme.primaryText, fontSize: 36, lineHeight: 38, fontWeight: "700" },
-    pageCopy: { alignItems: "center" }, pageTitle: { color: theme.textPrimary, fontSize: 14, fontWeight: "900" }, pageValue: { color: theme.primaryText, fontSize: 12, fontWeight: "700", marginTop: 2 },
-    canvas: { width: size, height: size, backgroundColor: "#FFFDFC", borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, overflow: "hidden" },
+    pageNavigation: {
+      width: size,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    pageArrow: {
+      width: 48,
+      height: 48,
+      borderRadius: radius.md,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.primarySoft,
+    },
+    pageArrowDisabled: { opacity: 0.45 },
+    pageArrowText: {
+      color: theme.primaryText,
+      fontSize: 36,
+      lineHeight: 38,
+      fontWeight: "700",
+    },
+    pageCopy: { alignItems: "center" },
+    pageTitle: { color: theme.textPrimary, fontSize: 14, fontWeight: "900" },
+    pageValue: {
+      color: theme.primaryText,
+      fontSize: 12,
+      fontWeight: "700",
+      marginTop: 2,
+    },
+    canvas: {
+      width: size,
+      height: size,
+      backgroundColor: "#FFFDFC",
+      borderWidth: 1.5,
+      borderColor: theme.border,
+      borderRadius: radius.md,
+      overflow: "hidden",
+    },
     canvasErasing: { borderColor: theme.warning, borderWidth: 2.5 },
-    message: { fontSize: 11, lineHeight: 16, color: theme.textMuted, textAlign: "center", minHeight: 30 },
-    sequence: { fontSize: 20, color: theme.primaryText, fontWeight: "900", textAlign: "center", letterSpacing: 4 },
+    message: {
+      fontSize: 11,
+      lineHeight: 16,
+      color: theme.textMuted,
+      textAlign: "center",
+      minHeight: 30,
+    },
+    sequence: {
+      fontSize: 20,
+      color: theme.primaryText,
+      fontWeight: "900",
+      textAlign: "center",
+      letterSpacing: 4,
+    },
     complete: { color: theme.success, fontSize: 11, fontWeight: "800" },
-    fallback: { width: size, gap: spacing.xs }, fallbackLabel: { fontSize: 10, color: theme.textMuted, fontWeight: "900", letterSpacing: 0.6, textAlign: "center" },
-    fallbackInput: { minHeight: 48, borderWidth: 1, borderColor: theme.border, borderRadius: radius.md, paddingHorizontal: spacing.md, color: theme.textPrimary, backgroundColor: theme.surface, fontSize: 20, textAlign: "center" },
-    candidates: { width: size, flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.sm },
-    candidate: { width: 50, height: 52, borderRadius: 12, backgroundColor: theme.primarySoft, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-    wordCandidate: { width: "auto", minWidth: 74, paddingHorizontal: spacing.md },
-    manualCandidate: { width: size, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: theme.warning, backgroundColor: theme.warningSoft, alignItems: "center", gap: 2 },
-    manualCandidateTitle: { color: theme.warning, fontSize: 12, fontWeight: "900" },
-    manualCandidateText: { color: theme.textSecondary, fontSize: 11, textAlign: "center" },
-    hanzi: { width: "100%", paddingHorizontal: 2, fontSize: 25, lineHeight: 31, color: theme.primaryText, fontWeight: "800", textAlign: "center" },
-    strokeHint: { width: size, minHeight: 58, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.md, borderWidth: 1, borderColor: theme.info, backgroundColor: theme.infoSoft },
+    fallback: { width: size, gap: spacing.xs },
+    fallbackLabel: {
+      fontSize: 10,
+      color: theme.textMuted,
+      fontWeight: "900",
+      letterSpacing: 0.6,
+      textAlign: "center",
+    },
+    fallbackInput: {
+      minHeight: 48,
+      borderWidth: 1,
+      borderColor: theme.border,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      color: theme.textPrimary,
+      backgroundColor: theme.surface,
+      fontSize: 20,
+      textAlign: "center",
+    },
+    candidates: {
+      width: size,
+      flexDirection: "row",
+      flexWrap: "wrap",
+      justifyContent: "center",
+      gap: spacing.sm,
+    },
+    candidate: {
+      width: 50,
+      height: 52,
+      borderRadius: 12,
+      backgroundColor: theme.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+      overflow: "hidden",
+    },
+    wordCandidate: {
+      width: "auto",
+      minWidth: 74,
+      paddingHorizontal: spacing.md,
+    },
+    manualCandidate: {
+      width: size,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: theme.warning,
+      backgroundColor: theme.warningSoft,
+      alignItems: "center",
+      gap: 2,
+    },
+    manualCandidateTitle: {
+      color: theme.warning,
+      fontSize: 12,
+      fontWeight: "900",
+    },
+    manualCandidateText: {
+      color: theme.textSecondary,
+      fontSize: 11,
+      textAlign: "center",
+    },
+    hanzi: {
+      width: "100%",
+      paddingHorizontal: 2,
+      fontSize: 25,
+      lineHeight: 31,
+      color: theme.primaryText,
+      fontWeight: "800",
+      textAlign: "center",
+    },
+    strokeHint: {
+      width: size,
+      minHeight: 58,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: theme.info,
+      backgroundColor: theme.infoSoft,
+    },
     strokeHintDisabled: { opacity: 0.6 },
     strokeHintPressed: { opacity: 0.72 },
-    strokeHintIcon: { color: theme.primaryText, fontSize: 20, fontWeight: "900" },
+    strokeHintIcon: {
+      color: theme.primaryText,
+      fontSize: 20,
+      fontWeight: "900",
+    },
     strokeHintCopy: { flex: 1 },
-    strokeHintTitle: { color: theme.primaryText, fontSize: 13, fontWeight: "900" },
+    strokeHintTitle: {
+      color: theme.primaryText,
+      fontSize: 13,
+      fontWeight: "900",
+    },
     strokeHintMeta: { color: theme.textSecondary, fontSize: 10, marginTop: 2 },
-    noStrokeHint: { width: size, color: theme.textMuted, fontSize: 11, lineHeight: 16, textAlign: "center" },
+    noStrokeHint: {
+      width: size,
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      textAlign: "center",
+    },
     actions: { width: size, flexDirection: "row", gap: spacing.xs },
-    action: { flex: 1, minHeight: 44, paddingHorizontal: spacing.xs, borderRadius: radius.md, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, justifyContent: "center", alignItems: "center" },
-    recognize: { backgroundColor: theme.primary, borderColor: theme.primary }, actionText: { color: theme.textPrimary, fontSize: 12, fontWeight: "800" }, recognizeText: { color: theme.onPrimary }, disabledText: { opacity: 0.65 },
-    eraserActive: { backgroundColor: theme.warningSoft, borderColor: theme.warning }, eraserActiveText: { color: theme.warning },
+    action: {
+      flex: 1,
+      minHeight: 44,
+      paddingHorizontal: spacing.xs,
+      borderRadius: radius.md,
+      backgroundColor: theme.surface,
+      borderWidth: 1,
+      borderColor: theme.border,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    recognize: { backgroundColor: theme.primary, borderColor: theme.primary },
+    actionText: { color: theme.textPrimary, fontSize: 12, fontWeight: "800" },
+    recognizeText: { color: theme.onPrimary },
+    disabledText: { opacity: 0.65 },
+    eraserActive: {
+      backgroundColor: theme.warningSoft,
+      borderColor: theme.warning,
+    },
+    eraserActiveText: { color: theme.warning },
   });
 }

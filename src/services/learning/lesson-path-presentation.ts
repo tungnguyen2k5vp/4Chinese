@@ -1,4 +1,14 @@
 import type { LearningLesson } from '@/db/learning-path';
+import { HSK30_COUNTS, HSK30_LEVELS } from '@/services/hsk/hsk30-source';
+
+/** Syllabus item counts, not a claim that old lessons/progress equal syllabus mastery. */
+export function hskPathVocabulary(band: string) {
+  const index = HSK30_LEVELS.findIndex(level => level === band);
+  return index < 0 ? null : {
+    added: HSK30_COUNTS.vocabulary[index]!,
+    cumulative: HSK30_COUNTS.vocabulary.slice(0, index + 1).reduce((sum, count) => sum + count, 0),
+  };
+}
 
 export type LessonNodeState = 'locked' | 'available' | 'current' | 'completed';
 export type LessonUnitGroup = { title: string; lessons: { lesson: LearningLesson; courseIndex: number }[] };

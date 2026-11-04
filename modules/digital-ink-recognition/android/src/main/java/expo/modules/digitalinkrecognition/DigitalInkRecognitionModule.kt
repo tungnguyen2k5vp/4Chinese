@@ -15,6 +15,8 @@ import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognitionModel
 import com.google.mlkit.vision.digitalink.recognition.DigitalInkRecognizerOptions
 import com.google.mlkit.vision.digitalink.recognition.Ink
 import expo.modules.kotlin.Promise
+import expo.modules.kotlin.activityresult.AppContextActivityResultLauncher
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -28,9 +30,32 @@ class DigitalInkRecognitionModule : Module() {
   private val disposed = AtomicBoolean(false)
   private val ocrGeneration = AtomicInteger(0)
   @Volatile private var imageRecognizer: TextRecognizer? = null
+  private lateinit var practiceLauncher: AppContextActivityResultLauncher<String, PracticeResult?>
+  private val practiceBusy = AtomicBoolean(false)
 
   override fun definition() = ModuleDefinition {
     Name("DigitalInkRecognition")
+
+    RegisterActivityContracts {
+      practiceLauncher = registerForActivityResult(PracticeContract()) { _, _ ->
+        // NativePracticeActivity persisted the result before returning, including after process recreation.
+      }
+    }
+
+    AsyncFunction("openPractice") Coroutine { target: String ->
+      require(target.codePointCount(0, target.length) in 1..4 && target.none { it.isWhitespace() || Character.isISOControl(it) }
+        && appContext.currentActivity != null) { "A current activity and 1–4 characters are required" }
+      check(practiceBusy.compareAndSet(false, true)) { "Handwriting practice is already open" }
+      try { practiceLauncher.launch(target)?.asMap() } finally { practiceBusy.set(false) }
+    }
+
+    AsyncFunction("getPendingPracticeResults") {
+      PendingPracticeResults.list(requireNotNull(appContext.reactContext)).map { it.asMap() }
+    }
+
+    AsyncFunction("acknowledgePracticeResult") { id: String ->
+      PendingPracticeResults.acknowledge(requireNotNull(appContext.reactContext), id)
+    }
 
     OnDestroy {
       disposed.set(true)

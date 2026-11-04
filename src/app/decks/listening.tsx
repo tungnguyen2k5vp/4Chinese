@@ -4,9 +4,9 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { radius, spacing, themedCard } from "@/constants/design";
 import { getDueVocabulary, getSettings, getUnlearnedVocabulary, getDeckVocabulary, listPersonalDecks, listVocabulary } from "@/db/repository";
 import { useStudySession } from "@/hooks/use-study-session";
@@ -116,7 +116,9 @@ export default function DeckListeningScreen() {
 
   const playAudio = async (id: string) => {
     const word = wordsById.get(id);
-    if (!word) return;
+    if (!word || matchedIds.has(id)) return;
+    if (mismatchTimer.current) clearTimeout(mismatchTimer.current);
+    setMismatch(null);
     setSelectedAudioId(id);
     setNotice(null);
     const result = await speakChinese(word.simplified, { rate: settings?.speechRate ?? 0.82 });
@@ -255,17 +257,16 @@ export default function DeckListeningScreen() {
             const word = wordsById.get(id);
             if (!word) return null;
             const matched = matchedIds.has(id);
-            const selected = selectedAudioId === id;
             const wrong = mismatch?.meaningId === id;
             return (
               <Pressable
                 key={id}
                 accessibilityRole="button"
                 accessibilityLabel={`Nghĩa ${index + 1}: ${word.primaryMeaningVi}`}
-                accessibilityState={{ disabled: matched, selected }}
+                accessibilityState={{ disabled: matched }}
                 disabled={matched}
                 onPress={() => chooseMeaning(id)}
-                style={({ pressed }) => [styles.meaningTile, selected && styles.tileSelected, matched && styles.tileMatched, wrong && styles.tileWrong, pressed && !matched && styles.pressed]}
+                style={({ pressed }) => [styles.meaningTile, matched && styles.tileMatched, wrong && styles.tileWrong, pressed && !matched && styles.pressed]}
               >
                 <Text numberOfLines={4} style={[styles.meaningText, matched && styles.matchedText]}>{word.primaryMeaningVi}</Text>
                 {matched ? <Ionicons color={theme.success} name="checkmark-circle" size={19} /> : null}

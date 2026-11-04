@@ -3,44 +3,44 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { VocabularyCard } from "@/components/VocabularyCard";
 import { radius, spacing, themedCard } from "@/constants/design";
 import { getSettings, getWeakVocabulary, type WeakVocabulary } from "@/db/repository";
+import { normalizeReviewSessionSize } from "@/services/review/session-size";
 import { useAppStore } from "@/stores/app-store";
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { ThemeTokens } from "@/theme/tokens";
-import type { UserSettings } from "@/types/models";
 
 export default function WeakWordsScreen() {
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
   const db = useSQLiteContext();
   const setReviewQueue = useAppStore((state) => state.setReviewQueue);
+  const setSettings = useAppStore((state) => state.setSettings);
+  const size = useAppStore((state) => normalizeReviewSessionSize(state.settings?.reviewSessionSize));
   const [items, setItems] = useState<WeakVocabulary[]>([]);
-  const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
     let active = true;
     setLoading(true);
     void Promise.all([getWeakVocabulary(db), getSettings(db)])
-      .then(([nextItems, nextSettings]) => {
+      .then(([nextItems, settings]) => {
         if (!active) return;
         setItems(nextItems);
-        setSettings(nextSettings);
+        setSettings(settings);
       })
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [db]);
+  }, [db, setSettings]);
 
   useFocusEffect(load);
 
   const dueItems = useMemo(() => items.filter((item) => item.isDue), [items]);
   const startDueReview = () => {
-    const size = settings?.reviewSessionSize ?? 20;
     if (!dueItems.length) return;
     setReviewQueue(dueItems.slice(0, size).map((item) => item.word));
     router.push("/review/session");
@@ -66,7 +66,7 @@ export default function WeakWordsScreen() {
           Chỉ những từ vừa cần củng cố vừa đến hạn mới có thể vào phiên ôn, để giữ đúng lịch nhắc lại của từng từ.
         </Text>
         <PrimaryButton
-          label={dueItems.length ? `Ôn ${Math.min(dueItems.length, settings?.reviewSessionSize ?? 20)} từ yếu đến hạn` : "Chưa có từ yếu đến hạn"}
+          label={dueItems.length ? `Ôn ${Math.min(dueItems.length, size)} từ yếu đến hạn` : "Chưa có từ yếu đến hạn"}
           disabled={!dueItems.length}
           onPress={startDueReview}
         />
@@ -82,15 +82,19 @@ export default function WeakWordsScreen() {
           message="Khi một từ bị sai, quên lại hoặc cần nhiều gợi ý, nó sẽ xuất hiện ở đây để bạn theo dõi."
         />
       ) : null}
-      {items.map((item) => (
-        <View key={item.word.id} style={styles.wordGroup}>
-          <VocabularyCard word={item.word} onPress={() => router.push(`/word/${item.word.id}`)} />
-          <View style={styles.reasonRow}>
+      {items.map((item) => {
+        const reason = item.reasons.join(" · ") || "Có tín hiệu cần ôn thêm";
+        return <VocabularyCard
+          key={item.word.id}
+          word={item.word}
+          onPress={() => router.push(`/word/${item.word.id}`)}
+          footerAccessibilityLabel={`Cần củng cố: ${reason}`}
+          footer={<View style={styles.reasonRow}>
             <Text style={styles.reasonLabel}>Cần củng cố</Text>
-            <Text style={styles.reasonText}>{item.reasons.join(" · ") || "Có tín hiệu cần ôn thêm"}</Text>
-          </View>
-        </View>
-      ))}
+            <Text style={styles.reasonText}>{reason}</Text>
+          </View>}
+        />;
+      })}
     </Screen>
   );
 }
@@ -106,8 +110,7 @@ function createStyles(theme: ThemeTokens) {
     countLabel: { color: theme.textSecondary, fontSize: 10, fontWeight: "800" },
     copy: { color: theme.textSecondary, fontSize: 13, lineHeight: 20 },
     loader: { marginTop: spacing.xl },
-    wordGroup: { gap: spacing.xs },
-    reasonRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, paddingHorizontal: spacing.sm },
+    reasonRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
     reasonLabel: { color: theme.warning, fontSize: 11, fontWeight: "900" },
     reasonText: { flex: 1, color: theme.textSecondary, fontSize: 11, lineHeight: 17 },
   });

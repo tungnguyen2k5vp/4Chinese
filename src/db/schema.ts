@@ -1,4 +1,4 @@
-export const DATABASE_VERSION = 43;
+export const DATABASE_VERSION = 47;
 
 /**
  * Sentence provenance is additive: existing authored curriculum sentences
@@ -720,6 +720,22 @@ CREATE INDEX IF NOT EXISTS idx_mistakes_open ON mistake_records(resolved,skill_t
 CREATE INDEX IF NOT EXISTS idx_vocabulary_pinyin_compact ON vocabulary(
   LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(pinyin_numeric,'1',''),'2',''),'3',''),'4',''),'5',''),' ',''),'ü','v'))
 );
+`;
+
+/** V46 stores personal-deck membership separately from vocabulary identity.
+ * Existing deck-owned rows are linked in place; no vocabulary/SRS row is deleted. */
+export const migrationV46Sql = `
+CREATE TABLE IF NOT EXISTS personal_deck_vocabulary (
+  deck_id TEXT NOT NULL REFERENCES personal_deck(id) ON DELETE CASCADE,
+  vocabulary_id TEXT NOT NULL REFERENCES vocabulary(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(deck_id,vocabulary_id)
+);
+CREATE INDEX IF NOT EXISTS idx_personal_deck_vocabulary_word
+  ON personal_deck_vocabulary(vocabulary_id,deck_id);
+INSERT OR IGNORE INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at)
+SELECT v.deck_id,v.id,COALESCE(v.created_at,v.updated_at,CURRENT_TIMESTAMP)
+FROM vocabulary v JOIN personal_deck d ON d.id=v.deck_id WHERE v.deck_id IS NOT NULL;
 `;
 
 export function isValidMigrationVersion(version: number): boolean {

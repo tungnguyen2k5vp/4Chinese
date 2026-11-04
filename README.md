@@ -2,7 +2,9 @@
 
 Ứng dụng học từ vựng tiếng Trung cho người Việt, xây dựng bằng Expo/React Native. 4Chinese ưu tiên học chủ động: viết hoặc chọn Hán tự, tự nhớ pinyin, chọn nghĩa, luyện nghe/nói và ôn lặp ngắt quãng theo cấp độ.
 
-> Dự án chạy offline-first: từ vựng, tiến độ học và lịch ôn được lưu trên thiết bị bằng SQLite. Supabase chỉ cần thiết khi dùng tính năng chia sẻ/nhận bộ từ bằng mã ngắn.
+Phiên bản source hiện tại: **0.1.55 (57)**. Các cập nhật gồm motion và phản hồi tương tác, lộ trình/ngữ pháp HSK, luyện viết và cấu tạo Hán tự, chia sẻ tiến độ bộ từ bằng mã 8 ký tự, cùng AI Tutor dùng phiên khách tự động. AI Tutor hiện chưa mở sử dụng: kiểm thử Gemini thật còn lỗi 503/timeout; xem [trạng thái backend và kiểm thử](docs/AI_BACKEND_2026-11-04.md).
+
+> Dự án chạy offline-first: từ vựng, tiến độ học và lịch ôn được lưu trên thiết bị bằng SQLite. Supabase phục vụ chia sẻ bộ từ, sao lưu/đồng bộ tùy chọn và các tính năng AI khi được bật. Khóa AI chỉ lưu ở server.
 
 ## Tính năng chính
 

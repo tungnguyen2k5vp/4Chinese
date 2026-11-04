@@ -1,17 +1,21 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import generatedVocabulary from '@/data/hsk-vocabulary.json';
+import hsk30Bundle from '@/data/hsk30-2025-11.json';
 import { starterVocabulary } from '@/data/starter-vocabulary';
 import { supplementalVocabulary } from '@/data/supplemental-vocabulary';
 import { seedGrammarContent } from '@/db/grammar';
+import { importHsk30Bundle } from '@/db/hsk30';
 import { seedLearningPath } from '@/db/learning-path';
 import { stageLexicalV5Drafts } from '@/db/lexical-knowledge';
 import { migrateDatabaseSchema } from '@/db/migrations';
 import { DATABASE_VERSION } from '@/db/schema';
 import { seedStories } from '@/db/stories';
 import { installBundledContentMetadata } from '@/services/content/content-version';
+import type { Hsk30Bundle } from '@/services/hsk/hsk30-source';
 import { illustrationForVocabulary, isDeviceSelectedImage } from '@/services/media/illustration';
 import { normalizeSearch } from '@/services/search/normalize';
+import { normalizeHanziIdentity, vocabularyIdentityKey } from '@/services/vocabulary/identity';
 import {
   applyVocabularyQualityOverride,
   cleanLearnerMeanings,
@@ -19,22 +23,25 @@ import {
 } from '@/services/vocabulary/quality';
 import type { HskBand, Vocabulary } from '@/types/models';
 
-export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
+export async function initializeDatabase(db: SQLiteDatabase, options: { preserveVocabularyContent?: boolean } = {}): Promise<void> {
+  // HSK classification upgrades must not replay historical dictionary rewrites.
+  // Existing content is preserved by default, including on older installations.
+  const mayRefreshVocabulary = options.preserveVocabularyContent === false;
   const currentVersion = await migrateDatabaseSchema(db);
   const count = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) AS count FROM vocabulary');
   const seededNow = (count?.count ?? 0) === 0;
   if (seededNow) await seedDatabase(db);
-  if (currentVersion < 6 && !seededNow) await refreshGeneratedTranslations(db);
+  if (mayRefreshVocabulary && currentVersion < 6 && !seededNow) await refreshGeneratedTranslations(db);
   await seedSupplementalVocabulary(db);
-  if (currentVersion < 7) await repairAutomaticIllustrations(db);
+  if (mayRefreshVocabulary && currentVersion < 7) await repairAutomaticIllustrations(db);
   if (currentVersion < 22 && !seededNow && typeof document === 'undefined') await rebuildVocabularySearchFts(db);
   // A freshly seeded database already uses the canonical data above; the
   // migration is only needed for an existing install with an older index.
   // Dictionary rewrite belongs to the v9 data migration, not every later
   // schema release. Repeating it on v10+ adds seconds of startup work and can
   // overwrite learner-visible base-word corrections unnecessarily.
-  if (currentVersion < 9 && !seededNow) await refreshVocabularyQuality(db);
-  if (currentVersion >= 9 && currentVersion < 30 && !seededNow) await refreshVocabularyQualityPatch(db);
+  if (mayRefreshVocabulary && currentVersion < 9 && !seededNow) await refreshVocabularyQuality(db);
+  if (mayRefreshVocabulary && currentVersion >= 9 && currentVersion < 30 && !seededNow) await refreshVocabularyQualityPatch(db);
   if (currentVersion < 11 || seededNow) await rebuildVocabularyCharacterIndex(db);
   if (currentVersion < 34) await seedGrammarContent(db, getOfflineVocabulary());
   if (currentVersion < 34) await seedLearningPath(db);
@@ -49,17 +56,20 @@ export async function initializeDatabase(db: SQLiteDatabase): Promise<void> {
   // v40 corrects seven incorrectly selected canonical readings. Only bundled
   // dictionary rows are refreshed; deck copies, notes and SRS progress remain
   // user-owned and are deliberately not touched.
-  if (currentVersion < 40 && !seededNow) await refreshVocabularyQualityPatchV40(db);
+  if (mayRefreshVocabulary && currentVersion < 40 && !seededNow) await refreshVocabularyQualityPatchV40(db);
   if (currentVersion < 40) await stageLexicalV5Drafts(db);
   // v43 aligns bundled vocabulary with the user-supplied all_hsk_clean.csv.
   // It keeps stable IDs and updates only immutable base rows; progress, deck
   // copies, notes, favorites and custom words are never rewritten.
-  if (currentVersion < 43 && !seededNow) {
+  if (mayRefreshVocabulary && currentVersion < 43 && !seededNow) {
     await refreshBundledHskCleanV43(db);
     await rebuildVocabularyCharacterIndex(db);
     if (typeof document === 'undefined') await rebuildVocabularySearchFts(db);
   }
   await installBundledContentMetadata(db);
+  // v45 imports only source records and version-scoped links. All vocabulary
+  // columns, examples, media, internal IDs and learner tables stay unchanged.
+  if (currentVersion < 45) await importHsk30Bundle(db, hsk30Bundle as unknown as Hsk30Bundle);
   if (currentVersion < DATABASE_VERSION) {
     await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
   }
@@ -153,6 +163,16 @@ async function insertVocabulary(
   vocabulary: typeof starterVocabulary,
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
+    const existingWords = await db.getAllAsync<{
+      simplified: string;
+      pinyin: string;
+      pinyin_numeric: string;
+    }>('SELECT simplified,pinyin,pinyin_numeric FROM vocabulary');
+    const identities = new Set(existingWords.map((word) => vocabularyIdentityKey({
+      simplified: word.simplified,
+      pinyin: word.pinyin,
+      pinyinNumeric: word.pinyin_numeric,
+    })));
     const wordStatement = await db.prepareAsync(`INSERT OR IGNORE INTO vocabulary (
       id, simplified, traditional, pinyin, pinyin_numeric, primary_meaning_vi,
       meanings_vi, meanings_en, pos, hsk_band, frequency_rank, classifiers,
@@ -168,6 +188,9 @@ async function insertVocabulary(
       VALUES ($id,$vocabularyId,$chinese,$pinyin,$vietnamese,$english,$difficulty)`);
     try {
       for (const word of vocabulary) {
+        const identity = vocabularyIdentityKey(word);
+        if (identities.has(identity)) continue;
+        identities.add(identity);
         await wordStatement.executeAsync({
           $id: word.id, $simplified: word.simplified, $traditional: word.traditional,
           $pinyin: word.pinyin, $pinyinNumeric: word.pinyinNumeric,
@@ -210,7 +233,16 @@ export function getOfflineVocabulary(bands?: HskBand[]): Vocabulary[] {
     ...getSeedVocabulary(bands),
     ...supplementalVocabulary.filter((word) => !allowedBands || allowedBands.has(word.hskBand)),
   ];
-  return Array.from(new Map(words.map((word) => [word.id, word])).values());
+  return uniqueBundledVocabulary(Array.from(new Map(words.map((word) => [word.id, word])).values()));
+}
+
+function uniqueBundledVocabulary(words: Vocabulary[]): Vocabulary[] {
+  const byIdentity = new Map<string, Vocabulary>();
+  for (const word of words) {
+    const key = vocabularyIdentityKey(word);
+    if (!byIdentity.has(key)) byIdentity.set(key, word);
+  }
+  return Array.from(byIdentity.values());
 }
 
 function getSeedVocabulary(bands?: HskBand[]): Vocabulary[] {
@@ -218,16 +250,16 @@ function getSeedVocabulary(bands?: HskBand[]): Vocabulary[] {
   const curated = new Map(
     starterVocabulary
       .filter((word) => !allowedBands || allowedBands.has(word.hskBand))
-      .map((word) => [word.simplified, word]),
+      .map((word) => [normalizeHanziIdentity(word.simplified), word]),
   );
   const generated = (generatedVocabulary as typeof starterVocabulary).filter(
     (word) => !allowedBands || allowedBands.has(word.hskBand),
   );
   const merged = generated.map((rawWord) => {
     const word = applyVocabularyQualityOverride(rawWord);
-    const correction = curated.get(word.simplified);
+    const correction = curated.get(normalizeHanziIdentity(word.simplified));
     if (!correction) return word;
-    curated.delete(word.simplified);
+    curated.delete(normalizeHanziIdentity(word.simplified));
     return { ...word, primaryMeaningVi: correction.primaryMeaningVi, meaningsVi: correction.meaningsVi,
       translationStatus: correction.translationStatus, strokeCount: correction.strokeCount,
       examples: correction.examples, source: `${word.source}; curated Vietnamese starter correction` };

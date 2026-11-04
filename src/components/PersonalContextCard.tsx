@@ -7,7 +7,8 @@ import { contextCloze, deleteVocabularyContext, listVocabularyContexts, type Voc
 import { useConfirmation } from '@/hooks/use-confirmation';
 import { useTheme } from '@/theme/ThemeProvider';
 
-const sourceLabels = { READER:'tài liệu đã đọc',STORY:'truyện',OCR:'ảnh đã tra',LESSON:'bài học' };
+const sourceLabels = { READER:'tài liệu đã đọc',STORY:'truyện',OCR:'ảnh đã tra',LESSON:'bài học',
+  LISTENING:'bài nghe',AI_SELECTED:'đoạn hội thoại đã chọn',CUSTOM:'ngữ cảnh tự thêm' };
 
 /** Personal text is fetched locally and never passed to speech/AI automatically. */
 export function PersonalContextCard({ vocabularyId, answers, reveal = false, editable = false, onHint }:
@@ -17,11 +18,11 @@ export function PersonalContextCard({ vocabularyId, answers, reveal = false, edi
   const [expanded,setExpanded] = useState(false); const [retry,setRetry] = useState(0); const [deleting,setDeleting] = useState(false);
   useEffect(() => {
     let active = true;
-    listVocabularyContexts(db,vocabularyId).then(rows => {
+    listVocabularyContexts(db,vocabularyId,3,undefined,editable).then(rows => {
       if (active) setState({id:vocabularyId,rows,error:false});
     }).catch(() => { if (active) setState({id:vocabularyId,rows:[],error:true}); });
     return () => { active=false; };
-  },[db,vocabularyId,retry]);
+  },[db,vocabularyId,retry,editable]);
   const current = state?.id === vocabularyId ? state : null;
   if (!current) return editable ? <Text style={{color:theme.textMuted}}>Đang tải ngữ cảnh cá nhân…</Text> : null;
   if (current.error) return editable ? <Pressable accessibilityRole="button" onPress={() => setRetry(value=>value+1)} style={{minHeight:48,justifyContent:'center'}}>
@@ -42,7 +43,7 @@ export function PersonalContextCard({ vocabularyId, answers, reveal = false, edi
     {!open ? <Pressable accessibilityRole="button" onPress={() => {setExpanded(true);onHint?.();}} style={{minHeight:48,justifyContent:'center'}}>
       <Text style={{color:theme.primaryText}}>Xem gợi ý ngữ cảnh (ẩn từ cần nhớ)</Text></Pressable> : rows.map(row =>
       <View key={`${row.source_type}:${row.source_id}:${row.location}`} style={{gap:8}}>
-        <Text style={{color:theme.textMuted}}>Trong {sourceLabels[row.source_type]}</Text>
+        <Text style={{color:theme.textMuted}}>Trong {row.source_title.trim() || sourceLabels[row.source_type]}</Text>
         <Text style={{color:theme.textPrimary,fontSize:20,lineHeight:32}}>{reveal ? row.sentence : contextCloze(row.sentence,answers)}</Text>
         {editable ? <Pressable accessibilityRole="button" accessibilityLabel="Xóa ngữ cảnh đã lưu" disabled={deleting} onPress={() => void remove(row)} style={{minHeight:48,justifyContent:'center'}}>
           <Text style={{color:theme.error}}>Xóa ngữ cảnh</Text></Pressable> : null}

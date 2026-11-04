@@ -17,8 +17,8 @@ import {
   View,
 } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { themedCard } from "@/constants/design";
 import {
   loadWrittenAttempt,
@@ -40,7 +40,8 @@ import {
 import { useTheme } from "@/theme/ThemeProvider";
 
 export default function WrittenSession() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id } = useLocalSearchParams<{ id?: string | string[] }>();
+  const attemptId = typeof id === 'string' ? id.trim() : Array.isArray(id) ? id[0]?.trim() ?? '' : '';
   const db = useSQLiteContext();
   const theme = useTheme();
   const navigation = useNavigation();
@@ -60,19 +61,27 @@ export default function WrittenSession() {
     setLoading(true);
     setError("");
     try {
-      const saved = await loadWrittenAttempt(db, id);
+      if (!attemptId) throw new Error('WRITTEN_ID_MISSING');
+      const saved = await loadWrittenAttempt(db, attemptId);
       if (live.current) {
         leave.current = false;
         setAttempt(saved);
         setAnswer(saved.answer);
         setClockNow(Date.now());
       }
-    } catch {
-      if (live.current) setError("Chưa đọc được bài viết.");
+    } catch (reason) {
+      if (live.current) {
+        setAttempt(null);
+        setError(reason instanceof Error && reason.message === 'WRITTEN_NOT_FOUND'
+          ? 'Bản nháp này không còn trong lịch sử. Bài viết khác vẫn được giữ nguyên.'
+          : reason instanceof Error && reason.message === 'WRITTEN_ID_MISSING'
+            ? 'Thiếu liên kết tới bản nháp. Hãy quay lại danh sách để mở bài.'
+            : 'Không thể tải bản nháp trên thiết bị. Dữ liệu hiện có vẫn được giữ nguyên; hãy thử lại hoặc mở danh sách bài.');
+      }
     } finally {
       if (live.current) setLoading(false);
     }
-  }, [db, id]);
+  }, [attemptId, db]);
   useEffect(() => {
     const tick = () => setClockNow(Date.now());
     const timer = setInterval(tick, 1000);
@@ -199,9 +208,7 @@ export default function WrittenSession() {
           <Text accessibilityLiveRegion="polite" style={{ color: theme.error }}>
             {error}
           </Text>
-          {!attempt ? (
-            <PrimaryButton label="Đọc lại bài" onPress={() => void load()} />
-          ) : null}
+          {!attempt ? <PrimaryButton label={attemptId ? "Quay lại danh sách bài" : "Quay lại danh sách bài"} onPress={() => router.replace('/exam/skills' as Href)} /> : <PrimaryButton label="Thử tải lại" onPress={() => void load()} />}
         </View>
       ) : null}
       {exercise && attempt && check ? (

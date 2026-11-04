@@ -2,6 +2,7 @@ import { Modal, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { card, radius, spacing, themedCard } from "@/constants/design";
+import { useModalAnimationType } from '@/hooks/use-reduced-motion';
 import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { UserSettings } from "@/types/models";
 
@@ -19,12 +20,13 @@ export function StudySettingsSheet({
   onChange: (patch: Partial<UserSettings>) => void;
 }) {
   const theme = useTheme();
+  const modalAnimation = useModalAnimationType();
   const styles = useThemeStyles(createStyles);
   if (!settings) return null;
-  const count = mode === "learn" ? settings.learnSessionSize : settings.reviewSessionSize;
-  const counts = mode === "learn" ? [5, 10, 15, 20, 30, 50, 75, 100] : [10, 20, 30, 50];
+  const count = mode === "learn" ? settings.learnSessionSize : 10;
+  const counts = mode === "learn" ? [5, 10, 15, 20, 30, 50, 75, 100] : [10];
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={modalAnimation} onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={[card, themedCard(theme), styles.sheet]}>
           <View style={styles.header}>

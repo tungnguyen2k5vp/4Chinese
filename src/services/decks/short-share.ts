@@ -54,6 +54,16 @@ async function responseMessage(response: Response): Promise<string> {
   return `HTTP ${response.status}`;
 }
 
+async function request(connection: NonNullable<ReturnType<typeof config>>, rpc: string, body: object) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    return await fetch(`${connection.url}/rest/v1/rpc/${rpc}`, {
+      method: "POST", headers: headers(connection.anonKey), body: JSON.stringify(body), signal: controller.signal,
+    });
+  } finally { clearTimeout(timer); }
+}
+
 /** Publishes a deck and retries the extremely unlikely short-code collision. */
 export async function publishShortDeck(payload: SharedDeckPayload): Promise<string> {
   const connection = config();
@@ -63,11 +73,7 @@ export async function publishShortDeck(payload: SharedDeckPayload): Promise<stri
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const code = createShortDeckCode();
-    const response = await fetch(`${connection.url}/rest/v1/rpc/${PUBLISH_RPC}`, {
-      method: "POST",
-      headers: headers(connection.anonKey),
-      body: JSON.stringify({ p_code: code, p_payload: payload }),
-    });
+    const response = await request(connection, PUBLISH_RPC, { p_code: code, p_payload: payload });
     if (response.ok) {
       const inserted: unknown = await response.json();
       if (inserted === true) return code;
@@ -85,11 +91,7 @@ export async function fetchShortDeck(codeInput: string): Promise<SharedDeckPaylo
   if (!connection) {
     throw new ShortDeckShareError("Chưa cấu hình Supabase cho mã bộ từ ngắn.");
   }
-  const response = await fetch(`${connection.url}/rest/v1/rpc/${FETCH_RPC}`, {
-    method: "POST",
-    headers: headers(connection.anonKey),
-    body: JSON.stringify({ p_code: code }),
-  });
+  const response = await request(connection, FETCH_RPC, { p_code: code });
   if (!response.ok) {
     throw new ShortDeckShareError(`Không thể tìm mã bộ từ: ${await responseMessage(response)}`);
   }
@@ -98,7 +100,7 @@ export async function fetchShortDeck(codeInput: string): Promise<SharedDeckPaylo
 
 /**
  * Imports either the current short Supabase code or the original self-contained
- * HZD1 code.  HZD1 payloads are decoded locally, so they remain usable even
+ * HZD1/HZD2 code. Offline payloads are decoded locally, so they remain usable even
  * when the old code was created before the Supabase sharing table existed.
  */
 export async function fetchSharedDeck(codeInput: string): Promise<SharedDeckPayload | null> {

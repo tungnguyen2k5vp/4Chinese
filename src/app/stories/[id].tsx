@@ -1,14 +1,15 @@
 import { Redirect, router, useFocusEffect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useRef, useState } from 'react';
-import { AppState, StyleSheet, Text, View } from 'react-native';
+import { AppState, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
+import { ChineseScreen as Screen } from '@/components/ChineseScreen';
 import { PrimaryButton } from '@/components/PrimaryButton';
-import { Screen } from '@/components/Screen';
-import { LearningLandscape } from '@/components/visual/LearningLandscape';
+import { StoryCover } from '@/components/visual/StoryCover';
 import { spacing } from '@/constants/design';
 import { getStoryDraftPreview, type StoryDraft } from '@/data/stories-v5';
 import { getStory, getStoryQuestions, recordStoryQuiz, splitStorySentences, type Story, type StoryQuestion } from '@/db/stories';
+import { useModalAnimationType } from '@/hooks/use-reduced-motion';
 import { speakChinese, stopChineseSpeech } from '@/services/audio/chinese-speech';
 import { useAppStore } from '@/stores/app-store';
 import { useThemeStyles } from '@/theme/ThemeProvider';
@@ -23,6 +24,7 @@ export default function StoryDetailScreen() {
 function StoryDetail({ id, preview }: { id: string; preview: boolean }) {
   const db = useSQLiteContext();
   const styles = useThemeStyles(createStyles);
+  const modalAnimation = useModalAnimationType();
   const settings = useAppStore((state) => state.settings);
   const [story, setStory] = useState<Story | null>(null);
   const [draft, setDraft] = useState<StoryDraft | null>(null);
@@ -40,6 +42,7 @@ function StoryDetail({ id, preview }: { id: string; preview: boolean }) {
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [audioSettingsOpen, setAudioSettingsOpen] = useState(false);
   const request = useRef(0);
   const focused = useRef(false);
   const submission = useRef(false);
@@ -111,7 +114,7 @@ function StoryDetail({ id, preview }: { id: string; preview: boolean }) {
     {loading ? <Text accessibilityLiveRegion="polite" style={styles.note}>Đang mở truyện…</Text> : null}
     {error ? <><Text accessibilityRole="alert" style={styles.note}>{error}</Text><PrimaryButton label="Thử mở lại" onPress={() => setRetry((value) => value + 1)} /></> : null}
     {!loading && !error ? <>
-      <View style={styles.readingFrame}><LearningLandscape mood="reading" height={92} /></View>
+      <View style={styles.readingFrame}><StoryCover storyId={id} level={story?.hsk_level ?? draft?.level ?? '1'} /></View>
       <Text style={styles.note}>{draft?.description ?? story?.description}</Text>
       <Text style={styles.note}>Mức ước tính {draft?.level ?? story?.hsk_level} · không phải chứng nhận HSK chính thức.</Text>
       {preview ? <Text accessibilityRole="alert" style={styles.notice}>AI hỗ trợ · DRAFT / UNREVIEWED. Chưa có thẩm định độc lập; không xuất bản, không nhận XP và không lưu tiến độ.</Text> : null}
@@ -120,15 +123,13 @@ function StoryDetail({ id, preview }: { id: string; preview: boolean }) {
         <PrimaryButton variant="ghost" label={showPinyin ? 'Ẩn pinyin' : 'Hiện pinyin'} onPress={() => setShowPinyin((value) => !value)} />
         <PrimaryButton variant="ghost" label={showVi ? 'Ẩn bản dịch tiếng Việt' : 'Hiện bản dịch tiếng Việt'} onPress={() => setShowVi((value) => !value)} />
       </View> : null}
-      <View style={styles.section}><Text style={styles.title}>Nghe từng câu bằng giọng đọc máy</Text>
-        <Text style={styles.note}>Đây không phải bản thu người bản ngữ. Tốc độ đọc phụ thuộc thiết bị.</Text>
+      <View style={[styles.section, styles.player]}>
+        <View style={styles.playerHeader}><View style={{ flex: 1, gap: 3 }}><Text style={styles.title}>Nghe truyện</Text><Text style={styles.note}>Câu {sentenceIndex + 1}/{sentences.length} · giọng đọc máy trên thiết bị</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel="Cài đặt âm thanh truyện" onPress={() => setAudioSettingsOpen(true)} style={styles.settingsButton}><Text style={styles.settingsText}>⚙</Text></Pressable></View>
         {!(settings?.soundEnabled ?? true) ? <Text style={styles.note}>Âm thanh đang tắt trong cài đặt học.</Text> : null}
-        <View style={styles.row}>{[0.65, 0.82, 1].map((speed) => <PrimaryButton key={speed} style={styles.flex} variant={rate === speed ? 'primary' : 'secondary'}
-          label={`TTS ${speed}${rate === speed ? ' ✓' : ''}`} onPress={() => { stop(); setRate(speed); }} />)}</View>
-        <Text style={styles.note}>Câu {sentenceIndex + 1}/{sentences.length}</Text>
-        <PrimaryButton label={`Phát lại câu ${sentenceIndex + 1}`} disabled={!sentences.length || !(settings?.soundEnabled ?? true)} onPress={() => void play(sentenceIndex)} />
-        <PrimaryButton variant="ghost" label="Dừng TTS" disabled={!speaking} onPress={stop} />
+        <Text numberOfLines={2} style={styles.playerSentence}>{sentences[sentenceIndex]?.hanzi ?? 'Chưa có câu để phát'}</Text>
         <View style={styles.row}><PrimaryButton style={styles.flex} variant="secondary" label="Câu trước" disabled={sentenceIndex === 0} onPress={() => { stop(); setSentenceIndex((index) => index - 1); }} />
+          <PrimaryButton style={styles.flex} label={speaking ? 'Dừng' : 'Phát câu'} disabled={!sentences.length || !(settings?.soundEnabled ?? true)} onPress={() => speaking ? stop() : void play(sentenceIndex)} />
           <PrimaryButton style={styles.flex} variant="secondary" label="Câu sau" disabled={sentenceIndex + 1 >= sentences.length} onPress={() => { stop(); setSentenceIndex((index) => index + 1); }} /></View>
         {audioMessage ? <Text accessibilityRole="alert" style={styles.note}>{audioMessage}</Text> : null}
       </View>
@@ -155,15 +156,36 @@ function StoryDetail({ id, preview }: { id: string; preview: boolean }) {
       {!submitted ? <PrimaryButton label={preview ? 'Kiểm tra thử · không lưu' : 'Nộp toàn bộ bài đọc hiểu'} disabled={!complete} loading={saving} onPress={() => void submit()} /> :
         <Text accessibilityLiveRegion="polite" style={styles.title}>{correctCount}/{questions.length} câu đúng{preview ? ' · Xem trước, không lưu' : ' · Đã lưu một lượt làm bài'}</Text>}
     </> : null}
+    <Modal visible={audioSettingsOpen} transparent statusBarTranslucent animationType={modalAnimation} onRequestClose={() => setAudioSettingsOpen(false)}>
+      <View style={styles.modalRoot}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Đóng cài đặt âm thanh" style={styles.modalScrim} onPress={() => setAudioSettingsOpen(false)} />
+        <View style={styles.settingsSheet}>
+          <View style={styles.sheetHandle} />
+          <ScrollView style={styles.settingsScroll} contentContainerStyle={styles.settingsContent} showsVerticalScrollIndicator={false}>
+            <View style={styles.playerHeader}><Text style={styles.settingsTitle}>Cài đặt âm thanh truyện</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Đóng cài đặt âm thanh" onPress={() => setAudioSettingsOpen(false)} style={styles.settingsButton}><Text style={styles.settingsText}>×</Text></Pressable></View>
+            <Text style={styles.note}>Tốc độ đọc mẫu · hiện tại {rate}×</Text>
+            <View style={styles.row}>{[0.65, 0.82, 1].map((speed) => <PrimaryButton key={speed} style={styles.flex} variant={rate === speed ? 'primary' : 'secondary'} label={`${speed}×`}
+              onPress={() => { stop(); setRate(speed); }} />)}</View>
+            <View style={styles.settingRow}><Text style={styles.note}>Hiện Pinyin</Text><Switch accessibilityLabel="Hiện Pinyin" value={showPinyin} onValueChange={setShowPinyin} /></View>
+            <View style={styles.settingRow}><Text style={styles.note}>Hiện nghĩa tiếng Việt</Text><Switch accessibilityLabel="Hiện nghĩa tiếng Việt" value={showVi} onValueChange={setShowVi} /></View>
+            <Text style={styles.note}>Âm thanh tổng hợp từ giọng đọc máy; không phải bản thu người bản ngữ.</Text>
+            <PrimaryButton label="Xong" onPress={() => setAudioSettingsOpen(false)} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   </Screen>;
 }
 
 function createStyles(theme: ThemeTokens) { return StyleSheet.create({
-  readingFrame: { overflow: 'hidden', borderRadius: 20, borderWidth: 1, borderColor: theme.border },
+  readingFrame: { height: 112, overflow: 'hidden', borderRadius: 20, borderWidth: 1, borderColor: theme.border },
   section: { padding: spacing.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.readingBackground, borderRadius: 12, gap: spacing.sm },
   title: { color: theme.textPrimary, fontSize: 18, fontWeight: '700' },
   hanzi: { color: theme.textPrimary, fontSize: 24, lineHeight: 38 },
   note: { color: theme.textSecondary, fontSize: 15, lineHeight: 23 },
   notice: { color: theme.primaryText, fontSize: 15, lineHeight: 24 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }, flex: { flexGrow: 1 },
+  player: { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1 }, playerHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm }, playerSentence: { color: theme.textPrimary, fontSize: 22, lineHeight: 32, fontWeight: '800' }, settingsButton: { minWidth: 44, minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.primarySoft }, settingsText: { color: theme.primaryText, fontWeight: '900', fontSize: 19 },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' }, modalScrim: { ...StyleSheet.absoluteFill, backgroundColor: theme.overlay }, settingsSheet: { maxHeight: '86%', paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border }, sheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: theme.border, alignSelf: 'center', marginBottom: spacing.md }, settingsScroll: { flexShrink: 1, minHeight: 0 }, settingsContent: { gap: spacing.sm, paddingBottom: spacing.xs }, settingsTitle: { flex: 1, color: theme.textPrimary, fontSize: 19, fontWeight: '900' }, settingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48 },
 }); }

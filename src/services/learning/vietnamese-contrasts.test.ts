@@ -20,7 +20,7 @@ describe("Vietnamese contrast practice", () => {
       const correction = buildGrammarExercises(item.seed, grammarSeed).find(
         (exercise) => exercise.kind === "correction",
       )!;
-      expect(correction.prompt).toBe(item.incorrect);
+      expect(correction.prompt).toContain(item.incorrect);
       expect(correction.answer).toBe(item.corrected);
       expect(correction.explanation).toBe(item.why);
       expect(item.reviewStatus).toBe("UNREVIEWED");

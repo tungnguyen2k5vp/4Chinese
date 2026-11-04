@@ -1,3 +1,4 @@
+import { Ionicons } from "@expo/vector-icons";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
@@ -46,6 +47,9 @@ export function PinyinHanziComposer({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [selectedCandidates, setSelectedCandidates] = useState<PinyinHanziCandidate[]>([]);
   const [loading, setLoading] = useState(false);
+  const [resultQuery, setResultQuery] = useState("");
+  const [lookupError, setLookupError] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState<string | null>(null);
   const [speechHints, setSpeechHints] = useState<SpeechVocabularyHint[]>([]);
 
   useEffect(() => {
@@ -89,9 +93,9 @@ export function PinyinHanziComposer({
         scriptMode,
         limit: 8,
       }).then((candidates) => {
-        if (!cancelled) setSelectedCandidates(candidates);
+        if (!cancelled) { setSelectedCandidates(candidates); setResultQuery(query); setLookupError(false); }
       }).catch(() => {
-        if (!cancelled) setSelectedCandidates([]);
+        if (!cancelled) { setSelectedCandidates([]); setResultQuery(query); setLookupError(true); }
       }).finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -105,9 +109,20 @@ export function PinyinHanziComposer({
   const visibleHanzi = (candidate: PinyinHanziCandidate) =>
     scriptMode === "traditional" ? candidate.word.traditional : candidate.word.simplified;
 
+  const query = pinyinQuery.trim();
+  const currentCandidates = query === resultQuery && !disabled ? selectedCandidates : [];
+  const searching = !!query && !disabled && (loading || query !== resultQuery);
   return (
-    <View style={styles.container}>
-      <Text style={styles.sectionLabel}>NHẬP PINYIN HOẶC CHỌN HÁN TỰ TỪ BÀN PHÍM</Text>
+    <View testID="pinyin-hanzi-composer" style={styles.container}>
+      <View style={styles.answerHeader}>
+        <View style={styles.answerCopy}>
+          <Text style={styles.sectionLabel}>Hán tự đã ghép</Text>
+          <Text testID="pinyin-composed-answer" style={selectedHanzi ? styles.answerValue : styles.answerPlaceholder}>{selectedHanzi || "Chọn chữ ở bên dưới"}</Text>
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Xóa chữ Hán cuối cùng" accessibilityState={{ disabled: disabled || !selectedHanzi }} disabled={disabled || !selectedHanzi} onPress={onDeleteLast} style={styles.iconButton}><Ionicons name="backspace-outline" size={23} color={disabled || !selectedHanzi ? theme.textMuted : theme.primaryText} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Xóa toàn bộ câu trả lời" accessibilityState={{ disabled: disabled || !selectedHanzi }} disabled={disabled || !selectedHanzi} onPress={onClear} style={styles.iconButton}><Ionicons name="close-circle-outline" size={23} color={disabled || !selectedHanzi ? theme.textMuted : theme.primaryText} /></Pressable>
+      </View>
+      <Text style={styles.sectionLabel}>Nhập pinyin</Text>
       <View style={styles.inputRow}>
         <TextInput
           accessibilityLabel="Nhập pinyin"
@@ -116,7 +131,7 @@ export function PinyinHanziComposer({
           editable={!disabled}
           keyboardType="default"
           onChangeText={onPinyinChange}
-          placeholder="Ví dụ: xihuan"
+          placeholder="VD: xi huan"
           placeholderTextColor={theme.textMuted}
           returnKeyType="done"
           selectionColor={theme.primary}
@@ -124,25 +139,27 @@ export function PinyinHanziComposer({
           value={pinyinQuery}
         />
         <SpeechPinyinButton
+          compact
+          onStatusChange={setSpeechStatus}
           contextualStrings={speechContext}
           disabled={disabled}
           onRecognizedPinyin={onPinyinChange}
           targetWord={targetWord}
         />
       </View>
-
-      <Text style={styles.sectionLabel}>CHỌN TỪ HÁN PHÙ HỢP</Text>
-      <ScrollView
+      {speechStatus ? <Text accessibilityLiveRegion="polite" style={styles.empty}>{speechStatus}</Text> : null}
+      {query && !disabled ? <ScrollView
+        style={{ flexGrow: 0, flexShrink: 0 }}
         contentContainerStyle={styles.candidateContent}
         horizontal
         keyboardShouldPersistTaps="handled"
         showsHorizontalScrollIndicator={false}
       >
-        {loading ? <ActivityIndicator accessibilityLabel="Đang tìm chữ Hán phù hợp" color={theme.primary} style={styles.loader} /> : null}
-        {!loading && pinyinQuery.trim() && selectedCandidates.length === 0 ? (
-          <Text accessibilityLiveRegion="polite" style={styles.empty}>Chưa tìm thấy từ phù hợp. Thử bỏ dấu hoặc nhập thêm âm tiết.</Text>
+        {searching ? <ActivityIndicator accessibilityLabel="Đang tìm chữ Hán phù hợp" color={theme.primary} style={styles.loader} /> : null}
+        {!searching && currentCandidates.length === 0 ? (
+          <Text accessibilityLiveRegion="polite" style={styles.empty}>{lookupError ? "Chưa tra được chữ. Hãy nhập lại để thử." : "Chưa có kết quả. Thử nhập thêm âm tiết."}</Text>
         ) : null}
-        {selectedCandidates.map((candidate) => {
+        {currentCandidates.map((candidate) => {
           const hanzi = visibleHanzi(candidate);
           const selected = selectedHanzi === hanzi || selectedHanzi.endsWith(hanzi);
           return (
@@ -159,23 +176,10 @@ export function PinyinHanziComposer({
             </Pressable>
           );
         })}
-      </ScrollView>
-
-      <View style={styles.answerHeader}>
-        <Text accessibilityRole="header" style={styles.sectionLabel}>CÂU TRẢ LỜI</Text>
-        <Text style={styles.answerValue}>{selectedHanzi || "Chưa chọn chữ Hán"}</Text>
-      </View>
-      <View style={styles.controls}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Xóa chữ Hán cuối cùng" accessibilityState={{ disabled: disabled || !selectedHanzi }} disabled={disabled || !selectedHanzi} onPress={onDeleteLast} style={styles.controlButton}>
-          <Text style={styles.controlText}>Xóa chữ cuối</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Xóa toàn bộ câu trả lời" accessibilityState={{ disabled: disabled || !selectedHanzi }} disabled={disabled || !selectedHanzi} onPress={onClear} style={styles.controlButton}>
-          <Text style={styles.controlText}>Xóa hết</Text>
-        </Pressable>
-      </View>
+      </ScrollView> : <Text style={styles.empty}>Gõ pinyin, rồi chạm chữ Hán để ghép.</Text>}
       {onHint ? (
         <Pressable accessibilityRole="button" accessibilityLabel="Xem gợi ý" accessibilityState={{ disabled }} disabled={disabled} onPress={onHint} style={styles.hintButton}>
-          <Text style={styles.hintText}>Gợi ý</Text>
+          <Ionicons name="bulb-outline" size={18} color={theme.primaryText} /><Text style={styles.hintText}>Gợi ý</Text>
         </Pressable>
       ) : null}
     </View>
@@ -185,23 +189,23 @@ export function PinyinHanziComposer({
 function createStyles(theme: ThemeTokens) {
   return StyleSheet.create({
     container: { gap: spacing.sm },
-    sectionLabel: { color: theme.primaryText, fontSize: 11, fontWeight: "900", letterSpacing: 0.7 },
+    sectionLabel: { color: theme.textMuted, fontSize: 12, fontWeight: "700" },
     inputRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-    input: { flex: 1, flexShrink: 1, minHeight: 52, borderWidth: 1.5, borderColor: theme.border, borderRadius: radius.md, backgroundColor: theme.surface, color: theme.textPrimary, fontSize: 18, paddingHorizontal: spacing.md },
-    candidateContent: { gap: spacing.sm, alignItems: "center", minHeight: 66, paddingVertical: 2 },
+    input: { flex: 1, minWidth: 0, minHeight: 52, borderWidth: 1, borderColor: theme.border, borderRadius: radius.md, backgroundColor: theme.surface, color: theme.textPrimary, fontSize: 17, paddingHorizontal: 12 },
+    candidateContent: { gap: spacing.sm, alignItems: "center", minHeight: 54, paddingVertical: 2 },
     loader: { marginHorizontal: spacing.md },
-    empty: { color: theme.textMuted, fontSize: 12, lineHeight: 18, paddingVertical: spacing.md },
-    candidate: { minWidth: 68, minHeight: 60, borderRadius: radius.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.md },
-    wholeWord: { minWidth: 88 },
+    empty: { color: theme.textMuted, fontSize: 12, lineHeight: 18, paddingVertical: 4 },
+    candidate: { minWidth: 48, minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+    wholeWord: { minWidth: 66 },
     selectedCandidate: { borderColor: theme.primary, backgroundColor: theme.primarySoft },
     pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] },
-    candidateText: { color: theme.primaryText, fontSize: 27, fontWeight: "900" },
-    answerHeader: { borderTopWidth: 1, borderTopColor: theme.border, paddingTop: spacing.sm, gap: 2 },
-    answerValue: { color: theme.textPrimary, fontSize: 34, fontWeight: "900", minHeight: 42 },
-    controls: { flexDirection: "row", gap: spacing.sm },
-    controlButton: { flex: 1, minHeight: 44, borderRadius: radius.md, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, alignItems: "center", justifyContent: "center" },
-    controlText: { color: theme.textSecondary, fontSize: 12, fontWeight: "800" },
-    hintButton: { minHeight: 46, borderRadius: radius.md, backgroundColor: theme.primarySoft, alignItems: "center", justifyContent: "center" },
-    hintText: { color: theme.primaryText, fontSize: 15, fontWeight: "900" },
+    candidateText: { color: theme.primaryText, fontSize: 24, fontWeight: "700" },
+    answerHeader: { flexDirection: "row", alignItems: "center", padding: 10, borderRadius: 14, backgroundColor: theme.backgroundSecondary, gap: 4 },
+    answerCopy: { flex: 1, minWidth: 0, gap: 5 },
+    answerValue: { color: theme.textPrimary, fontSize: 29, fontWeight: "700", minHeight: 36 },
+    answerPlaceholder: { color: theme.textMuted, fontSize: 15, lineHeight: 22 },
+    iconButton: { width: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
+    hintButton: { minHeight: 44, alignSelf: "flex-end", paddingHorizontal: 10, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center" },
+    hintText: { color: theme.primaryText, fontSize: 14, fontWeight: "700" },
   });
 }

@@ -6,8 +6,8 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { SafeBottomAction } from '@/components/ui/SafeBottomAction';
 import { LearningLandscape } from "@/components/visual/LearningLandscape";
 import { radius, spacing, themedCard } from "@/constants/design";

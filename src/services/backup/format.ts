@@ -1,19 +1,21 @@
 import { validateConfusableAttempt } from '@/data/confusable-words';
+import { validateNativePracticeBackupRecord } from "@/db/native-practice";
 import { ROLEPLAY_HISTORY_LIMIT, validateRoleplayAiLimits, validateRoleplayHistoryRecord } from '@/db/roleplay-history';
 import { DATABASE_VERSION } from "@/db/schema";
 import { validateSpeakingAttemptBackupRecord } from '@/db/speaking-attempts';
-import { validateContextRecord } from '@/db/vocabulary-context';
+import { validateContextRecord, validatePersonalContextMemoryRecord } from '@/db/vocabulary-context';
 import { validateWordContextRecord } from '@/db/word-contexts';
 import { validateExamBackupRecord } from '@/services/exam/session';
 import { validateWrittenBackupRecord } from '@/services/exam/written-practice';
 
-export const BACKUP_FORMAT_VERSION = 3;
+export const BACKUP_FORMAT_VERSION = 4;
 
 export type BackupRecord = Record<string, unknown>;
 
 export type LocalBackupData = {
   userSettings: BackupRecord[];
   personalDecks: BackupRecord[];
+  personalDeckVocabulary?: BackupRecord[];
   customVocabulary: BackupRecord[];
   exampleSentences: BackupRecord[];
   vocabularyProgress: BackupRecord[];
@@ -39,9 +41,12 @@ export type LocalBackupData = {
   grammarAttempts?: BackupRecord[];
   examAttempts?: BackupRecord[];
   writtenPractice?: BackupRecord[];
+  nativeHandwritingPractice?: BackupRecord[];
   confusableAttempts?: BackupRecord[];
   personalVocabularyContexts?: BackupRecord[];
   wordContexts?: BackupRecord[];
+  personalContextMemory?: BackupRecord[];
+  practiceAttemptDaily?: BackupRecord[];
   timedSpeakingAttempts?: BackupRecord[];
   /** Minimized metadata only; no transcript notes, audio, provider feedback or quota usage. */
   roleplayHistory?: BackupRecord[];
@@ -114,19 +119,20 @@ function minimizeRoleplayBackupHistory(rows: BackupRecord[] | undefined): Backup
 export function createLocalBackup(data: LocalBackupData, appVersion: string): LocalBackup {
   const roleplayHistory = minimizeRoleplayBackupHistory(data.roleplayHistory);
   validateRoleplayBackupData({ ...data, roleplayHistory });
+  data.nativeHandwritingPractice?.forEach(validateNativePracticeBackupRecord);
   return {
     backupVersion: BACKUP_FORMAT_VERSION,
     schemaVersion: DATABASE_VERSION,
     createdAt: new Date().toISOString(),
     appVersion,
-    data: { ...data, roleplayHistory, timedSpeakingAttempts: data.timedSpeakingAttempts ?? [], baseVocabularyOverrides: data.baseVocabularyOverrides ?? [],
+    data: { ...data, roleplayHistory, personalDeckVocabulary: data.personalDeckVocabulary ?? [], timedSpeakingAttempts: data.timedSpeakingAttempts ?? [], baseVocabularyOverrides: data.baseVocabularyOverrides ?? [],
       imageAssets: data.imageAssets ?? [], lessonProgress: data.lessonProgress ?? [],
       lessonActivityProgress: data.lessonActivityProgress ?? [],
       grammarProgress: data.grammarProgress ?? [], readingDocuments: data.readingDocuments ?? [],
       readingProgress: data.readingProgress ?? [], readingVocabulary: data.readingVocabulary ?? [],
       readingDocumentChunks: data.readingDocumentChunks ?? [], storyProgress: data.storyProgress ?? [],
       mistakes: data.mistakes ?? [], skillMastery: data.skillMastery ?? [], speakingPractice: data.speakingPractice ?? [],
-      xpEvents: data.xpEvents ?? [], userAchievements: data.userAchievements ?? [], learningGoals: data.learningGoals ?? [], grammarAttempts: data.grammarAttempts ?? [], examAttempts: data.examAttempts ?? [], writtenPractice: data.writtenPractice ?? [], confusableAttempts: data.confusableAttempts ?? [], personalVocabularyContexts: data.personalVocabularyContexts ?? [], wordContexts: data.wordContexts ?? [] },
+      xpEvents: data.xpEvents ?? [], userAchievements: data.userAchievements ?? [], learningGoals: data.learningGoals ?? [], grammarAttempts: data.grammarAttempts ?? [], examAttempts: data.examAttempts ?? [], writtenPractice: data.writtenPractice ?? [], confusableAttempts: data.confusableAttempts ?? [], personalVocabularyContexts: data.personalVocabularyContexts ?? [], wordContexts: data.wordContexts ?? [], personalContextMemory: data.personalContextMemory ?? [], practiceAttemptDaily: data.practiceAttemptDaily ?? [] },
   };
 }
 
@@ -139,7 +145,7 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     fail("Tệp sao lưu không phải JSON hợp lệ.");
   }
   if (!isRecord(candidate) || !isRecord(candidate.data)) fail("Tệp sao lưu thiếu dữ liệu.");
-  if (candidate.backupVersion !== 1 && candidate.backupVersion !== 2 && candidate.backupVersion !== BACKUP_FORMAT_VERSION) {
+  if (candidate.backupVersion !== 1 && candidate.backupVersion !== 2 && candidate.backupVersion !== 3 && candidate.backupVersion !== BACKUP_FORMAT_VERSION) {
     throw new BackupValidationError("UNSUPPORTED_FORMAT", "Phiên bản tệp sao lưu không được hỗ trợ.");
   }
   if (!Number.isInteger(candidate.schemaVersion) || (candidate.schemaVersion as number) < 1) {
@@ -164,6 +170,16 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     const rows = candidate.data[key];
     if (!Array.isArray(rows) || !rows.every(isRecord)) fail(`Dữ liệu ${key} không hợp lệ.`);
     data[key] = rows;
+  }
+  const deckMemberships = candidate.data.personalDeckVocabulary;
+  if (candidate.backupVersion >= 4 && (!Array.isArray(deckMemberships) || !deckMemberships.every(isRecord))) {
+    fail('LiÃªn káº¿t tá»« vÃ  bá»™ tá»« khÃ´ng há»£p lá»‡.');
+  }
+  if (Array.isArray(deckMemberships)) {
+    if (!deckMemberships.every((row) => typeof row.deck_id === 'string' && typeof row.vocabulary_id === 'string' && typeof row.created_at === 'string')) {
+      fail('LiÃªn káº¿t tá»« vÃ  bá»™ tá»« khÃ´ng há»£p lá»‡.');
+    }
+    data.personalDeckVocabulary = deckMemberships as BackupRecord[];
   }
   for (const word of data.customVocabulary) {
     if (word.is_custom !== 1 || typeof word.id !== "string" || typeof word.simplified !== "string" || typeof word.traditional !== "string") {
@@ -212,6 +228,12 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     try { attempts.forEach(validateWrittenBackupRecord); } catch { fail('Bản nháp trong tệp sao lưu không hợp lệ.'); }
     data.writtenPractice = attempts;
   }
+  if (candidate.data.nativeHandwritingPractice !== undefined) {
+    const attempts = candidate.data.nativeHandwritingPractice;
+    if (!Array.isArray(attempts) || !attempts.every(isRecord)) fail('Lịch sử luyện viết native không hợp lệ.');
+    try { attempts.forEach(validateNativePracticeBackupRecord); } catch { fail('Metadata luyện viết native không hợp lệ.'); }
+    data.nativeHandwritingPractice = attempts;
+  }
   if (candidate.data.confusableAttempts !== undefined) {
     const attempts = candidate.data.confusableAttempts;
     if (!Array.isArray(attempts) || !attempts.every(isRecord)) fail('Lượt phân biệt từ không hợp lệ.');
@@ -234,6 +256,22 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     if (!Array.isArray(contexts) || !contexts.every(isRecord)) fail('Ngữ cảnh chuẩn hóa không hợp lệ.');
     try { contexts.forEach(validateWordContextRecord); } catch { fail('Ngữ cảnh chuẩn hóa trong tệp sao lưu không hợp lệ.'); }
     data.wordContexts = contexts;
+  }
+  if (candidate.data.personalContextMemory !== undefined) {
+    const contexts = candidate.data.personalContextMemory;
+    if (!Array.isArray(contexts) || !contexts.every(isRecord)) fail('Bộ nhớ ngữ cảnh cá nhân không hợp lệ.');
+    try { contexts.forEach(validatePersonalContextMemoryRecord); } catch { fail('Bộ nhớ ngữ cảnh cá nhân không hợp lệ.'); }
+    data.personalContextMemory = contexts;
+  }
+  if (candidate.data.practiceAttemptDaily !== undefined) {
+    const rows = candidate.data.practiceAttemptDaily;
+    if (!Array.isArray(rows) || !rows.every(row => isRecord(row) &&
+      typeof row.mistake_id === 'string' && typeof row.skill_type === 'string' && typeof row.exercise_type === 'string' &&
+      typeof row.utc_day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.utc_day) &&
+      Number.isSafeInteger(row.attempt_count) && (row.attempt_count as number) > 0 &&
+      Number.isSafeInteger(row.error_count) && (row.error_count as number) >= 0 &&
+      (row.error_count as number) <= (row.attempt_count as number))) fail('Bằng chứng lượt luyện gần đây không hợp lệ.');
+    data.practiceAttemptDaily = rows;
   }
   if (candidate.data.timedSpeakingAttempts !== undefined) {
     const attempts = candidate.data.timedSpeakingAttempts;

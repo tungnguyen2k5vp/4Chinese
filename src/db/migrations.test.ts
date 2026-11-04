@@ -4,7 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 import { createLegacyDatabase, createV1Database, expoAdapter } from './fixtures/legacy_database';
 import { migrateDatabaseSchema } from './migrations';
+import { recordPracticeResult } from './mistakes';
 import { DATABASE_VERSION } from './schema';
+import { saveVocabularyContext } from './vocabulary-context';
 
 import bundledHsk from '@/data/hsk-vocabulary.json';
 
@@ -102,6 +104,30 @@ describe('real SQLite legacy release upgrade', () => {
     }
   });
 
+  it('upgrades a V43-shaped database additively and backfills local context without touching SRS', async () => {
+    const sqlite = createLegacyDatabase();
+    try {
+      const db = expoAdapter(sqlite); await migrateDatabaseSchema(db);
+      const progressBefore = sqlite.prepare('SELECT vocabulary_id,notes,due FROM user_vocabulary_progress ORDER BY vocabulary_id').all();
+      const reviewsBefore = sqlite.prepare('SELECT id,vocabulary_id,reviewed_at FROM review_log ORDER BY id').all();
+      await saveVocabularyContext(db,{vocabularyId:'hsk-1-ni',sourceType:'READER',sourceId:'old-reader',
+        location:'chunk:0:token:0:char:0',sentence:'你好。',userConfirmed:true},'2026-10-01T08:00:00Z');
+      await recordPracticeResult(db,{vocabularyId:'hsk-1-ni',skill:'MEANING',exerciseType:'meaning_choice',
+        correct:false,occurredAt:'2026-10-01T09:00:00Z'});
+      // Drops below affect only this in-memory fixture to represent a V43 install.
+      sqlite.exec('DROP TABLE personal_context_memory; DROP TABLE practice_attempt_daily; PRAGMA user_version=43;');
+      expect(await migrateDatabaseSchema(db)).toBe(43);
+      expect(sqlite.prepare('SELECT vocabulary_id,notes,due FROM user_vocabulary_progress ORDER BY vocabulary_id').all()).toEqual(progressBefore);
+      expect(sqlite.prepare('SELECT id,vocabulary_id,reviewed_at FROM review_log ORDER BY id').all()).toEqual(reviewsBefore);
+      expect(sqlite.prepare('SELECT sentence_text,source_type,user_selected FROM personal_context_memory').get())
+        .toEqual({sentence_text:'你好。',source_type:'READER',user_selected:1});
+      expect(sqlite.prepare('SELECT wrong_count,resolved FROM mistake_records').get()).toEqual({wrong_count:1,resolved:0});
+      expect(sqlite.prepare('SELECT COUNT(*) AS n FROM practice_attempt_daily').get()).toEqual({n:0});
+      expect(sqlite.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      expect(sqlite.prepare('PRAGMA integrity_check').get()).toEqual({integrity_check:'ok'});
+    } finally { sqlite.close(); }
+  });
+
   it('rolls every schema change back when an index fails', async () => {
     const sqlite = createLegacyDatabase();
     try {
@@ -118,6 +144,7 @@ describe('real SQLite legacy release upgrade', () => {
       expect(sqlite.prepare('PRAGMA table_info(review_log)').all()).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ name: 'exercise_type' })]),
       );
+      expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='personal_context_memory'").get()).toBeUndefined();
     } finally {
       sqlite.close();
     }

@@ -1,7 +1,7 @@
 {
   "name": "4chinese",
   "main": "expo-router/entry",
-  "version": "0.1.34",
+  "version": "0.1.55",
   "dependencies": {
     "@expo/ui": "~57.0.22",
     "@expo/vector-icons": "^15.0.2",
@@ -73,14 +73,16 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "data:import": "tsx scripts/import-hsk.ts",
+    "data:hsk30": "tsx scripts/import-hsk30.ts",
     "data:merge:hsk-clean": "tsx scripts/merge-hsk-clean.ts",
     "benchmark:bulk": "tsx scripts/benchmark-bulk-phase22-suite.ts",
     "data:validate": "tsx scripts/validate-dataset.ts",
+    "content:validate": "tsx scripts/validate-v6-content.ts",
     "data:audit:v5": "tsx scripts/audit-v5-content.ts --check",
     "data:report:v5": "tsx scripts/report-v5-readiness.ts",
     "data:strokes": "tsx scripts/build-hsk12-strokes.ts",
     "data:examples:audit": "tsx scripts/audit-vocabulary-examples.ts",
-    "check": "npm run lint && npm run typecheck && npm test && npx expo export --platform android"
+    "check": "npm run lint && npm run typecheck && npm run content:validate && npm test && npx expo export --platform android"
   },
   "private": true
 }

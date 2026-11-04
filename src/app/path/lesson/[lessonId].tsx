@@ -4,10 +4,11 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { MotionPressable } from "@/components/ui/MotionPressable";
+import { LearningGuide } from "@/components/visual/LearningGuide";
 import { LearningLandscape } from "@/components/visual/LearningLandscape";
 import { radius, spacing, themedCard } from "@/constants/design";
 import {
@@ -21,6 +22,7 @@ import {
   type LearningActivity,
   type LearningLesson,
 } from "@/db/learning-path";
+import { usePathAccess } from "@/hooks/use-path-access";
 import { AnalyticsEvent, track } from "@/services/analytics/analytics-service";
 import { playFeedback } from "@/services/feedback/feedback-service";
 import { useAppStore } from "@/stores/app-store";
@@ -41,6 +43,7 @@ export default function LessonScreen() {
   const styles = createStyles(theme);
   const { lessonId } = useLocalSearchParams<{ lessonId: string }>();
   const db = useSQLiteContext();
+  const pathAccess = usePathAccess();
   const [lesson, setLesson] = useState<LearningLesson | null>(null);
   const [activities, setActivities] = useState<LearningActivity[]>([]);
   const [visited, setVisited] = useState<string[]>([]);
@@ -60,13 +63,18 @@ export default function LessonScreen() {
   }, [db, lessonId, setErrorMessage]));
 
   useEffect(() => {
+    if (!pathAccess.ready) return;
     let active = true;
     void getLessonCourseId(db, lessonId).then(async (courseId) => {
       if (!courseId) throw new Error("Không tìm thấy bài học.");
       return Promise.all([listLearningLessons(db, courseId), listLessonActivities(db, lessonId)]);
     }).then(async ([lessons, rows]) => {
       const index = lessons.findIndex((item) => item.id === lessonId);
-      if (index < 0 || (index > 0 && lessons[index - 1]?.status !== "COMPLETED")) {
+      if (!active) return;
+      setErrorMessage(null);
+      if (index < 0 || (!pathAccess.allOpen && index > 0 && lessons[index - 1]?.status !== "COMPLETED")) {
+        setLesson(null);
+        setActivities([]);
         setErrorMessage("Bài học này chưa được mở. Hãy hoàn thành bài đứng trước trong lộ trình rồi quay lại.");
         return;
       }
@@ -77,11 +85,11 @@ export default function LessonScreen() {
       track(AnalyticsEvent.LESSON_STARTED, { activity: "learning" });
     }).catch((error) => { if (active) setErrorMessage(error instanceof Error ? error.message : "Không thể mở bài học. Hãy thử lại."); });
     return () => { active = false; };
-  }, [db, lessonId]);
+  }, [db, lessonId, pathAccess.ready, pathAccess.allOpen]);
 
-  return <Screen title={lesson?.title ?? "Bài học"} subtitle="Mở từng hoạt động để hoàn thành bài học.">
+  return <Screen title={lesson?.title ?? "Bài học"} hideTitle>
     {errorMessage ? <View accessibilityRole="alert" style={styles.errorCard}><View style={styles.errorSeal}><Ionicons name="alert-circle-outline" size={22} color={theme.error} /></View><Text style={styles.errorTitle}>Chưa thể tiếp tục</Text><Text style={styles.errorCopy}>{errorMessage}</Text><PrimaryButton label="Quay lại lộ trình" onPress={() => router.back()} /></View> : null}
-    {lesson ? <View style={styles.lessonHero}><LearningLandscape mood="journey" scene="learn" height={112} /><View style={styles.lessonHeroBody}><Text style={styles.heroKicker}>BÀI HỌC · {lesson.unit_title}</Text><Text style={styles.lessonHeroTitle}>{lesson.title}</Text><View style={styles.lessonFacts}><Text style={styles.lessonFact}>{lesson.estimated_minutes} phút</Text><Text style={styles.factDot}>·</Text><Text style={styles.lessonFact}>{lesson.xp_reward} XP khi hoàn tất</Text></View></View></View> : null}
+    {lesson ? <View style={styles.lessonHero}><LearningLandscape mood="journey" scene="learn" height={64} /><View style={styles.lessonHeroBody}><Text style={styles.heroKicker}>BÀI HỌC · {lesson.unit_title}</Text><Text style={styles.lessonHeroTitle}>{lesson.title}</Text><View style={styles.lessonFacts}><Text style={styles.lessonFact}>{lesson.estimated_minutes} phút</Text><Text style={styles.factDot}>·</Text><Text style={styles.lessonFact}>{lesson.xp_reward} XP khi hoàn tất</Text></View></View></View> : null}
     <View style={[themedCard(theme), styles.progressCard]} accessible accessibilityLabel={`Đã hoàn thành ${completed} trên ${activities.length} hoạt động`}>
       <View style={styles.progressHead}>
         <View><Text style={styles.eyebrow}>TIẾN ĐỘ BÀI HỌC</Text><Text style={styles.progressTitle}>{completed}/{activities.length || "–"} hoạt động</Text></View>
@@ -121,7 +129,7 @@ export default function LessonScreen() {
       })}
     </View>
     {lessonFinished ? <View style={styles.finishCard} accessibilityRole="alert">
-      <View style={styles.finishIcon}><Ionicons name="checkmark" size={30} color={theme.onSuccess} /></View>
+      <LearningGuide mood="celebrate" size={172} />
       <Text style={styles.finishTitle}>Hoàn thành bài học!</Text>
       <Text style={styles.finishCopy}>Bạn đã hoàn thành {activities.length} hoạt động và nhận {lesson?.xp_reward ?? 0} XP cho chặng này.</Text>
       <PrimaryButton label="Quay lại lộ trình" onPress={() => router.back()} />
@@ -158,7 +166,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.cr
   currentText: { color: theme.primaryText, fontSize: 9, fontWeight: '900', letterSpacing: 0.2 },
   doneText: { color: theme.success, fontSize: 12, fontWeight: "800" },
   finishCard: { alignItems: "center", gap: spacing.md, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: theme.successSoft, borderWidth: 1, borderColor: theme.success },
-  finishIcon: { width: 58, height: 58, borderRadius: 29, backgroundColor: theme.success, alignItems: "center", justifyContent: "center" },
   finishTitle: { color: theme.textPrimary, fontSize: 22, fontWeight: "900" },
   finishCopy: { color: theme.textMuted, fontSize: 14, lineHeight: 21, textAlign: "center" },
 }); }

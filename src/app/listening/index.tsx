@@ -11,9 +11,9 @@ import {
   View,
 } from "react-native";
 
+import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from '@/components/EmptyState';
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Screen } from "@/components/Screen";
 import { LearningLandscape } from '@/components/visual/LearningLandscape';
 import { themedCard } from "@/constants/design";
 import {

@@ -5,7 +5,7 @@ import { qualitySensitiveContentVisible } from '../services/content/review-workf
 const text = z.string().trim().min(1).max(4000);
 const id = z.string().regex(/^story-[a-z0-9-]{3,100}$/u);
 const reviewSchema = z.object({
-  id, revision: z.int().nonnegative(), state: z.enum(['DRAFT', 'REVIEWED', 'VERIFIED', 'PUBLISHED']),
+  id, revision: z.int().nonnegative(), state: z.enum(['DRAFT', 'PENDING_REVIEW', 'REVIEWED', 'VERIFIED', 'PUBLISHED', 'DEPRECATED']),
   origin: z.enum(['ORIGINAL', 'AI_ASSISTED', 'LICENSED']),
   evidence: z.object({ reviewer: text, reviewedAt: text, reviewNotes: text, sourceRef: text,
     licenseEvidence: text, verificationEvidence: text.optional() }).optional(),
