@@ -28,4 +28,13 @@ describe("character analysis", () => {
     expect(result[1]?.decomposition).toContain("\u7f8a");
     expect(result[1]?.mnemonic).toContain("ki\u1ec3u");
   });
+  it("does not confuse whole-word meanings, punctuation or first components with radicals", () => {
+    const analyses = analyzeVocabulary({ simplified: "想拿，学ABC想", primaryMeaningVi: "nghĩa cả cụm", radical: "木" });
+    expect(analyses.map(item => item.character)).toEqual(["想", "拿", "学"]);
+    expect(analyses.map(item => item.radical)).toEqual(["心", "手", "子"]);
+    expect(buildMnemonicNote(analyses)).not.toContain("nghĩa cả cụm");
+    const unknown = analyzeVocabulary({ simplified: "龘休", primaryMeaningVi: "nghĩa cả từ", radical: "龙" });
+    expect(unknown[0]?.radical).toBeNull();
+    expect(unknown[0]?.decomposition).toBe("Chưa có phân rã đã kiểm tra");
+  });
 });

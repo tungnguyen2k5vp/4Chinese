@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useIsFocused, useLocalSearchParams } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -8,6 +8,8 @@ import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
+import { StudyTransition } from "@/components/ui/StudyTransition";
+import { LearningGuide } from "@/components/visual/LearningGuide";
 import { designColors, spacing, themedCard } from "@/constants/design";
 import { getDashboardStats } from "@/db/repository";
 import { AnalyticsEvent, track } from "@/services/analytics/analytics-service";
@@ -23,6 +25,7 @@ export default function Result() {
   const p = useLocalSearchParams<Record<string, string | string[]>>();
   const learning = p.mode === "learn";
   const quickMinutes = normalizeQuickSessionMinutes(p.quickSessionMinutes);
+  const quickEnd = p.quickEnd === 'time' || p.quickEnd === 'stopped' ? p.quickEnd : 'queue';
   const completionTracked = useRef(false);
   const lastReviewedWord = useAppStore((state) => state.lastReviewedWord);
   const lastReviewedHanzi = useAppStore((state) => state.lastReviewedHanzi);
@@ -42,39 +45,41 @@ export default function Result() {
   useEffect(() => {
     if (quickMinutes == null || completionTracked.current) return;
     completionTracked.current = true;
-    const startedAt = Number(p.quickStartedAt);
-    const elapsedSeconds = Number.isFinite(startedAt) && startedAt > 0
-      ? Math.max(0, Math.min(43_200, Math.round((Date.now() - startedAt) / 1_000)))
-      : null;
     track(AnalyticsEvent.QUICK_SESSION_COMPLETED, {
       minutes: quickMinutes,
       activity: learning ? "new-words" : "review",
       elapsed_seconds: elapsedSeconds,
+      end_reason: quickEnd,
     });
-  }, [learning, p.quickStartedAt, quickMinutes]);
+  }, [elapsedSeconds, learning, quickEnd, quickMinutes]);
   return (
     <Screen>
       <View style={[themedCard(theme), styles.card]}>
-        <View style={styles.check}>
-          <Text style={styles.checkText}>✓</Text>
-        </View>
-        <Text style={styles.title}>
-          {learning ? "Hoàn thành buổi học!" : "Đã ôn xong!"}
+        <LearningGuide mood={quickMinutes != null && reviewed === 0 ? 'encourage' : 'celebrate'} size={196} interactive autoPlay={false} />
+        <Text style={styles.eyebrow}>{quickMinutes == null ? 'MỘT BƯỚC TIẾN MỚI' : `PHIÊN ${quickMinutes} PHÚT`}</Text>
+        <Text accessibilityRole="header" style={styles.title}>
+          {quickMinutes != null ? quickEnd === 'time' ? 'Đã hết thời gian phiên học' : quickEnd === 'stopped' ? 'Đã kết thúc phiên học' : 'Đã xong bộ từ!' : learning ? "Hoàn thành buổi học!" : "Đã ôn xong!"}
         </Text>
         <Text style={styles.copy}>
           {learning
-            ? "Từ mới đã vào Cấp 1 và chỉ xuất hiện trong Ôn tập khi đến hạn (sau 30 phút)."
+            ? `${p.correct ?? 0}/${p.total ?? 0} từ hoàn tất 3 lượt. Chỉ những từ này vào Cấp 1 và được ôn khi đến hạn (sau 30 phút).`
             : `${reviewed}/${p.total ?? reviewed} từ đã xử lý · ${p.correct ?? 0} đạt`}
         </Text>
+        {quickMinutes != null ? <View testID="quick-session-summary" style={{ alignSelf: 'stretch', gap: 8, padding: 14, borderRadius: 14, backgroundColor: theme.primarySoft }}>
+          <Text style={{ color: theme.primaryText, fontSize: 18, fontWeight: '800', textAlign: 'center' }}>{elapsedLabel ?? '0 phút 0 giây'} / {quickMinutes} phút</Text>
+          <Text style={styles.copy}>{quickEnd === 'queue' ? 'Bạn hoàn tất bộ từ trước khi hết giờ.' : 'Các lượt chưa hoàn tất không được tính thành từ đã học hoặc đã ôn.'} Thời gian ở nền không tính vào đồng hồ.</Text>
+        </View> : null}
         {!learning ? <View style={styles.metrics}>
-          <Stat label="Độ chính xác" value={`${accuracy}%`} />
-          {elapsedLabel ? <Stat label="Thời gian" value={elapsedLabel} /> : null}
-          {streak !== null ? <Stat label="Chuỗi học hiện tại" value={`${streak} ngày`} /> : null}
+          <Stat label="Độ chính xác" value={`${accuracy}%`} skill="reading" />
+          {elapsedLabel ? <Stat label="Thời gian" value={elapsedLabel} skill="listening" /> : null}
+          {streak !== null ? <Stat label="Chuỗi học hiện tại" value={`${streak} ngày`} skill="review" /> : null}
         </View> : null}
         {learning ? (
-          <Text style={styles.copy}>
-            Đã biết: {p.known ?? 0} · Bỏ qua: {p.skipped ?? 0}
-          </Text>
+          <View style={styles.metrics}>
+            <Stat label="Từ đã học" value={String(p.correct ?? 0)} skill="reading" />
+            <Stat label="Đã biết" value={String(p.known ?? 0)} skill="listening" />
+            <Stat label="Bỏ qua" value={String(p.skipped ?? 0)} skill="review" />
+          </View>
         ) : null}
         {!learning ? (
           <View style={styles.changeBlock}>
@@ -115,7 +120,7 @@ export default function Result() {
           </View>
         ) : null}
       </View>
-      {!learning && lastReviewedWord ? (
+      {!learning && lastReviewedWord && (quickMinutes == null || reviewed > 0) ? (
         <View style={[themedCard(theme), styles.wordCard]}>
           <Text style={styles.wordHanzi}>{lastReviewedHanzi ?? lastReviewedWord.simplified}</Text>
           <PinyinText value={lastReviewedWord.pinyin} style={styles.wordPinyin} />
@@ -134,13 +139,15 @@ export default function Result() {
     </Screen>
   );
 }
-function Stat({ label, value }: { label: string; value?: string }) {
+function Stat({ label, value, skill }: { label: string; value?: string; skill: keyof ReturnType<typeof useTheme>['skillColors'] }) {
+  const theme = useTheme();
   const styles = useThemeStyles(createStyles);
+  const focused = useIsFocused();
   return (
-    <View style={styles.stat}>
-      <Text style={styles.statValue}>{value ?? 0}</Text>
+    <StudyTransition active={focused} turnKey={`${label}:${value}`} effect="reveal" animateOnMount style={[styles.stat, { backgroundColor: theme.skillSurfaces[skill] }]}>
+      <Text style={[styles.statValue, { color: theme.skillColors[skill] }]}>{value ?? 0}</Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+    </StudyTransition>
   );
 }
 function ChangeBar({
@@ -208,18 +215,10 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     marginTop: spacing.md,
     alignItems: "center",
     gap: spacing.md,
-    paddingVertical: spacing.xxl,
+    paddingVertical: spacing.lg,
   },
-  check: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
-    backgroundColor: theme.successSoft,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkText: { fontSize: 40, color: colors.success, fontWeight: "900" },
-  title: { fontSize: 25, color: colors.text, fontWeight: "900" },
+  eyebrow: { color: theme.skillColors.hanzi, fontSize: 10, letterSpacing: 1.2, fontWeight: "800" },
+  title: { fontSize: 25, color: colors.text, fontWeight: "900", textAlign: "center" },
   copy: { color: colors.textMuted, textAlign: "center", lineHeight: 22 },
   wordCard: { alignItems: "center", gap: spacing.xs, marginBottom: spacing.md },
   wordHanzi: { color: colors.text, fontSize: 42, fontWeight: "900" },
@@ -249,6 +248,6 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     padding: spacing.md,
     alignItems: "center",
   },
-  statValue: { fontSize: 22, fontWeight: "900", color: colors.text },
-  statLabel: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
+  statValue: { fontSize: 22, fontWeight: "900", color: colors.text, textAlign: "center" },
+  statLabel: { fontSize: 12, color: theme.textSecondary, marginTop: 2, textAlign: "center" },
 }); }

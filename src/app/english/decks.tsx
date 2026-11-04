@@ -28,6 +28,7 @@ import {
   type EnglishCardInput,
 } from "@/db/english/learner";
 import { listEnglishDeckSummaries } from "@/db/english/personal-vocabulary";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import {
   createEnglishSharedDeckPayload,
   EnglishDeckShareError,
@@ -43,6 +44,7 @@ import { getEnglishPalette } from "@/theme/english-tokens";
 type DeckRow = { id: string; name: string; wordCount: number; dueCount: number };
 
 export default function EnglishDeckManager() {
+  const modalAnimation = useModalAnimationType();
   const db = useEnglishDatabase();
   const theme = useTheme();
   const p = getEnglishPalette(theme.mode === "dark");
@@ -198,7 +200,7 @@ export default function EnglishDeckManager() {
   };
 
   return (
-    <Screen title="Bộ từ riêng" subtitle="Tự chọn từ cần học và ôn theo lịch lặp lại ngắt quãng." avoidKeyboard>
+    <Screen title="Bộ từ riêng" subtitle="Tạo bộ từ hoặc mở bộ để học." hideTitle compact avoidKeyboard>
       <View style={[s.createCard, { backgroundColor: p.surface, borderColor: p.border }]}>
         <Text style={[s.eyebrow, { color: p.primary }]}>TẠO BỘ TỪ MỚI</Text>
         <TextInput
@@ -216,18 +218,16 @@ export default function EnglishDeckManager() {
         <PrimaryButton label="Tạo bộ từ" loading={saving} disabled={!name.trim()} onPress={() => void create()} />
       </View>
 
-      <PrimaryButton
-        variant="ghost"
-        icon="♻"
-        label={trashCount ? `Thùng rác (${trashCount})` : "Thùng rác"}
-        onPress={() => router.push("/english/deck-trash" as Href)}
-      />
-      <PrimaryButton
-        variant="secondary"
-        icon="👥"
-        label="Thêm bộ từ của bạn bè"
-        onPress={() => setFriendModalVisible(true)}
-      />
+      <View style={s.tools}>
+        <Pressable accessibilityRole="button" onPress={() => setFriendModalVisible(true)} style={[s.tool, { backgroundColor: p.primaryLight }]}>
+          <Ionicons name="people-outline" size={20} color={p.primary} />
+          <Text style={{ color: p.primary, fontWeight: "700" }}>Nhập mã bộ từ</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => router.push("/english/deck-trash" as Href)} style={[s.tool, { borderWidth: 1, borderColor: p.border }]}>
+          <Ionicons name="trash-outline" size={20} color={p.textMuted} />
+          <Text style={{ color: p.textSecondary }}>{trashCount ? `Thùng rác (${trashCount})` : "Thùng rác"}</Text>
+        </Pressable>
+      </View>
 
       {error ? (
         <View style={[s.alert, { backgroundColor: p.errorLight }]}>
@@ -296,7 +296,7 @@ export default function EnglishDeckManager() {
         </View>
       ) : null}
 
-      <Modal visible={friendModalVisible} animationType="fade" transparent onRequestClose={() => setFriendModalVisible(false)}>
+      <Modal visible={friendModalVisible} animationType={modalAnimation === 'none' ? 'none' : 'fade'} transparent onRequestClose={() => setFriendModalVisible(false)}>
         <View style={[s.modalBackdrop, { backgroundColor: theme.overlay }]}>
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modalWrap}>
             <View style={[s.modalCard, { backgroundColor: p.surface, borderColor: p.border }]}>
@@ -335,6 +335,8 @@ export default function EnglishDeckManager() {
 }
 
 const s = StyleSheet.create({
+  tools: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  tool: { flexGrow: 1, minHeight: 48, borderRadius: 14, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   createCard: { padding: 16, borderWidth: 1, borderRadius: 22, gap: 12 },
   eyebrow: { fontSize: 13, fontWeight: "900", letterSpacing: 0.8 },
   input: { minHeight: 54, borderWidth: 1, borderRadius: 16, paddingHorizontal: 16, fontSize: 17 },

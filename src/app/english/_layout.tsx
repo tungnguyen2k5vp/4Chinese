@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 
+import { NavigationBackButton } from "@/components/NavigationBackButton";
 import { EnglishAvailability } from "@/services/languages/LanguageRuntime";
 import { useTheme } from "@/theme/ThemeProvider";
 
@@ -11,6 +12,8 @@ export default function EnglishLayout() {
     <EnglishAvailability>
       <Stack
         screenOptions={{
+          headerBackVisible: false,
+          headerLeft: () => <NavigationBackButton />,
           statusBarStyle: theme.mode === 'dark' ? 'light' : 'dark',
           headerTintColor: theme.textPrimary,
           headerStyle: { backgroundColor: theme.background },

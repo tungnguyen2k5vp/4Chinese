@@ -261,7 +261,7 @@ const words = {
 } as const;
 type WordKey = keyof typeof words;
 type DraftSpec = {
-  slug: string; title: string; topic: VocabularyTopicId; band: '1' | '2' | '3'; minutes: number;
+  slug: string; title: string; topic: V5ContextualLesson['topicId']; band: '1' | '2' | '3'; minutes: number;
   goals: [string, string]; vocabulary: WordKey[]; groups: [string, WordKey[]][]; grammarIds: string[]; sentenceIds: string[];
   setting: string; lines: [string, string, string][];
   practice: [string, [string, string], string, string, WordKey[], string[]][];

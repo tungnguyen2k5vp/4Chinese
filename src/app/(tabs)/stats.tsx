@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useState } from "react";
@@ -7,11 +8,13 @@ import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EnglishStatistics } from "@/components/EnglishOverview";
 import { MasteryChart } from "@/components/MasteryChart";
 import { PrimaryButton } from '@/components/PrimaryButton';
+import { XpJourneyCard } from '@/components/XpJourneyCard';
 import { Disclosure } from "@/components/chinese/Disclosure";
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { MotionPressable } from "@/components/ui/MotionPressable";
 import { LearningLandscape } from "@/components/visual/LearningLandscape";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
+import { getGamificationSummary, type GamificationSummary } from '@/db/gamification';
 import { getKnowledgeMap, type KnowledgeSkill } from '@/db/knowledge-map';
 import { getDailyActivity, getDashboardStats, getHskProgress, getSettings, listRecentReviewSkillAttempts } from "@/db/repository";
 import { useLearningLanguage } from "@/services/languages/LanguageProvider";
@@ -23,6 +26,16 @@ import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { DashboardStats, SkillMasteryMetric } from "@/types/models";
 
 type HskProgress = { band: string; total: number; learned: number; mastered: number };
+const metricActions: Record<string, { icon: keyof typeof Ionicons.glyphMap; filter?: string; route?: Href }> = {
+  'Đã học': { icon: 'school-outline', filter: 'learned' },
+  'Đã biết': { icon: 'checkmark-circle-outline', filter: 'known' },
+  'Bỏ qua': { icon: 'play-skip-forward-outline', filter: 'skipped' },
+  'Nhớ sâu': { icon: 'diamond-outline', filter: 'mastered' },
+  'Đến hạn': { icon: 'alarm-outline', filter: 'due' },
+  'Chính xác': { icon: 'checkmark-done-outline', route: '/review' as Href },
+  'Chuỗi ngày': { icon: 'flame-outline', route: '/achievements' as Href },
+  'Hôm nay': { icon: 'time-outline', route: '/daily' as Href },
+};
 
 export default function StatsScreen() {
   const { preferences } = useLearningLanguage();
@@ -43,11 +56,14 @@ function ChineseStatsScreen() {
   const [loadError, setLoadError] = useState(false);
   const [reload, setReload] = useState(0);
   const [showAllMetrics, setShowAllMetrics] = useState(false);
+  const [xp, setXp] = useState<GamificationSummary | null>(null);
+  const [xpError, setXpError] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
       setLoadError(false);
+      setXpError(false);
       void Promise.all([getDashboardStats(db), getHskProgress(db), getSettings(db), getDailyActivity(db), listRecentReviewSkillAttempts(db), getKnowledgeMap(db)]).then(
         ([nextStats, nextHsk, settings, activity, attempts, map]) => {
           if (!active) return;
@@ -57,6 +73,9 @@ function ChineseStatsScreen() {
           setHeatmap(buildStudyHeatmap(activity));
           setSkillMastery(buildSkillMastery(attempts));
           setKnowledgeMap(map);
+          void getGamificationSummary(db, settings.dailyStudyMinutes).then(value => {
+            if (active) setXp(value);
+          }).catch(() => { if (active) setXpError(true); });
         },
       ).catch(() => { if (active) setLoadError(true); });
       return () => { active = false; };
@@ -70,7 +89,7 @@ function ChineseStatsScreen() {
     : 0;
   const studySeconds = stats?.studySeconds ?? 0;
   const studyMinutes = Math.floor(studySeconds / 60);
-  const studyProgress = Math.min(1, studySeconds / (studyGoal * 60));
+  const studyProgress = studyGoal > 0 ? Math.min(1, studySeconds / (studyGoal * 60)) : 0;
   const visibleHeatmap = heatmap.slice(-heatmapDays);
   const activeDays = visibleHeatmap.filter((day) => day.activity > 0).length;
   const hasSkillHistory = skillMastery.some((metric) => metric.attempts > 0);
@@ -79,23 +98,9 @@ function ChineseStatsScreen() {
   const visibleMetrics = stats ? buildVisibleStatsMetrics(stats, accuracy) : [];
   const metricsToShow = showAllMetrics ? visibleMetrics : visibleMetrics.slice(0, 6);
   const meaningfulHsk = hsk.filter((row) => row.learned > 0);
-  const todayFacts = [
-    { label: 'phút học hôm nay', value: studyMinutes },
-    { label: 'từ đến hạn', value: stats?.due ?? 0 },
-    { label: 'ngày liên tiếp', value: stats?.streak ?? 0 },
-  ].filter((fact) => fact.value > 0);
-  const insightTitle = stats?.reviewedToday
-    ? `Bạn đã ôn ${stats.reviewedToday} từ hôm nay`
-    : studyMinutes > 0
-      ? `Bạn đã dành ${studyMinutes} phút cho tiếng Trung`
-      : activeDays > 0
-        ? "Nhịp học của bạn đang được ghi lại"
-        : "Tiếp tục hành trình học của bạn";
-  const insightCopy = stats?.reviewedToday
-    ? `Độ chính xác hôm nay là ${accuracy}%. Con số này chỉ phản ánh lượt ôn đã ghi nhận.`
-    : "Tiến độ chỉ tăng khi bạn hoàn thành hoạt động trong ứng dụng — không có số liệu mô phỏng.";
   return (
-    <Screen title="Thống kê" safeAreaEdges={["top", "bottom"]}>
+    // The tab bar owns the bottom system inset. Do not reserve it again here.
+    <Screen title="Thống kê" subtitle="Nhìn lại tiến bộ · chọn bước tiếp theo" safeAreaEdges={["top"]}>
       {loadError ? <View accessibilityRole="alert" style={styles.errorBanner}><Text style={styles.errorTitle}>Chưa tải được thống kê</Text><Text style={styles.note}>Dữ liệu trên máy không bị thay đổi. Hãy thử đọc lại.</Text><MotionPressable haptic accessibilityLabel="Thử tải lại thống kê" style={styles.retry} onPress={() => setReload((value) => value + 1)}><Text style={styles.retryText}>THỬ LẠI</Text></MotionPressable></View> : null}
       {!stats && !loadError ? <ActivityIndicator accessibilityLabel="Đang tải thống kê" color={theme.primary} /> : null}
       {stats && !hasPersonalData ? <View style={[themedCard(theme), styles.emptyProgress]}>
@@ -106,23 +111,25 @@ function ChineseStatsScreen() {
         <PrimaryButton label="Bắt đầu phiên học 5 phút" onPress={() => router.push({ pathname: '/daily', params: { minutes: '5' } } as Href)} />
       </View> : null}
       {stats && hasPersonalData ? <>
-      <Disclosure title="Các chỉ số được tính như thế nào?">
-        <Text style={styles.note}>Chuỗi tại Trang chủ và Thống kê đếm ngày có học từ mới hoặc ôn từ. Thành tích tính cả ngày luyện kỹ năng, đọc và học ít nhất một phút; vì vậy hai chuỗi có thể khác nhau. “Nhớ sâu” là cấp 6, không đồng nghĩa tất cả từ đã học.</Text>
-        <Text style={styles.note}>Số từ của Kho đang học thuộc bộ từ hiện có; Đề cương HSK 3.0 là danh sách tham chiếu riêng. Các con số này không đo cùng một kho dữ liệu.</Text>
-      </Disclosure>
-      <View style={styles.insightCard}>
-        <LearningLandscape scene="stats" height={56} />
-        <View style={styles.insightBody}><Text style={styles.eyebrow}>DẤU MỐC CỦA BẠN</Text><Text style={styles.insightTitle}>{insightTitle}</Text><Text style={styles.insightCopy}>{insightCopy}</Text></View>
-        {todayFacts.length ? <View style={styles.todayStrip}>{todayFacts.map((fact, index) => <View key={fact.label} style={styles.todayFact}>{index > 0 ? <View style={styles.todayDivider} /> : null}<View style={styles.todayCell}><Text style={styles.todayValue}>{fact.value}</Text><Text style={styles.todayLabel}>{fact.label}</Text></View></View>)}</View> : null}
+      <View style={[themedCard(theme), styles.focusCard]}>
+        <View style={styles.focusTop}><View style={{ flex: 1 }}><Text style={styles.eyebrow}>HÔM NAY</Text><Text style={styles.studyValue}>{studyMinutes}<Text style={styles.metricLabel}> / {studyGoal} phút</Text></Text></View><View style={styles.focusBadge}><Ionicons name={studyProgress >= 1 ? 'checkmark' : 'time-outline'} size={19} color={theme.primaryText} /><Text style={styles.focusBadgeText}>{Math.round(studyProgress * 100)}%</Text></View></View>
+        <AnimatedProgressBar progress={studyProgress} color={theme.primary} trackColor={theme.border} height={9} accessibilityLabel={`Học hôm nay ${studyMinutes} trên ${studyGoal} phút`} />
+        <View style={styles.todayStrip}><Text style={styles.noteNoMargin}>{stats.reviewedToday} lượt ôn · {stats.newToday} từ mới</Text><Text style={styles.eyebrow}>{stats.reviewedToday > 0 ? `${accuracy}% đúng` : 'Chưa ôn hôm nay'}</Text></View>
+        <PrimaryButton label={stats.due > 0 ? `Ôn ${stats.due} từ đến hạn` : 'Học tiếp hôm nay'} onPress={() => router.push((stats.due > 0 ? '/review' : '/daily') as Href)} />
       </View>
-      <PrimaryButton variant="secondary" label="Xem thành tích và mục tiêu tuần" onPress={() => router.push('/achievements' as Href)} />
+      {xp ? <XpJourneyCard totalXp={xp.totalXp} todayXp={xp.todayXp} onPress={() => router.push('/achievements' as Href)} /> : null}
+      {xpError ? <PrimaryButton variant="ghost" label="Chưa tải được XP · thử lại" onPress={() => setReload(value => value + 1)} /> : null}
+      <Text style={styles.section}>Kho từ của bạn</Text>
       {metricsToShow.length ? <View style={styles.grid}>
-        {metricsToShow.map((metric) => (
-          <View key={metric.label} style={styles.metric}>
-            <Text style={styles.metricValue}>{metric.value}</Text>
-            <Text style={styles.metricLabel}>{metric.label} · {metric.unit}</Text>
-          </View>
-        ))}
+        {metricsToShow.map((metric) => {
+          const action = metricActions[metric.label]!;
+          return <MotionPressable haptic key={metric.label} accessibilityLabel={`${metric.label}: ${metric.value} ${metric.unit}. Xem chi tiết`} style={styles.metric}
+            onPress={() => router.push(action.filter ? { pathname: '/stats/words', params: { filter: action.filter } } as Href : action.route!)}>
+            <View style={styles.metricTop}><View style={styles.metricIcon}><Ionicons name={action.icon} size={22} color={theme.primaryText} /></View><Ionicons name="chevron-forward" size={16} color={theme.textMuted} /></View>
+            <Text style={styles.metricValue}>{metric.value}<Text style={styles.metricLabel}> {metric.unit}</Text></Text>
+            <Text style={styles.metricLabel}>{metric.label}</Text>
+          </MotionPressable>;
+        })}
       </View> : null}
       {visibleMetrics.length > 6 ? <PrimaryButton
         variant="ghost"
@@ -130,16 +137,9 @@ function ChineseStatsScreen() {
         onPress={() => setShowAllMetrics((value) => !value)}
       /> : null}
 
-      {studySeconds > 0 ? <View style={[themedCard(theme), styles.focusCard]}>
-        <View style={styles.focusTop}><View><Text style={styles.eyebrow}>NHỊP HỌC HÔM NAY</Text><Text style={styles.studyValue}>{studyMinutes} / {studyGoal} phút</Text></View><View style={styles.focusBadge}><Text style={styles.focusBadgeText}>{Math.round(studyProgress * 100)}%</Text></View></View>
-        <AnimatedProgressBar progress={studyProgress} color={theme.primary} trackColor={theme.border} height={10} accessibilityLabel="Tiến độ thời gian học hôm nay" />
-        <Text style={styles.note}>Chỉ tính khi app đang ở màn hình học hoặc ôn tập.</Text>
-      </View> : null}
-
       {stats.mastery.some((value) => value > 0) ? <View style={themedCard(theme)}>
-        <Disclosure title="Cấp độ ghi nhớ">
+        <View style={styles.metricTop}><Ionicons name="bar-chart-outline" size={21} color={theme.primaryText} /><Text style={styles.section}>Mức nhớ từ vựng</Text></View>
         <MasteryChart values={stats.mastery} />
-        </Disclosure>
       </View> : null}
 
       {hasSkillHistory ? <View style={themedCard(theme)}>
@@ -184,12 +184,16 @@ function ChineseStatsScreen() {
       </View> : null}
 
       {activeDays > 0 ? <View style={themedCard(theme)}>
-        <View style={styles.calendarTop}><View><Text style={styles.section}>Nhịp học gần đây</Text><Text style={styles.noteNoMargin}>{activeDays}/{heatmapDays} ngày có hoạt động</Text></View><View style={styles.periods}>{([7, 14, 28] as const).map((days) => <MotionPressable key={days} haptic accessibilityLabel={`Xem ${days} ngày`} onPress={() => setHeatmapDays(days)} style={[styles.period, heatmapDays === days && styles.periodActive]}><Text style={[styles.periodText, heatmapDays === days && styles.periodTextActive]}>{days}N</Text></MotionPressable>)}</View></View>
+        <View style={styles.calendarTop}><View style={{ flex: 1, minWidth: 110 }}><Text style={styles.section}>Nhịp học gần đây</Text><Text style={styles.noteNoMargin}>{activeDays}/{heatmapDays} ngày có hoạt động</Text></View><View style={styles.periods}>{([7, 14, 28] as const).map((days) => <MotionPressable key={days} haptic accessibilityLabel={`Xem ${days} ngày`} onPress={() => setHeatmapDays(days)} style={[styles.period, heatmapDays === days && styles.periodActive]}><Text style={[styles.periodText, heatmapDays === days && styles.periodTextActive]}>{days}N</Text></MotionPressable>)}</View></View>
         <View style={styles.heatmap}>
           {visibleHeatmap.map((day) => (<View key={day.date} accessible accessibilityLabel={`${day.date}: ${day.activity} lượt học`} style={[styles.cell, { opacity: [0.12, 0.32, 0.52, 0.74, 1][day.level] }]} />))}
         </View>
         <Text style={styles.note}>Màu đậm hơn nghĩa là có nhiều lượt học và ôn được hoàn tất hơn.</Text>
       </View> : null}
+      <View testID="stats-last-section"><Disclosure title="Các chỉ số được tính như thế nào?">
+        <Text style={styles.note}>Thời gian chỉ tính trên màn hình học và ôn. Độ chính xác dựa trên lượt ôn hôm nay. Nhớ sâu là cấp SRS 6, không phải tất cả từ đã học.</Text>
+        <Text style={styles.note}>Chuỗi tại đây đếm ngày học từ mới hoặc ôn từ. Thành tích tính cả luyện kỹ năng, đọc và học ít nhất một phút nên hai chuỗi có thể khác nhau. Đề cương HSK là danh sách tham chiếu, tách biệt kho đang học.</Text>
+      </Disclosure></View>
       </> : null}
     </Screen>
   );
@@ -198,16 +202,9 @@ function ChineseStatsScreen() {
 function createStyles(theme: ReturnType<typeof useTheme>) {
   const colors = designColors(theme);
   return StyleSheet.create({
-  insightCard: { borderWidth: 1, borderColor: theme.border, borderRadius: radius.lg, overflow: "hidden", backgroundColor: theme.surface, shadowColor: theme.shadow, shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
-  insightBody: { padding: spacing.md, gap: spacing.xs },
   insightTitle: { color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: "900" },
   insightCopy: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
-  todayStrip: { flexDirection: "row", alignItems: "center", padding: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border },
-  todayFact: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  todayCell: { flex: 1, gap: 2, alignItems: "center" },
-  todayValue: { color: colors.primaryText, fontSize: 19, fontWeight: "900" },
-  todayLabel: { color: colors.textMuted, fontSize: 10, fontWeight: "700", textAlign: "center" },
-  todayDivider: { height: 32, width: 1, backgroundColor: colors.border },
+  todayStrip: { flexDirection: "row", alignItems: "center", justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
   errorBanner: { borderRadius: radius.md, padding: spacing.md, backgroundColor: theme.errorSoft, gap: spacing.xs },
   emptyProgress: { overflow: 'hidden', gap: spacing.md, padding: spacing.md },
   errorTitle: { color: theme.error, fontSize: 15, fontWeight: "900" },
@@ -215,26 +212,28 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
   retryText: { color: theme.error, fontSize: 12, fontWeight: "900", letterSpacing: 0.7 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, paddingVertical: spacing.xs },
   metric: {
-    width: "31%",
+    width: "47%",
     flexGrow: 1,
-    minHeight: 70,
+    minHeight: 130,
     justifyContent: "center",
-    paddingHorizontal: spacing.sm,
-    borderLeftWidth: 2,
-    borderLeftColor: colors.primary,
+    padding: spacing.md,
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    borderColor: colors.border,
+    backgroundColor: theme.surface,
   },
-  metricValue: { color: colors.text, fontSize: 22, fontWeight: "900" },
-  metricUnit: { color: colors.primaryText, fontSize: 11, fontWeight: "800" },
-  metricLabel: { color: colors.textMuted, fontSize: 10, lineHeight: 14, marginTop: 2 },
-  section: { color: colors.text, fontSize: 17, fontWeight: "800", marginBottom: spacing.lg },
+  metricTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  metricIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: theme.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  metricValue: { color: colors.text, fontSize: 26, fontWeight: "900" },
+  metricLabel: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
+  section: { color: colors.text, fontSize: 17, fontWeight: "800" },
   eyebrow: { color: colors.primaryText, fontSize: 12, fontWeight: "800", letterSpacing: 0.6 },
   focusCard: { gap: spacing.md, backgroundColor: theme.infoSoft },
   focusTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   focusBadge: { width: 54, height: 54, borderRadius: 27, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
   focusBadgeText: { color: colors.primaryText, fontSize: 15, fontWeight: "900" },
   studyValue: { color: colors.text, fontSize: 28, fontWeight: "900", marginBottom: spacing.md },
-  studyTrack: { height: 10, borderRadius: 5, backgroundColor: colors.border, overflow: "hidden" },
-  studyFill: { height: "100%", backgroundColor: colors.primary, borderRadius: 5 },
   skillList: { gap: spacing.sm, marginTop: spacing.md },
   skillRow: { borderBottomColor: colors.border, borderBottomWidth: 1, gap: spacing.xs, paddingBottom: spacing.sm },
   skillCopy: { alignItems: "center", flexDirection: "row", justifyContent: "space-between", gap: spacing.sm },
@@ -249,10 +248,10 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
   track: { flex: 1, height: 8, borderRadius: 4, backgroundColor: colors.border, overflow: "hidden" },
   fill: { height: "100%", backgroundColor: colors.primary, borderRadius: 4 },
   percent: { width: 36, color: colors.textMuted, fontSize: 11, textAlign: "right" },
-  calendarTop: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm, marginBottom: spacing.md },
+  calendarTop: { flexDirection: "row", flexWrap: 'wrap', alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm, marginBottom: spacing.md },
   noteNoMargin: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
   periods: { flexDirection: "row", gap: 4 },
-  period: { minWidth: 38, minHeight: 34, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, alignItems: "center", justifyContent: "center" },
+  period: { minWidth: 44, minHeight: 44, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, alignItems: "center", justifyContent: "center" },
   periodActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   periodText: { color: colors.textMuted, fontSize: 11, fontWeight: "800" },
   periodTextActive: { color: "#FFFFFF" },

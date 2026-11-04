@@ -14,7 +14,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { EnglishAudioButton } from "@/components/EnglishAudioButton";
@@ -25,6 +24,7 @@ import {
   lookupSkypedia,
   type SkypediaMeaning,
 } from "@/db/english/skypedia";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { searchEnglishDictionary, type IntelligentSearchResult } from "@/services/english/dictionary-intelligence";
 import { notesWithEnglishContext, type EnglishReadingContext } from "@/services/english/reading-context";
 import { useEnglishDatabase } from "@/services/languages/LanguageRuntime";
@@ -44,7 +44,7 @@ export function EnglishQuickDictionary({ initialQuery = "", readingContext, onVi
   const db = useEnglishDatabase();
   const theme = useTheme();
   const p = getEnglishPalette(theme.mode === "dark");
-  const reducedMotion = useReducedMotion();
+  const modalAnimation = useModalAnimationType();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState<IntelligentSearchResult[]>([]);
@@ -175,7 +175,7 @@ export function EnglishQuickDictionary({ initialQuery = "", readingContext, onVi
 
   const pronunciation = selected?.pronunciations ?? [];
   return (
-    <Modal visible transparent animationType={reducedMotion ? "none" : "slide"} onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible transparent animationType={modalAnimation} onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView style={[s.overlay, { paddingTop: insets.top }]} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <Pressable accessibilityLabel="Đóng tra từ" onPress={onClose} style={s.scrim} />
         <View style={[s.sheet, { backgroundColor: p.background, borderColor: p.border, paddingBottom: Math.max(24, insets.bottom) }]}>

@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 
+import { EnglishWritingAIEntry } from "@/components/ChineseAIEntry";
 import { Screen } from "@/components/Screen";
 import { EnglishDeckCard } from "@/components/english/EnglishDeckCard";
 import { EnglishEmptyState } from "@/components/english/EnglishEmptyState";
@@ -35,8 +36,6 @@ import { setEnglishCardSuspended } from "@/db/english/decks";
 import {
   addEnglishCards,
   englishStatistics,
-  nextEnglishNewCard,
-  startEnglishCard,
   readEnglishDraft,
   saveEnglishDraft,
   type EnglishCard,
@@ -46,6 +45,7 @@ import {
   listEnglishDeckSummaries,
   type EnglishMemorySummary,
 } from "@/db/english/personal-vocabulary";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { useEnglishDatabase } from "@/services/languages/LanguageRuntime";
 import { englishLocalId } from "@/services/languages/ids";
 import { useLanguageProtection } from "@/services/languages/use-language-protection";
@@ -53,6 +53,7 @@ import { useTheme } from "@/theme/ThemeProvider";
 import { getEnglishPalette } from "@/theme/english-tokens";
 
 export default function EnglishWorkspace() {
+  const modalAnimation = useModalAnimationType();
   const params = useLocalSearchParams<{ deck?: string }>();
   const db = useEnglishDatabase();
   const theme = useTheme();
@@ -257,21 +258,18 @@ export default function EnglishWorkspace() {
       setNotice("Hãy tạo hoặc chọn một bộ từ trước.");
       return;
     }
-    try {
-      const next = await nextEnglishNewCard(db, selected);
-      if (next) router.push(`/english/word?cardId=${encodeURIComponent(next.id)}` as Href);
-      else setNotice("Bộ đang chọn chưa có từ nào ở trạng thái chưa học.");
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Chưa mở được từ mới.");
-    }
+    router.push(`/english/decks/${encodeURIComponent(selected)}/learn` as Href);
   };
 
   return (
     <Screen
       title="Kho từ tiếng Anh"
       subtitle="Bộ từ cá nhân · tiến độ học tập"
+      hideTitle
+      compact
       avoidKeyboard
     >
+      <EnglishWritingAIEntry />
       <Pressable accessibilityRole="button" accessibilityLabel="Tra từ tiếng Anh hoặc nghĩa tiếng Việt" onPress={() => setDictionaryVisible(true)} style={[styles.searchInput, { backgroundColor: palette.surface, borderColor: palette.border, flexDirection: "row", alignItems: "center", gap: 10 }]}>
         <Ionicons name="search" size={19} color={palette.primary} />
         <Text style={{ color: palette.textMuted, flex: 1 }}>Tra từ tiếng Anh hoặc nghĩa tiếng Việt</Text>
@@ -474,7 +472,7 @@ export default function EnglishWorkspace() {
 
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Lưu thẻ vào bộ đang chọn"
+                accessibilityLabel="Lưu và học ngay từ vừa nhập"
                 disabled={
                   busy ||
                   loading ||
@@ -485,11 +483,12 @@ export default function EnglishWorkspace() {
                 onPress={() =>
                   void action(async () => {
                     if (!selected) return;
+                    const cardId = englishLocalId("card");
                     await addEnglishCards(
                       db,
                       [
                         {
-                          id: englishLocalId("card"),
+                          id: cardId,
                           deck_id: selected,
                           headword: draft.headword,
                           meaning_vi: draft.meaning,
@@ -506,7 +505,7 @@ export default function EnglishWorkspace() {
                     setDraftStatus("");
                     setDraft(emptyDraft);
                     setShowAddWord(false);
-                    setNotice("Đã lưu thẻ từ vựng vào bộ!");
+                    router.push({ pathname: "/english/review", params: { deckId: selected, learn: JSON.stringify([cardId]) } } as Href);
                   })
                 }
                 style={[
@@ -534,7 +533,7 @@ export default function EnglishWorkspace() {
                     },
                   ]}
                 >
-                  Lưu thẻ vào bộ đang chọn
+                  Lưu & học ngay
                 </Text>
               </Pressable>
             </View>
@@ -638,9 +637,7 @@ export default function EnglishWorkspace() {
                   card={card}
                   compact
                   busy={busy || showDemoPreview}
-                  onStart={() =>
-                    void action(() => startEnglishCard(db, card.id))
-                  }
+                  onStart={() => router.push({ pathname: "/english/review", params: { deckId: card.deck_id, learn: JSON.stringify([card.id]) } } as Href)}
                   onSuspend={() =>
                     void action(() =>
                       setEnglishCardSuspended(db, card.id, !card.suspended),
@@ -797,7 +794,7 @@ export default function EnglishWorkspace() {
       <Modal
         visible={deckMenuVisible}
         transparent
-        animationType="slide"
+        animationType={modalAnimation}
         onRequestClose={() => setDeckMenuVisible(false)}
       >
         <View style={[styles.deckMenuOverlay, { backgroundColor: theme.overlay }]}>

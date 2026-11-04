@@ -15,7 +15,6 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
 
 import { EnglishAudioButton } from "@/components/EnglishAudioButton";
 import { PrimaryButton } from "@/components/PrimaryButton";
@@ -24,6 +23,8 @@ import { EnglishEmptyState } from "@/components/english/EnglishEmptyState";
 import { EmptyReviewIllustration } from "@/components/english/EnglishIllustrations";
 import { EnglishQuickDictionary } from "@/components/english/EnglishQuickDictionary";
 import { EnglishReviewFlow } from "@/components/english/EnglishReviewFlow";
+import { FlashcardFlip } from "@/components/ui/FlashcardFlip";
+import { StudyTransition } from "@/components/ui/StudyTransition";
 import { englishDemoCards } from "@/data/english-preview-fixtures";
 import { defaultEnglishFlashcardSettings, readEnglishFlashcardSettings, saveEnglishFlashcardSettings, type EnglishFlashcardSettings } from "@/db/english/flashcard-settings";
 import {
@@ -32,6 +33,7 @@ import {
   reviewEnglishCard,
   type EnglishCard,
 } from "@/db/english/learner";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { shuffleEnglishQueue } from "@/services/english/flashcards";
 import { readEnglishContext } from "@/services/english/reading-context";
 import { useLearningLanguage } from "@/services/languages/LanguageProvider";
@@ -52,6 +54,7 @@ export default function EnglishReviewRoute() {
     preview?: string;
     flow?: string;
     legacy?: string;
+    learn?: string;
   }>();
   const previewLegacy = params.preview === "true" && params.flow !== "true";
   if (params.legacy === "true" || previewLegacy) return <LegacyEnglishReview />;
@@ -61,6 +64,7 @@ export default function EnglishReviewRoute() {
       quick={params.quick === "1"}
       deckId={typeof params.deckId === "string" ? params.deckId : undefined}
       preview={params.preview === "flow" || params.flow === "true"}
+      learn={typeof params.learn === "string" ? params.learn : undefined}
     />
   );
 }
@@ -73,7 +77,7 @@ function LegacyEnglishReview() {
   const isDark = theme.mode === "dark";
   const compactLayout = viewportWidth < 380 || fontScale >= 1.3;
   const palette = getEnglishPalette(isDark);
-  const reducedMotion = useReducedMotion();
+  const modalAnimation = useModalAnimationType();
 
   const params = useLocalSearchParams<{ mode?: string; quick?: string; deckId?: string; preview?: string }>();
   const deckId = typeof params.deckId === "string" ? params.deckId : undefined;
@@ -496,7 +500,7 @@ function LegacyEnglishReview() {
 
       {/* Feedback message (for spelling mode) */}
       {feedback && card ? (
-        <View style={[styles.feedbackBanner, {
+        <StudyTransition turnKey={`${completed}:${feedback}`} effect={feedbackCorrect ? 'success' : 'error'} durationMs={feedbackCorrect ? 280 : 240} animateOnMount accessibilityLiveRegion="polite" style={[styles.feedbackBanner, {
           backgroundColor: feedbackCorrect ? palette.successLight : palette.errorLight,
           borderColor: feedbackCorrect ? palette.success : palette.error,
         }]}>
@@ -506,7 +510,7 @@ function LegacyEnglishReview() {
             color={feedbackCorrect ? palette.success : palette.error}
           />
           <Text style={[styles.feedbackText, { color: feedbackCorrect ? palette.success : palette.error }]}>{feedback}</Text>
-        </View>
+        </StudyTransition>
       ) : null}
 
       {/* EMPTY REVIEW STATE */}
@@ -639,13 +643,14 @@ function LegacyEnglishReview() {
       {/* ACTIVE CARD: MEANING REVIEW MODE (FLASHCARD REVEAL) */}
       {card && mode === 'MEANING' ? <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setReverseMeaning(value => !value); setRevealed(false); void Speech.stop(); }} style={{ minHeight: 44 }}><Text style={{ color: palette.primary }}>{reverseMeaning ? 'Việt → Anh · đổi chiều' : 'Anh → Việt · đổi chiều'}</Text></Pressable> : null}
       {card && !loading && !error && mode !== "SPELLING" ? (
+        <FlashcardFlip revealed={revealed} turnKey={`${card.id}:${mode}:${reverseMeaning}`} testID="english-flashcard-flip">{showAnswer => (
         <View
           style={[
             styles.flashcardContainer,
             compactLayout && styles.flashcardContainerCompact,
             {
               backgroundColor: isDark ? "#172338" : "#FFFFFF",
-              borderColor: revealed ? palette.primary : (isDark ? "#2A3C59" : "#DBEAFE"),
+              borderColor: showAnswer ? palette.primary : (isDark ? "#2A3C59" : "#DBEAFE"),
             },
           ]}
           testID="english-review-card"
@@ -669,12 +674,12 @@ function LegacyEnglishReview() {
             testID="english-review-question"
             style={[styles.headword, { color: palette.textPrimary }]}
           >
-            {mode === "LISTENING" && !revealed ? "Nghe từ tiếng Anh rồi thử nhớ nghĩa" : reverseMeaning && mode === 'MEANING' && !revealed ? card.meaning_vi : card.headword}
+            {mode === "LISTENING" && !showAnswer ? "Nghe từ tiếng Anh rồi thử nhớ nghĩa" : reverseMeaning && mode === 'MEANING' && !showAnswer ? card.meaning_vi : card.headword}
           </Text>
 
           {/* IPA & Pronunciation Audio */}
-          {!(reverseMeaning && mode === 'MEANING' && !revealed) ? <View style={styles.audioRow}>
-            {card.ipa && (mode !== "LISTENING" || revealed) ? (
+          {!(reverseMeaning && mode === 'MEANING' && !showAnswer) ? <View style={styles.audioRow}>
+            {card.ipa && (mode !== "LISTENING" || showAnswer) ? (
               <Text style={[styles.ipaText, { color: palette.textMuted }]}>
                 {card.ipa}
               </Text>
@@ -687,10 +692,10 @@ function LegacyEnglishReview() {
               }
             />
           </View> : null}
-          {savedContext && flashcardSettings.showContext && mode === 'MEANING' ? <View style={{ gap: 6 }}><Text style={{ color: palette.textMuted }}>Câu bạn đã đồng ý lưu · {savedContext.sourceTitle}</Text><Text style={{ color: palette.textPrimary }}>{revealed ? savedContext.sentence : savedContext.cloze}</Text>{revealed ? <Text style={{ color: palette.textSecondary }}>Dạng trong câu: {savedContext.surface}</Text> : null}</View> : null}
+          {savedContext && flashcardSettings.showContext && mode === 'MEANING' ? <View style={{ gap: 6 }}><Text style={{ color: palette.textMuted }}>Câu bạn đã đồng ý lưu · {savedContext.sourceTitle}</Text><Text style={{ color: palette.textPrimary }}>{showAnswer ? savedContext.sentence : savedContext.cloze}</Text>{showAnswer ? <Text style={{ color: palette.textSecondary }}>Dạng trong câu: {savedContext.surface}</Text> : null}</View> : null}
 
           {/* Revealed Answer Area */}
-          {revealed ? (
+          {showAnswer ? (
             <View
               style={[
                 styles.revealedSection,
@@ -753,30 +758,13 @@ function LegacyEnglishReview() {
                 </Pressable>
               </View>
             </View>
-          ) : (
-            /* Reveal Button */
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Hiện đáp án và nghĩa đã lưu"
-              disabled={busy}
-              onPress={() => setRevealed(true)}
-              style={({ pressed }) => [
-                styles.revealButton,
-                {
-                  backgroundColor: palette.primary,
-                  opacity: pressed ? 0.88 : 1,
-                  transform: [{ scale: pressed ? 0.985 : 1 }],
-                },
-              ]}
-            >
-              <Ionicons name="eye-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.revealButtonText}>Hiện nghĩa đã lưu</Text>
-            </Pressable>
-          )}
+          ) : null}
         </View>
+        )}</FlashcardFlip>
       ) : null}
+      {card && !loading && !error && mode !== 'SPELLING' ? <PrimaryButton label={revealed ? 'Xem mặt trước' : 'Hiện nghĩa đã lưu'} variant={revealed ? 'ghost' : 'primary'} disabled={busy} onPress={() => setRevealed(value => !value)} /> : null}
       {settingsVisible ? (
-        <Modal visible transparent animationType={reducedMotion ? "none" : "slide"} onRequestClose={() => setSettingsVisible(false)}>
+        <Modal visible transparent animationType={modalAnimation} onRequestClose={() => setSettingsVisible(false)}>
           <View style={styles.settingsOverlay}>
             <Pressable accessibilityLabel="Đóng cài đặt flashcard" onPress={() => setSettingsVisible(false)} style={styles.settingsScrim} />
             <ScrollView style={{ maxHeight: '90%' }} contentContainerStyle={[styles.settingsSheet, { backgroundColor: isDark ? "#172338" : "#FFFFFF", borderColor: palette.border }]}>
@@ -1054,21 +1042,6 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     color: "#FFFFFF",
     fontSize: 15,
-    fontWeight: "700",
-  },
-  revealButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 14,
-    width: "100%",
-    gap: 8,
-  },
-  revealButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
     fontWeight: "700",
   },
   spellingPromptLabel: {

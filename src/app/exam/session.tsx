@@ -12,16 +12,22 @@ import {
   ActivityIndicator,
   AppState,
   Pressable,
+  ScrollView,
+  Switch,
   Text,
   View,
 } from "react-native";
 
 import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
+import { ExamNavigator } from '@/components/exam/ExamNavigator';
+import { ExamQuestionCard } from '@/components/exam/ExamQuestionCard';
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
+import { StudyTransition } from '@/components/ui/StudyTransition';
 import { getExamAttempt, saveExamAttempt, submitExamAttempt } from "@/db/exam";
 import { useConfirmation } from "@/hooks/use-confirmation";
 import { examSkillLabels, getExamSectionWindow } from "@/services/exam/engine";
+import { examAnswerCounts, examTimeLabel } from '@/services/exam/presentation';
 import {
   getExamRemaining,
   getExamCurrentIndex,
@@ -44,6 +50,8 @@ export default function ExamSession() {
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [expiredUnsubmitted, setExpiredUnsubmitted] = useState(false);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [autoNext, setAutoNext] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const lock = useRef(false);
   const leave = useRef(false);
   const autoSubmitted = useRef(false);
@@ -194,226 +202,80 @@ export default function ExamSession() {
   );
   const lastIndex =
     window?.lastQuestionIndex ?? (snapshot?.questions.length ?? 1) - 1;
-  return (
-    <Screen
-      title="Bài luyện"
-      hideTitle
-    >
-      {loading ? <ActivityIndicator color={theme.primary} /> : null}
-      {error ? (
-        <View style={{ gap: 12 }}>
-          <Text accessibilityRole="alert" style={{ color: theme.error }}>
-            {error}
-          </Text>
-          <PrimaryButton
-            label="Tải lại bài đã lưu"
-            disabled={busy}
-            onPress={() => void load()}
-          />
-        </View>
-      ) : null}
-      {!loading && attempt?.status === "IN_PROGRESS" && question && snapshot ? (
-        <>
-          <Text
-            accessibilityLiveRegion="none"
-            style={{ color: theme.textMuted }}
-          >
-            Câu {currentIndex + 1}/{snapshot.questions.length} · còn{" "}
-            {Math.floor(remaining / 60)}:
-            {String(remaining % 60).padStart(2, "0")} ·{" "}
-            {Object.keys(snapshot.answers).length} đã trả lời
-          </Text>
-          <AnimatedProgressBar progress={Object.keys(snapshot.answers).length / Math.max(1, snapshot.questions.length)} color={theme.primary} trackColor={theme.border} accessibilityLabel="Số câu đã trả lời" />
-          {remaining === 0 && expiredUnsubmitted ? (
-            <Text accessibilityRole="alert" style={{ color: theme.warning, lineHeight: 22 }}>
-              Thời gian đã hết. Bài và đáp án vẫn được giữ nguyên; hãy bấm “Nộp bài hết giờ” khi bạn sẵn sàng xem kết quả.
-            </Text>
-          ) : null}
-          <Text style={{ color: theme.textMuted, fontSize: 13, lineHeight: 19 }}>
-            {noBack
-              ? "Không quay lại câu đã rời; cờ chỉ dùng khi xem kết quả."
-              : "Có thể quay lại câu trong phần còn mở."}
-          </Text>
-          {window ? (
-            <Text style={{ color: theme.primaryText }}>
-              Phần {window.index + 1}: {examSkillLabels[window.skill]} · còn{" "}
-              {window.remainingSeconds} giây. Không quay lại phần đã hết giờ.
-            </Text>
-          ) : null}
-          <Text
-            style={{ color: theme.textPrimary, fontSize: 20, lineHeight: 30 }}
-          >
-            {question.prompt}
-          </Text>
-          {question.choices.map((choice, index) => (
-            <Pressable
-              key={choice}
-              accessibilityRole="radio"
-              aria-checked={snapshot.answers[question.id] === index}
-              aria-disabled={busy || remaining === 0}
-              accessibilityState={{
-                checked: snapshot.answers[question.id] === index,
-                disabled: busy || remaining === 0,
-              }}
-              disabled={busy || remaining === 0}
-              onPress={() =>
-                void update({
-                  ...snapshot,
-                  currentIndex,
-                  answers: { ...snapshot.answers, [question.id]: index },
-                })
-              }
-              style={{
-                padding: 12,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 12,
-                minHeight: 48,
-                borderWidth: 1,
-                borderRadius: 16,
-                borderColor:
-                  snapshot.answers[question.id] === index
-                    ? theme.primary
-                    : theme.border,
-                backgroundColor:
-                  snapshot.answers[question.id] === index
-                    ? theme.primarySoft
-                    : theme.surface,
-              }}
-            >
-              <Text style={{ color: snapshot.answers[question.id] === index ? theme.primaryText : theme.textMuted, fontSize: 14, fontWeight: "800", minWidth: 22 }}>{String.fromCharCode(65 + index)}</Text>
-              <Text style={{ color: theme.textPrimary, fontSize: 16, lineHeight: 24, flex: 1 }}>
-                {choice}
-              </Text>
-            </Pressable>
-          ))}
-          <PrimaryButton
-            label={
-              snapshot.flaggedIds.includes(question.id)
-                ? "Bỏ đánh dấu xem lại"
-                : "Đánh dấu xem lại"
-            }
-            variant="ghost"
-            disabled={busy || remaining === 0}
-            onPress={() =>
-              void update({
-                ...snapshot,
-                currentIndex,
-                flaggedIds: snapshot.flaggedIds.includes(question.id)
-                  ? snapshot.flaggedIds.filter((item) => item !== question.id)
-                  : [...snapshot.flaggedIds, question.id],
-              })
-            }
-          />
-          <View style={{ gap: 10, flexDirection: "row", alignItems: "stretch" }}>
-            <PrimaryButton
-              label="Câu trước"
-              style={{ flex: 1 }}
-              variant="secondary"
-              disabled={busy || remaining === 0 || currentIndex === firstIndex}
-              onPress={() =>
-                void update({ ...snapshot, currentIndex: currentIndex - 1 })
-              }
-            />
-            <PrimaryButton
-              label="Câu tiếp"
-              style={{ flex: 1 }}
-              variant="secondary"
-              disabled={busy || remaining === 0 || currentIndex === lastIndex}
-              onPress={() =>
-                noBack
-                  ? void ask({
-                      title: "Chuyển câu và khóa câu hiện tại?",
-                      message:
-                        "Sau khi chuyển, bạn không thể sửa lại đáp án hoặc cờ của câu này, kể cả khi mở lại bài.",
-                      acceptLabel: "Chuyển câu",
-                      cancelLabel: "Làm tiếp câu này",
-                    }).then((accepted) => {
-                      if (accepted)
-                        void update({
-                          ...snapshot,
-                          currentIndex: currentIndex + 1,
-                        });
-                    })
-                  : void update({ ...snapshot, currentIndex: currentIndex + 1 })
-              }
-            />
+  const counts = snapshot ? examAnswerCounts(snapshot.questions, snapshot.answers) : null;
+  const canGo = (index: number) => !busy && remaining > 0 && index >= firstIndex && index <= lastIndex && (!noBack || index === currentIndex);
+  useEffect(() => { scrollRef.current?.scrollTo({ y: 0, animated: false }); }, [currentIndex]);
+  return <Screen title="Bài luyện" hideTitle scroll={false}>
+    {loading ? <ActivityIndicator color={theme.primary} /> : null}
+    {error ? <View style={{ gap: 8 }}>
+      <Text accessibilityRole="alert" style={{ color: theme.error }}>{error}</Text>
+      <PrimaryButton label="Tải lại bài đã lưu" disabled={busy} onPress={() => void load()} />
+    </View> : null}
+    {!loading && attempt?.status === 'IN_PROGRESS' && question && snapshot && counts ? <>
+      <View style={{ gap: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1, gap: 3 }}>
+            <Text style={{ color: theme.primaryText, fontWeight: '800', fontSize: 15 }}>{examSkillLabels[question.skill]} · Câu {currentIndex + 1}/{counts.total}</Text>
+            <Text style={{ color: theme.textMuted, fontSize: 12 }}>{busy ? 'Đang lưu…' : `${counts.answered} đã làm · ${counts.unanswered} chưa làm`}</Text>
           </View>
-          {window &&
-          currentIndex === lastIndex &&
-          window.index < snapshot.profile.sections.length - 1 ? (
-            <Text style={{ color: theme.textMuted }}>
-              Phần tiếp theo mở khi đồng hồ phần này hết giờ; thời gian không
-              tạm dừng.
-            </Text>
-          ) : null}
-          <Pressable accessibilityRole="button" accessibilityState={{ expanded: navigatorOpen }} accessibilityLabel="Danh sách câu hỏi" onPress={() => setNavigatorOpen(value => !value)} style={{ minHeight: 48, justifyContent: "center" }}><Text style={{ color: theme.primaryText, fontSize: 15, fontWeight: "700" }}>Danh sách câu · {Object.keys(snapshot.answers).length}/{snapshot.questions.length} đã trả lời {navigatorOpen ? "⌃" : "⌄"}</Text></Pressable>
-          {navigatorOpen ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {snapshot.questions.map((item, index) => (
-              <Pressable
-                key={item.id}
-                accessibilityRole="button"
-                accessibilityState={{
-                  disabled:
-                    busy ||
-                    remaining === 0 ||
-                    index < firstIndex ||
-                    (noBack && index !== currentIndex) ||
-                    index > lastIndex,
-                }}
-                accessibilityLabel={`Câu ${index + 1}${snapshot.answers[item.id] !== undefined ? ", đã trả lời" : ""}${snapshot.flaggedIds.includes(item.id) ? ", đánh dấu xem lại" : ""}`}
-                disabled={
-                  busy ||
-                  remaining === 0 ||
-                  index < firstIndex ||
-                  (noBack && index !== currentIndex) ||
-                  index > lastIndex
-                }
-                onPress={() =>
-                  void update({ ...snapshot, currentIndex: index })
-                }
-                style={{
-                  minWidth: 48,
-                  minHeight: 48,
-                  padding: 12,
-                  borderRadius: 12,
-                  backgroundColor: theme.primarySoft,
-                  opacity:
-                    index < firstIndex ||
-                    index > lastIndex ||
-                    (noBack && index !== currentIndex)
-                      ? 0.4
-                      : 1,
-                }}
-              >
-                <Text style={{ color: theme.primaryText }}>
-                  {index + 1}
-                  {snapshot.flaggedIds.includes(item.id) ? " ⚑" : ""}
-                  {snapshot.answers[item.id] !== undefined ? " ✓" : ""}
-                </Text>
-              </Pressable>
-            ))}
+          <View style={{ padding: 10, borderRadius: 16, backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border }}>
+            <Text accessibilityLabel={`Thời gian còn lại ${examTimeLabel(remaining)}`} accessibilityLiveRegion="none" style={{ color: remaining <= 60 ? theme.error : theme.textPrimary, fontSize: 24, fontWeight: '800', fontVariant: ['tabular-nums'] }}>{examTimeLabel(remaining)}</Text>
+          </View>
+        </View>
+        <AnimatedProgressBar progress={counts.answered / Math.max(1, counts.total)} color={theme.primary} trackColor={theme.border} accessibilityLabel="Số câu đã trả lời" />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8 }}>
+          {snapshot.profile.sections.map(section => {
+            const start = snapshot.questions.findIndex(item => item.skill === section.skill);
+            const active = question.skill === section.skill;
+            const enabled = canGo(start);
+            return <Pressable key={section.skill} accessibilityRole="tab" accessibilityState={{ selected: active, disabled: !enabled }} disabled={!enabled}
+              onPress={() => void update({ ...snapshot, currentIndex: start })} style={{ minHeight: 44, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 14, backgroundColor: active ? theme.primarySoft : theme.surface, opacity: enabled || active ? 1 : 0.45 }}>
+              <Text style={{ color: theme.primaryText, fontWeight: '700' }}>{examSkillLabels[section.skill]} · {section.questionCount}</Text>
+            </Pressable>;
+          })}
+        </ScrollView>
+      </View>
+      <ScrollView ref={scrollRef} style={{ flex: 1 }} contentContainerStyle={{ gap: 14, paddingBottom: 16 }}>
+        {remaining === 0 && expiredUnsubmitted ? <Text accessibilityRole="alert" style={{ color: theme.warning, lineHeight: 22 }}>Đã hết giờ. Đáp án vẫn được giữ nguyên; bấm “Nộp bài hết giờ” để xem kết quả.</Text> : null}
+        {window ? <Text style={{ color: theme.textMuted, fontSize: 13 }}>Phần {window.index + 1} · còn {examTimeLabel(window.remainingSeconds)} · các phần đã hết giờ được khóa.</Text> : null}
+        <StudyTransition active={attempt.status === 'IN_PROGRESS'} turnKey={question.id} durationMs={180}>
+          <ExamQuestionCard question={question} answer={snapshot.answers[question.id]} disabled={busy || remaining === 0}
+            onAnswer={answer => void update({ ...snapshot,
+              answers: { ...snapshot.answers, [question.id]: answer },
+              currentIndex: autoNext && !noBack ? Math.min(currentIndex + 1, lastIndex) : currentIndex,
+            })} />
+        </StudyTransition>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <Pressable accessibilityRole="button" accessibilityState={{ selected: snapshot.flaggedIds.includes(question.id), disabled: busy || remaining === 0 }}
+            disabled={busy || remaining === 0} onPress={() => void update({ ...snapshot, currentIndex,
+              flaggedIds: snapshot.flaggedIds.includes(question.id) ? snapshot.flaggedIds.filter(item => item !== question.id) : [...snapshot.flaggedIds, question.id],
+            })} style={{ minHeight: 48, justifyContent: 'center', paddingHorizontal: 12 }}>
+            <Text style={{ color: theme.primaryText, fontWeight: '700' }}>{snapshot.flaggedIds.includes(question.id) ? '⚑ Đã đánh dấu' : '⚐ Đánh dấu xem lại'}</Text>
+          </Pressable>
+          {!noBack ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ color: theme.textSecondary, fontSize: 13 }}>Tự chuyển câu</Text>
+            <Switch accessibilityLabel="Tự chuyển câu sau khi chọn đáp án" disabled={busy} value={autoNext} onValueChange={setAutoNext} />
           </View> : null}
-          <PrimaryButton
-            label={remaining === 0 ? "Nộp bài hết giờ" : "Nộp bài"}
-            loading={busy}
-            onPress={() => {
-              void ask({
-                title: "Nộp bài?",
-                message: `Đã trả lời ${Object.keys(snapshot.answers).length}/${snapshot.questions.length} câu.`,
-                acceptLabel: "Xác nhận nộp bài",
-                cancelLabel: "Làm tiếp",
-              }).then((accepted) => {
-                if (accepted) void submit();
-              });
-            }}
-          />
-          <Text style={{ color: theme.textMuted }}>
-            {busy ? "Đang lưu…" : "Đáp án hiện tại đã lưu trên máy."}
-          </Text>
-        </>
-      ) : null}
-      {dialog}
-    </Screen>
-  );
+        </View>
+        <Text style={{ color: theme.textMuted, fontSize: 12, lineHeight: 19 }}>{noBack ? 'Câu đã rời sẽ bị khóa. Kiểm tra đáp án trước khi chuyển.' : 'Có thể sửa đáp án trong phần còn mở. Đúng/sai chỉ hiện sau khi nộp.'}</Text>
+        {window && currentIndex === lastIndex && window.index < snapshot.profile.sections.length - 1 ? <Text style={{ color: theme.textMuted }}>Phần tiếp theo mở khi đồng hồ phần này hết giờ; thời gian không tạm dừng.</Text> : null}
+      </ScrollView>
+      <View style={{ gap: 8, borderTopWidth: 1, borderColor: theme.border, paddingTop: 10 }}>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <PrimaryButton label="Câu trước" style={{ flex: 1 }} variant="secondary" disabled={!canGo(currentIndex - 1)} onPress={() => void update({ ...snapshot, currentIndex: currentIndex - 1 })} />
+          <PrimaryButton label="Bảng câu" style={{ flex: 1 }} variant="secondary" disabled={busy} onPress={() => setNavigatorOpen(true)} />
+          <PrimaryButton label="Câu tiếp" style={{ flex: 1 }} variant="secondary" disabled={busy || remaining === 0 || currentIndex === lastIndex}
+            onPress={() => noBack ? void ask({ title: 'Chuyển câu và khóa câu hiện tại?', message: 'Sau khi chuyển, bạn không thể sửa lại đáp án hoặc cờ của câu này, kể cả khi mở lại bài.', acceptLabel: 'Chuyển câu', cancelLabel: 'Làm tiếp câu này' }).then(accepted => { if (accepted) void update({ ...snapshot, currentIndex: currentIndex + 1 }); }) : void update({ ...snapshot, currentIndex: currentIndex + 1 })} />
+        </View>
+        <PrimaryButton label={remaining === 0 ? 'Nộp bài hết giờ' : `Nộp bài · ${counts.answered}/${counts.total}`} disabled={busy} loading={busy}
+          onPress={() => void ask({ title: counts.unanswered ? `Còn ${counts.unanswered} câu chưa làm` : 'Nộp bài?',
+            message: `Đã trả lời ${counts.answered}/${counts.total} câu · ${snapshot.flaggedIds.length} câu đánh dấu. ${counts.unanswered ? 'Câu bỏ trống được tính 0. ' : ''}Sau khi nộp, bạn có thể xem đáp án và giải thích nhưng không sửa bài này.`,
+            acceptLabel: 'Xác nhận nộp bài', cancelLabel: 'Kiểm tra lại',
+          }).then(accepted => { if (accepted) void submit(); })} />
+      </View>
+      <ExamNavigator visible={navigatorOpen} snapshot={snapshot} currentIndex={currentIndex} canGo={canGo}
+        onClose={() => setNavigatorOpen(false)} onSelect={index => { setNavigatorOpen(false); void update({ ...snapshot, currentIndex: index }); }} />
+    </> : null}
+    {dialog}
+  </Screen>;
 }

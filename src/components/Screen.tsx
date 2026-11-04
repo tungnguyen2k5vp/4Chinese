@@ -1,5 +1,6 @@
+import { HeaderShownContext } from 'expo-router/react-navigation';
 import type { PropsWithChildren, ReactNode, RefObject } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
@@ -18,6 +19,7 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
 }>) {
   const theme = useTheme();
   const styles = createStyles(theme);
+  const nativeHeaderShown = useContext(HeaderShownContext);
   const motionMode = useAppStore((state) => state.settings?.motionMode ?? null);
   const shouldAnimateOnMount = useRef(motionMode !== null);
   const hasResolvedEntrance = useRef(false);
@@ -108,7 +110,8 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
     keyboardShouldPersistTaps={avoidKeyboard ? 'handled' : 'never'}
     keyboardDismissMode={avoidKeyboard ? 'on-drag' : 'none'}
     contentInsetAdjustmentBehavior="automatic" refreshControl={refreshControl} showsVerticalScrollIndicator={false}>{content}</ScrollView> : content;
-  return <SafeAreaView ref={safeRef} edges={safeAreaEdges} style={[styles.safe, avoidKeyboard && Platform.OS === 'android' ? { paddingBottom: keyboardOverlap } : null]}>
+  // The navigation header already owns the top inset. Apply it once, including on nested screens.
+  return <SafeAreaView ref={safeRef} edges={nativeHeaderShown ? safeAreaEdges.filter(edge => edge !== 'top') : safeAreaEdges} style={[styles.safe, avoidKeyboard && Platform.OS === 'android' ? { paddingBottom: keyboardOverlap } : null]}>
     {avoidKeyboard && Platform.OS === 'ios' ? <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">{body}</KeyboardAvoidingView> : body}
   </SafeAreaView>;
 }

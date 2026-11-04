@@ -17,7 +17,7 @@ const definitions: Record<ReviewExerciseType, ReviewExerciseDefinition> = {
   audio_to_hanzi: { type: "audio_to_hanzi", label: "NGHE → HÁN TỰ", prompt: "Nghe từ rồi tự viết Hán tự.", answer: "hanzi", requiresHanziInput: true, playsAudio: true },
   audio_to_meaning: { type: "audio_to_meaning", label: "NGHE → NGHĨA", prompt: "Nghe âm thanh rồi chọn nghĩa đúng.", answer: "meaning", requiresHanziInput: false, playsAudio: true },
   writing: { type: "writing", label: "LUYỆN VIẾT HÁN TỰ", prompt: "Nhìn gợi ý và tự viết lại Hán tự.", answer: "hanzi", requiresHanziInput: true, playsAudio: false },
-  cloze: { type: "cloze", label: "ĐIỀN TỪ VÀO CÂU", prompt: "Điền từ còn thiếu bằng Hán tự.", answer: "hanzi", requiresHanziInput: true, playsAudio: false },
+  cloze: { type: "cloze", label: "ĐIỀN TỪ VÀO CÂU", prompt: "Chọn từ phù hợp để hoàn thành câu đục lỗ.", answer: "hanzi", requiresHanziInput: false, playsAudio: false },
 };
 
 const modeToExercise: Record<ReviewMode, ReviewExerciseType> = {

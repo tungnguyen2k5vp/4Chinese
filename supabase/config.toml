@@ -1,4 +1,13 @@
 project_id = "4chinese"
 
+[auth]
+enable_anonymous_sign_ins = true
+
+[auth.rate_limit]
+anonymous_users = 10
+
 [functions.gemini-conversation]
+verify_jwt = true
+
+[functions.chinese-ai]
 verify_jwt = true

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Animated, StyleSheet } from 'react-native';
+import { AccessibilityInfo, Animated, AppState, StyleSheet } from 'react-native';
 
 import { getPulseRingFrame, getPulseRingMaxScale } from './pulse-ring-layout';
 
@@ -14,11 +14,17 @@ export function PulseRing({ active, size = 40, containerWidth }: { active: boole
   const frame = getPulseRingFrame(containerWidth, size);
   const maxScale = getPulseRingMaxScale(containerWidth, size);
   useEffect(() => {
-    if (!active || reduced || disabled) { value.stopAnimation(); value.setValue(0); return; }
-    const animation = Animated.loop(Animated.sequence([Animated.timing(value, { toValue: 1, duration: 1200, useNativeDriver: true }), Animated.timing(value, { toValue: 0, duration: 0, useNativeDriver: true })]));
-    animation.start(); return () => animation.stop();
+    let live = true;
+    const animation = Animated.loop(Animated.sequence([Animated.timing(value, { toValue: 1, duration: 1200, useNativeDriver: true, isInteraction: false }), Animated.timing(value, { toValue: 0, duration: 0, useNativeDriver: true, isInteraction: false })]));
+    const stop = () => { live = false; animation.stop(); value.setValue(0); };
+    value.setValue(0);
+    const subscription = AppState.addEventListener('change', state => { if (state !== 'active') stop(); });
+    if (active && !reduced && !disabled) void AccessibilityInfo.isReduceMotionEnabled().then(osReduced => {
+      if (live && !osReduced && (AppState.currentState == null || AppState.currentState === 'active')) animation.start();
+    }).catch(() => undefined);
+    return () => { subscription.remove(); stop(); };
   }, [active, disabled, reduced, value]);
   if (!active) return null;
-  return <Animated.View pointerEvents="none" style={[styles.ring, { ...frame, borderColor: theme.primary, opacity: reduced || disabled ? 0.35 : value.interpolate({ inputRange: [0, 1], outputRange: [0.38, 0] }), transform: [{ scale: reduced || disabled ? maxScale : value.interpolate({ inputRange: [0, 1], outputRange: [1, maxScale] }) }] }]} />;
+  return <Animated.View testID="audio-pulse-ring" pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.ring, { ...frame, borderColor: theme.primaryText, opacity: reduced || disabled ? 0.35 : value.interpolate({ inputRange: [0, 1], outputRange: [0.38, 0] }), transform: [{ scale: reduced || disabled ? maxScale : value.interpolate({ inputRange: [0, 1], outputRange: [1, maxScale] }) }] }]} />;
 }
 const styles = StyleSheet.create({ ring: { position: 'absolute', borderWidth: 2 } });

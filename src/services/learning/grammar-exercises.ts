@@ -1,3 +1,5 @@
+import { additionalGrammarExamples, additionalGrammarCorrections } from './grammar-practice-examples';
+
 import { vietnameseContrasts } from '@/data/vietnamese-contrasts';
 import type { GrammarSeed } from '@/db/grammar';
 
@@ -24,29 +26,56 @@ export function isGrammarAnswerCorrect(exercise: GrammarExercise, answer: string
   return normalizeGrammarAnswer(answer) === normalizeGrammarAnswer(exercise.answer);
 }
 
+const rotated = (values: string[]) => values.length > 1 ? [...values.slice(1), values[0]!] : values;
+const uniqueAnswers = (values: string[]) => values.filter((value, index) => values.findIndex(other => normalizeGrammarAnswer(other) === normalizeGrammarAnswer(value)) === index);
+
+export function selectGrammarExercise(exercises: GrammarExercise[], kind: GrammarExerciseKind, round = 0): GrammarExercise | undefined {
+  const candidates = exercises.filter(exercise => exercise.kind === kind);
+  return candidates[Math.max(0, Math.floor(round)) % candidates.length];
+}
+
 export function buildGrammarExercises(seed: GrammarSeed, bank: GrammarSeed[]): GrammarExercise[] {
-  const example = seed.examples[0];
-  if (!example) return [];
+  if (!seed.examples.length) return [];
   const base = { explanation: seed.explanation, tokens: [] as string[] };
-  const translationOptions = [...new Set([example.hanzi, ...bank.filter((item) => item.id !== seed.id)
-    .map((item) => item.examples[0]?.hanzi).filter((value): value is string => !!value)])].slice(0, 4);
-  // Deterministic rotation prevents every correct answer occupying the first slot.
-  const rotated = (values: string[]) => values.length > 1 ? [...values.slice(1), values[0]!] : values;
   const exercises: GrammarExercise[] = [
     { ...base, id: `${seed.id}-choice`, kind: 'choice', label: 'Chọn đáp án', prompt: seed.quiz, answer: seed.answer, options: seed.options },
     { ...base, id: `${seed.id}-fill`, kind: 'fill_blank', label: 'Tự điền từ', prompt: seed.quiz, answer: seed.answer, options: [] },
-    { ...base, id: `${seed.id}-reorder`, kind: 'reorder', label: 'Sắp xếp câu', prompt: example.vi, answer: example.words.join(''), options: [], tokens: rotated(example.words) },
-    { ...base, id: `${seed.id}-translation`, kind: 'translation', label: 'Chọn câu dịch', prompt: example.vi, answer: example.hanzi, options: rotated(translationOptions) },
   ];
-  const contrast = vietnameseContrasts.find((item) => item.seed.id === seed.id);
-  const correction = contrast ? { wrong: contrast.incorrect, correct: contrast.corrected, explanation: contrast.why } : corrections[seed.id] ?? (example.hanzi.includes(seed.answer) ? {
-    wrong: example.hanzi.replace(seed.answer, ''),
-    correct: example.hanzi,
-    explanation: `\u0110i\u1ec1n ${seed.answer} \u0111\u00fang theo c\u1ea5u tr\u00fac: ${seed.pattern}.`,
-  } : null);
-  if (correction) exercises.push({ ...base, id: `${seed.id}-correction`, kind: 'correction', label: 'Sửa câu sai', prompt: correction.wrong,
-    answer: correction.correct, explanation: correction.explanation,
-    options: rotated([...new Set([correction.correct, correction.wrong, ...translationOptions.filter((text) =>
-      text !== correction.correct && text !== correction.wrong)])].slice(0, 4)) });
+  const examples = [...seed.examples, ...(additionalGrammarExamples[seed.id] ?? []).map(example => ({
+    ...example, words: Array.from(normalizeGrammarAnswer(example.hanzi)),
+  }))];
+  for (const [index, example] of examples.entries()) {
+    const suffix = index ? `-${index + 1}` : '';
+    // Translation distractors exclude equivalent translations, not merely matching IDs.
+    const translationOptions = uniqueAnswers([example.hanzi, ...bank.flatMap(item => item.examples)
+      .filter(other => other.vi !== example.vi).map(other => other.hanzi)]).slice(0, 4);
+    // Some older authored token lists omit repeated connectors; fall back to exact source characters.
+    const words = normalizeGrammarAnswer(example.words.join('')) === normalizeGrammarAnswer(example.hanzi)
+      ? example.words : Array.from(normalizeGrammarAnswer(example.hanzi));
+    if (words.length > 1) {
+      exercises.push({ ...base, id: `${seed.id}-reorder${suffix}`, kind: 'reorder', label: 'Sắp xếp câu',
+        prompt: `${example.vi} (Dùng đủ các ô cho sẵn theo câu mẫu.)`, answer: words.join(''), options: [], tokens: rotated(words) });
+    }
+    if (translationOptions.length > 1) exercises.push({ ...base, id: `${seed.id}-translation${suffix}`, kind: 'translation', label: 'Chọn câu dịch',
+      prompt: example.vi, answer: example.hanzi, options: rotated(translationOptions) });
+    // Explicit source restoration avoids claiming that an omitted optional connector makes Chinese ungrammatical.
+    const targets = [...new Set([seed.answer, ...example.words])].filter(word => /\p{Script=Han}/u.test(word) && example.hanzi.includes(word)).slice(0, 3);
+    for (const [targetIndex, answer] of targets.entries()) {
+      const prompt = `Theo câu mẫu: ${example.vi}\n${example.hanzi.replace(answer, '___')}\nĐiền đúng phần đã ẩn trong câu mẫu.`;
+      if (normalizeGrammarAnswer(example.hanzi.replace(answer, '___')) === normalizeGrammarAnswer(seed.quiz) && answer === seed.answer) continue;
+      const id = `${seed.id}-example-${index + 1}-${targetIndex + 1}`;
+      // Full source sentence is shown after grading through the explanation, never as a fabricated error.
+      const explanation = `${seed.explanation}\nCâu mẫu: ${example.hanzi}`;
+      const options = uniqueAnswers([answer, ...seed.options, ...example.words]).slice(0, 4);
+      if (options.length > 1) exercises.push({ ...base, id: `${id}-choice`, kind: 'choice', label: 'Chọn phần đã ẩn', prompt, answer, options: rotated(options), explanation });
+      exercises.push({ ...base, id: `${id}-fill`, kind: 'fill_blank', label: 'Khôi phục câu mẫu', prompt, answer, options: [], explanation });
+    }
+  }
+  const contrast = vietnameseContrasts.find(item => item.seed.id === seed.id);
+  const correction = contrast ? { wrong: contrast.incorrect, correct: contrast.corrected, explanation: contrast.why } : corrections[seed.id];
+  for (const [index, item] of [correction, additionalGrammarCorrections[seed.id]].filter((item): item is NonNullable<typeof item> => !!item).entries()) {
+    exercises.push({ ...base, id: `${seed.id}-correction${index ? `-${index + 1}` : ''}`, kind: 'correction', label: 'Sửa câu sai',
+      prompt: `Sửa theo mẫu câu trần thuật trung tính và ý nghĩa trong phần giải thích:\n${item.wrong}`, answer: item.correct, explanation: item.explanation, options: rotated([item.correct, item.wrong]) });
+  }
   return exercises;
 }

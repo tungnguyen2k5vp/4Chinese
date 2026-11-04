@@ -55,3 +55,7 @@ supabase/.temp/
 modules/**/android/build/
 modules/**/android/.gradle/
 modules/**/.cxx/
+
+# Local QA output
+.runtime/
+/test-vocab.png

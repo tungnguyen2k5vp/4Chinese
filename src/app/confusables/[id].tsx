@@ -3,6 +3,7 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 
+import { ChineseAIEntry } from "@/components/ChineseAIEntry";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { themedCard } from "@/constants/design";
@@ -166,6 +167,7 @@ export default function ConfusableLesson() {
       <Text style={{ color: theme.textMuted }}>
         Bài luyện này giúp phân biệt các từ gần nghĩa; kết quả không thay đổi điểm thi.
       </Text>
+      <ChineseAIEntry label="Hỏi AI cách phân biệt" context={{ label: pair.title, task: 'compare', context: { kind: 'comparison', words: pair.words.slice(0, 4).map(w => ({ hanzi: w.hanzi, pinyin: w.pinyin, meaning: w.meaning, usage: w.usage })) } }} />
       <PrimaryButton
         label={
           showComparison ? "Ẩn bảng so sánh" : "Xem cách dùng trước khi luyện"

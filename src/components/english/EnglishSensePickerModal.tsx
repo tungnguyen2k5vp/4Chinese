@@ -12,12 +12,12 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { useReducedMotion } from 'react-native-reanimated';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { EnglishAudioButton } from "@/components/EnglishAudioButton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import type { SkypediaMeaning } from "@/db/english/skypedia";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { useTheme } from "@/theme/ThemeProvider";
 import { getEnglishPalette } from "@/theme/english-tokens";
 
@@ -67,7 +67,7 @@ export function EnglishSensePickerModal({
   const theme = useTheme();
   const palette = getEnglishPalette(theme.mode === "dark");
   const insets = useSafeAreaInsets();
-  const reducedMotion = useReducedMotion();
+  const modalAnimation = useModalAnimationType();
   const [showInfo, setShowInfo] = useState(false);
   const { height } = useWindowDimensions();
   const [query, setQuery] = useState("");
@@ -134,7 +134,7 @@ export function EnglishSensePickerModal({
     <Modal
       visible={visible}
       transparent
-      animationType={reducedMotion ? 'none' : 'slide'}
+      animationType={modalAnimation}
       statusBarTranslucent
       onRequestClose={onClose}
     >

@@ -44,18 +44,25 @@ export default function ExamSetup() {
     finally { setStarting(false); startLock.current = false; }
   };
   const choiceStyle = (selected: boolean) => ({ minHeight: 48, padding: 12, borderRadius: 14, borderWidth: 1, borderColor: selected ? theme.primary : theme.border, backgroundColor: selected ? theme.primarySoft : theme.surface });
+  const bank = originalPracticeBank.find(item => item.profile.level === String(level));
+  const preview = kind === 'context' && bank ? buildOriginalPractice(bank.profile.id, minutes, focus, noBack) : null;
   return <Screen title="Thiết lập bài luyện" hideTitle>
     <View style={{ ...themedCard(theme), gap: 12, borderLeftWidth: 4, borderLeftColor: visualMode.accent }}>
       <Text style={{ color: visualMode.accent, fontSize: 12, fontWeight: '800' }}>BẮT ĐẦU TẠI ĐÂY</Text>
       <HskBandSelect value={level} allowAll={false} disabled={starting} onChange={value => { if (value !== 'all') setLevel(value); }} />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{([{ id: 'context', label: 'Đọc & ngữ pháp' }, { id: 'vocabulary', label: 'Từ vựng' }] as const).map(item => <Pressable key={item.id} accessibilityRole="radio" accessibilityState={{ checked: kind === item.id }} disabled={starting} onPress={() => setKind(item.id)} style={choiceStyle(kind === item.id)}><Text style={{ color: theme.textPrimary, fontWeight: '700' }}>{item.label}</Text></Pressable>)}</View>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>{practiceDurations.map(duration => <Pressable key={duration} accessibilityRole="radio" accessibilityState={{ checked: minutes === duration }} disabled={starting} onPress={() => setMinutes(duration)} style={choiceStyle(minutes === duration)}><Text style={{ color: theme.textPrimary }}>{duration} phút</Text></Pressable>)}</View>
-      <Text style={{ color: theme.textMuted }}>{kind === 'context' ? (focus === 'ALL' ? 4 : 2) : minutes === 5 ? 10 : 20} câu · có đáp án và giải thích sau khi nộp</Text>
+      <Text style={{ color: theme.textMuted }}>{preview ? `${preview.questions.length} câu` : `Tối đa ${minutes === 5 ? 10 : 20} câu`} · có đáp án và giải thích sau khi nộp</Text>
+      <View style={{ borderWidth: 1, borderColor: theme.border, borderRadius: 16, overflow: 'hidden' }}>
+        <View style={{ flexDirection: 'row', padding: 12, backgroundColor: theme.primarySoft }}><Text style={{ color: theme.primaryText, fontWeight: '800', flex: 1 }}>Nội dung</Text><Text style={{ color: theme.primaryText, fontWeight: '800' }}>Thời gian</Text></View>
+        <View style={{ padding: 12, flexDirection: 'row', gap: 12 }}><Text style={{ color: theme.textPrimary, flex: 1 }}>{preview ? practiceFocusLabels[focus] : 'Chọn nghĩa của từ'}{preview ? ` · ${preview.questions.length} câu` : ''}</Text><Text style={{ color: theme.textPrimary }}>{minutes} phút</Text></View>
+      </View>
+      <Text style={{ color: theme.textSecondary, lineHeight: 21 }}>Chọn đáp án, đánh dấu câu cần xem lại, kiểm tra bảng câu trước khi nộp. Mỗi câu đúng được 1 điểm; sai hoặc bỏ trống được 0 điểm.</Text>
       <PrimaryButton label={starting ? 'Đang chuẩn bị…' : `Bắt đầu luyện HSK ${level}`} disabled={starting} onPress={() => void start()} />
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: advanced }} onPress={() => setAdvanced(value => !value)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: theme.primaryText }}>Tùy chọn bài luyện {advanced ? '⌃' : '⌄'}</Text></Pressable>
       {advanced ? <View style={{ gap: 10 }}>
         {kind === 'context' ? (Object.keys(practiceFocusLabels) as PracticeFocus[]).map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ checked: focus === value }} disabled={starting} onPress={() => setFocus(value)} style={choiceStyle(focus === value)}><Text style={{ color: theme.textPrimary }}>{practiceFocusLabels[value]}</Text></Pressable>) : null}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}><Text style={{ color: theme.textPrimary, flex: 1 }}>Không quay lại câu trước</Text><Switch disabled={starting} value={noBack} onValueChange={setNoBack} /></View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}><Text style={{ color: theme.textPrimary, flex: 1 }}>Không quay lại câu trước</Text><Switch accessibilityLabel="Không quay lại câu trước" disabled={starting} value={noBack} onValueChange={setNoBack} /></View>
         <Text style={{ color: theme.textMuted, lineHeight: 21 }}>Bài tập trong app dùng để luyện kỹ năng, chưa phải đề thi chính thức. Thời gian tiếp tục chạy khi bạn rời app.</Text>
       </View> : null}
     </View>

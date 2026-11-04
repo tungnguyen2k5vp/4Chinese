@@ -3,10 +3,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require(process.argv[2] || "playwright");
 const bundle = require("../src/data/hsk30-2025-11.json");
-const origin = "http://localhost:8096";
+const origin = process.env.HSK30_QA_URL || "http://localhost:8096";
 const destination = path.resolve(
   __dirname,
-  "../artifacts/hsk30-test-2026-10-09/screens",
+  "../.runtime/hsk30-catalog-qa-2026-10-20/screens",
 );
 const kinds = {
   vocabulary: "Từ vựng",
@@ -30,16 +30,15 @@ fs.mkdirSync(destination, { recursive: true });
     for (const level of levels) {
       await page.goto(origin + "/hsk/syllabus?band=" + level);
       await page
-        .getByText("HSK 3.0 · 11/2025 · bộ 2025/2026", { exact: true })
+        .getByText("Danh mục HSK 3.0 · 11/2025", { exact: true })
         .waitFor({ timeout: 120000 });
       for (const [kind, label] of Object.entries(kinds)) {
-        await page.getByRole("tab", { name: label, exact: true }).click();
         const count = bundle.rows[kind].filter(
           (row) => row.hsk_level === "HSK" + level,
         ).length;
         await page
-          .getByText(count + " mục riêng cấp này", { exact: false })
-          .waitFor({ timeout: 30000 });
+          .getByRole("tab", { name: `${label}, ${count} mục`, exact: true })
+          .click();
         const first = bundle.rows[kind].find(
           (row) => row.hsk_level === "HSK" + level,
         );
@@ -47,7 +46,7 @@ fs.mkdirSync(destination, { recursive: true });
           kind === "vocabulary"
             ? first.word
             : kind === "grammar"
-              ? first.title_zh
+              ? first.pattern_zh || first.title_zh
               : kind === "hanzi"
                 ? first.character
                 : kind === "task"
@@ -55,12 +54,43 @@ fs.mkdirSync(destination, { recursive: true });
                   : [first.topic_l1_zh, first.topic_l2_zh, first.topic_l3_zh]
                       .filter(Boolean)
                       .join(" · ");
-        await page
-          .getByRole("button", {
-            name: "Xem " + title + " · mục " + first.level_order,
-            exact: true,
-          })
-          .waitFor({ timeout: 30000 });
+        const firstItem = page.getByRole("button", {
+          name: "Xem " + title + " · mục " + first.level_order,
+          exact: true,
+        });
+        if (kind === "task") {
+          const action = first.task_title_zh.startsWith("问答")
+            ? "Hỏi – đáp"
+            : first.task_title_zh.startsWith("介绍")
+              ? "Giới thiệu"
+              : first.task_title_zh.startsWith("交流")
+                ? "Trao đổi"
+                : first.task_title_zh.startsWith("告知")
+                  ? "Thông báo"
+                  : first.task_title_zh.startsWith("描述")
+                    ? "Miêu tả"
+                    : first.task_title_zh.startsWith("讨论")
+                      ? "Thảo luận"
+                      : first.task_title_zh.startsWith("谈论")
+                        ? "Thảo luận"
+                        : first.task_title_zh.startsWith("讲述")
+                          ? "Kể chuyện"
+                          : first.task_title_zh.startsWith("日常言语交往")
+                            ? "Giao tiếp hằng ngày"
+                            : "Kỹ năng giao tiếp";
+          const groupedCount = bundle.rows.task.filter(
+            (row) =>
+              row.hsk_level === "HSK" + level &&
+              row.task_title_zh === first.task_title_zh,
+          ).length;
+          await page
+            .getByRole("button", {
+              name: `${action}: ${first.task_title_zh}, ${groupedCount} mục tiêu`,
+              exact: true,
+            })
+            .click();
+        }
+        await firstItem.waitFor({ timeout: 30000 });
         assert.equal(
           await page.evaluate(
             () => document.documentElement.scrollWidth > window.innerWidth,
@@ -69,15 +99,16 @@ fs.mkdirSync(destination, { recursive: true });
           "Horizontal overflow " + kind + " " + level,
         );
         const name = kind + "-hsk" + level + ".png";
-        await page.screenshot({
-          path: path.join(destination, name),
-          fullPage: true,
-        });
+        if (level === "1")
+          await page.screenshot({
+            path: path.join(destination, name),
+            fullPage: true,
+          });
         manifest.push({
           kind,
           level,
           expectedCount: count,
-          screenshot: name,
+          screenshot: level === "1" ? name : null,
           viewport: "390x844",
           platform: "web",
         });
@@ -104,13 +135,14 @@ fs.mkdirSync(destination, { recursive: true });
           });
           await page
             .getByRole("button", { name: "Đóng chi tiết", exact: true })
+            .last()
             .click();
         }
       }
     }
     await page.goto(origin + "/hsk/syllabus?band=3");
     await page
-      .getByText("500 mục riêng cấp này · 1000 mục tích lũy", { exact: true })
+      .getByText("1000 từ tích lũy đến HSK 3", { exact: true })
       .waitFor({ timeout: 30000 });
     await page.getByRole("textbox").fill("还");
     await page
@@ -120,7 +152,7 @@ fs.mkdirSync(destination, { recursive: true });
       .getByRole("button", { name: "Xem 还 · mục 178", exact: true })
       .click();
     await page
-      .getByText("HSK30-2025-VOC-HSK3-00178", { exact: true })
+      .getByText("Mã tham chiếu: HSK30-2025-VOC-HSK3-00178", { exact: true })
       .waitFor();
     await page.screenshot({
       path: path.join(destination, "polyphonic-hai-hsk3.png"),

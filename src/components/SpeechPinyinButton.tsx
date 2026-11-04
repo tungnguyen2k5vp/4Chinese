@@ -30,17 +30,22 @@ export function SpeechPinyinButton({
   targetWord,
   contextualStrings,
   disabled = false,
+  compact = false,
+  onStatusChange,
   onRecognizedPinyin,
 }: {
   targetWord: SpeechVocabularyHint;
   contextualStrings: string[];
   disabled?: boolean;
+  compact?: boolean;
+  onStatusChange?: (status: string | null) => void;
   onRecognizedPinyin: (pinyin: string) => void;
 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  useEffect(() => { onStatusChange?.(status); }, [onStatusChange, status]);
 
   useEffect(() => {
     if (!speechModule) return undefined;
@@ -124,7 +129,7 @@ export function SpeechPinyinButton({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, compact && { width: 48 }]}>
       <Pressable
         accessibilityLabel={listening ? "Dừng nhận diện giọng nói" : "Nhập pinyin bằng giọng nói"}
         accessibilityHint={listening ? "Dừng nghe hiện tại." : "Đọc rõ từ tiếng Trung để điền pinyin."}
@@ -132,12 +137,12 @@ export function SpeechPinyinButton({
         accessibilityState={{ disabled, busy: listening }}
         disabled={disabled}
         onPress={() => void toggleListening()}
-        style={({ pressed }) => [styles.button, listening && styles.listening, disabled && styles.disabled, pressed && styles.pressed]}
+        style={({ pressed }) => [styles.button, compact && { width: 48, paddingHorizontal: 0 }, listening && styles.listening, disabled && styles.disabled, pressed && styles.pressed]}
       >
         <Ionicons color={listening ? theme.onError : theme.primaryText} name={listening ? "stop" : "mic"} size={20} />
-        <Text style={[styles.buttonText, listening && styles.listeningText]}>{listening ? "Dừng" : "Nói"}</Text>
+        {!compact ? <Text style={[styles.buttonText, listening && styles.listeningText]}>{listening ? "Dừng" : "Nói"}</Text> : null}
       </Pressable>
-      {status ? <Text accessibilityLiveRegion="polite" style={styles.status}>{status}</Text> : null}
+      {status && !compact ? <Text accessibilityLiveRegion="polite" style={styles.status}>{status}</Text> : null}
     </View>
   );
 }

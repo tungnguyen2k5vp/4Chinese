@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect, type Href } from "expo-router";
+import { router, useFocusEffect, useIsFocused, type Href } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useState } from "react";
 import { AppState, StyleSheet, Text, View } from "react-native";
 
 import EnglishActivity from "@/app/english/activity";
 import { AudioButton } from "@/components/AudioButton";
+import { ChineseAIEntry } from "@/components/ChineseAIEntry";
 import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import type { DailyQuestItem } from "@/components/DailyQuestCard";
 import { PinyinText } from "@/components/PinyinText";
@@ -41,24 +42,33 @@ import { useTheme } from "@/theme/ThemeProvider";
 import type { DashboardStats, Vocabulary } from "@/types/models";
 
 const primaryQuick = [
-  ["Bộ từ riêng", "albums", "/decks"],
-  ["Học từ mới", "add-circle", "/learn/setup"],
-  ["HSK", "layers", "/(tabs)/hsk"],
-  ["Lộ trình", "map-outline", "/path"],
+  ["Bộ từ riêng", "albums", "/decks", "hanzi"],
+  ["Học từ mới", "add-circle", "/learn/setup", "reading"],
+  ["HSK", "layers", "/(tabs)/hsk", "listening"],
+  ["Lộ trình", "map-outline", "/path", "review"],
 ] as const;
 
 const toolHubs = [
+  [
+    'Củng cố trí nhớ',
+    'bulb-outline',
+    '/memory',
+    'Nhớ rồi viết · phân biệt chữ · ôn chữ cũ',
+    'hanzi',
+  ],
   [
     "Luyện tập",
     "fitness-outline",
     "/practice",
     "Ôn từ · nghe nói · viết · ngữ pháp",
+    "listening",
   ],
   [
     "Thư viện",
     "library-outline",
     "/library",
     "Truyện · văn bản cá nhân · tra cứu",
+    "reading",
   ],
 ] as const;
 
@@ -70,6 +80,7 @@ export default function Home() {
 function ChineseHome() {
   const db = useSQLiteContext();
   const theme = useTheme();
+  const focused = useIsFocused();
   const styles = createStyles(theme);
   const setSettings = useAppStore((state) => state.setSettings);
   const settings = useAppStore((state) => state.settings);
@@ -225,7 +236,7 @@ function ChineseHome() {
   );
 
   return (
-    <Screen safeAreaEdges={["top", "bottom"]}>
+    <Screen safeAreaEdges={["top"]}>
       <View style={styles.top}>
         <View style={styles.topLine}>
           <Text style={styles.hello}>Xin chào</Text>
@@ -242,9 +253,17 @@ function ChineseHome() {
             </View>
           </View>
         </View>
-        <Text style={styles.question}>Hôm nay, mình đi tiếp một bước nhé.</Text>
+        <View style={styles.welcome}>
+          <View style={styles.welcomeCopy}>
+            <Text style={styles.welcomeLabel}>你好 · CHÀO BẠN</Text>
+            <Text style={styles.question}>Học vui, nhớ lâu.</Text>
+            <Text style={styles.welcomeHint}>Cùng khám phá tiếng Trung nhé!</Text>
+          </View>
+          <LearningGuide mood="welcome" size={128} active={focused} interactive />
+        </View>
       </View>
 
+      <ChineseAIEntry />
       <View style={styles.hero}>
         <View style={styles.heroScene}>
           <LearningLandscape mood="journey" height={82} />
@@ -259,9 +278,6 @@ function ChineseHome() {
               <Text style={styles.eyebrow}>GỢI Ý CHO HÔM NAY</Text>
               <Text style={styles.heroTitle}>{heroTitle}</Text>
               <Text style={styles.heroSubtitle}>{heroSubtitle}</Text>
-            </View>
-            <View style={styles.heroSeal}>
-              <LearningGuide mood="welcome" size={42} />
             </View>
           </View>
           <AnimatedProgressBar
@@ -310,11 +326,11 @@ function ChineseHome() {
           <View>
             <Text style={styles.quickSessionTitle}>Phiên học nhanh</Text>
             <Text style={styles.quickSessionCopy}>
-              Chọn thời lượng · ôn đến hạn trước · không đổi lịch SRS
+              3, 5 hoặc 10 phút có đếm ngược · ưu tiên từ đến hạn
             </Text>
           </View>
           <View style={styles.quickSessionOptions}>
-            {([3, 5, 10] as const).map((minutes) => (
+            {([3, 5, 10] as const).map((minutes, index) => (
               <MotionPressable
                 key={minutes}
                 haptic
@@ -325,9 +341,9 @@ function ChineseHome() {
                     params: { minutes: String(minutes) },
                   } as Href)
                 }
-                style={styles.quickSessionOption}
+                style={[styles.quickSessionOption, { backgroundColor: theme.skillSurfaces[(['reading', 'speaking', 'listening'] as const)[index]!] }]}
               >
-                <Text style={styles.quickSessionValue}>{minutes}</Text>
+                <Text style={[styles.quickSessionValue, { color: theme.skillColors[(['reading', 'speaking', 'listening'] as const)[index]!] }]}>{minutes}</Text>
                 <Text style={styles.quickSessionUnit}>phút</Text>
               </MotionPressable>
             ))}
@@ -371,18 +387,18 @@ function ChineseHome() {
       <View>
         <Text style={styles.section}>Bắt đầu nhanh</Text>
         <View style={styles.quickGrid}>
-          {primaryQuick.map(([label, icon, href]) => (
+          {primaryQuick.map(([label, icon, href, skill]) => (
             <MotionPressable
               key={label}
               haptic
               accessibilityLabel={label}
               onPress={() => router.push(href as Href)}
-              style={styles.quick}
+              style={[styles.quick, { backgroundColor: theme.skillSurfaces[skill] }]}
             >
               <View style={styles.quickIcon}>
-                <Ionicons name={icon} size={22} color={theme.primaryText} />
+                <Ionicons name={icon} size={26} color={theme.skillColors[skill]} />
               </View>
-              <Text style={styles.quickText}>{label}</Text>
+              <Text style={[styles.quickText, { color: theme.skillColors[skill] }]}>{label}</Text>
             </MotionPressable>
           ))}
         </View>
@@ -390,7 +406,7 @@ function ChineseHome() {
           Khám phá theo nhu cầu
         </Text>
         <View style={styles.toolGrid}>
-          {toolHubs.map(([label, icon, href, detail]) => (
+          {toolHubs.map(([label, icon, href, detail, skill]) => (
             <MotionPressable
               key={label}
               haptic
@@ -398,7 +414,9 @@ function ChineseHome() {
               onPress={() => router.push(href as unknown as Href)}
               style={styles.hub}
             >
-              <Ionicons name={icon} size={23} color={theme.primaryText} />
+              <View style={[styles.hubIcon, { backgroundColor: theme.skillSurfaces[skill] }]}>
+                <Ionicons name={icon} size={25} color={theme.skillColors[skill]} />
+              </View>
               <View style={{ flex: 1, gap: 4 }}>
                 <Text style={styles.hubTitle}>{label}</Text>
                 <Text style={styles.hubDetail}>{detail}</Text>
@@ -419,10 +437,11 @@ function ChineseHome() {
 
 function createStyles(theme: ReturnType<typeof useTheme>) {
   return StyleSheet.create({
-    top: { paddingTop: spacing.xl, gap: spacing.xs },
+    top: { paddingTop: spacing.md, gap: spacing.sm },
     topLine: {
       alignItems: "center",
       flexDirection: "row",
+      flexWrap: "wrap",
       justifyContent: "space-between",
       gap: spacing.sm,
     },
@@ -448,7 +467,11 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       fontWeight: "900",
       letterSpacing: -0.4,
     },
-    hero: { backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1, borderRadius: radius.lg, overflow: "hidden", shadowColor: theme.shadow, shadowOpacity: 0.1, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 3 },
+    welcome: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+    welcomeCopy: { flex: 1, gap: 6 },
+    welcomeLabel: { color: theme.primaryText, fontSize: 10, letterSpacing: 1, fontWeight: "800" },
+    welcomeHint: { color: theme.textSecondary, fontSize: 13, lineHeight: 19 },
+    hero: { backgroundColor: theme.skillSurfaces.reading, borderColor: theme.border, borderWidth: 1, borderRadius: radius.lg, overflow: "hidden" },
     heroScene: { position: "relative" },
     sceneCaption: { position: "absolute", left: spacing.md, bottom: spacing.md, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.86)" },
     sceneCaptionChinese: { color: "#A94D45", fontSize: 16, fontWeight: "900" },
@@ -473,9 +496,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       lineHeight: 27,
     },
     heroSubtitle: { color: theme.textSecondary, fontSize: 13, lineHeight: 19 },
-    heroSeal: { width: 42, height: 42, borderRadius: 21, borderWidth: 1.5, borderColor: "#A94D45", alignItems: "center", justifyContent: "center", transform: [{ rotate: "-7deg" }] },
-    heroSealText: { color: "#A94D45", fontSize: 13, fontWeight: "900", letterSpacing: -0.6 },
-    heroMeta: { flexDirection: "row", justifyContent: "space-between" },
+    heroMeta: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, justifyContent: "space-between" },
     heroMetaText: { color: theme.textSecondary, fontSize: 12, fontWeight: "800" },
     quickSession: {
       backgroundColor: theme.surface,
@@ -563,13 +584,13 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       flexGrow: 1,
       gap: spacing.sm,
       justifyContent: "center",
-      minHeight: 92,
-      padding: spacing.sm,
+      minHeight: 112,
+      padding: spacing.md,
       width: "45%",
     },
     quickIcon: {
       alignItems: "center",
-      backgroundColor: theme.primarySoft,
+      backgroundColor: theme.surface,
       borderRadius: 14,
       height: 44,
       justifyContent: "center",
@@ -577,11 +598,12 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     },
     quickText: {
       color: theme.textPrimary,
-      fontSize: 11,
-      fontWeight: "700",
+      fontSize: 14,
+      fontWeight: "800",
       textAlign: "center",
     },
     toolGrid: { gap: spacing.sm },
+    hubIcon: { width: 48, height: 48, borderRadius: 16, alignItems: "center", justifyContent: "center" },
     hub: {
       alignItems: "center",
       flexDirection: "row",
@@ -599,7 +621,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
       alignItems: "center",
       flexDirection: "row",
       gap: spacing.md,
-      backgroundColor: theme.surface,
+      backgroundColor: theme.skillSurfaces.vocabulary,
       borderColor: theme.border,
       borderWidth: 1,
       borderRadius: radius.lg,
@@ -607,7 +629,7 @@ function createStyles(theme: ReturnType<typeof useTheme>) {
     },
     dailyIcon: {
       alignItems: "center",
-      backgroundColor: theme.warningSoft,
+      backgroundColor: theme.surface,
       borderRadius: radius.md,
       height: 76,
       justifyContent: "center",

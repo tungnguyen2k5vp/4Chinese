@@ -56,6 +56,7 @@ export default function EnglishBulk() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [savedDeck, setSavedDeck] = useState("");
+  const [savedIds, setSavedIds] = useState<string[]>([]);
   const [draftStatus, setDraftStatus] = useState("");
   const [retry, setRetry] = useState(0);
   const [choiceLine, setChoiceLine] = useState<number | null>(null);
@@ -242,9 +243,7 @@ export default function EnglishBulk() {
         name: "",
         items: remaining.length ? remaining : null,
       };
-      await saveEnglishRecognizedBatch(
-        db,
-        eligible.map((item) => {
+      const savedCards = eligible.map((item) => {
           const sourced =
             item.selected &&
             [item.selected.shortMeaning, item.selected.meaning].some(
@@ -274,11 +273,15 @@ export default function EnglishBulk() {
             source_id: sourced ? SKYPEDIA_SOURCE : "USER",
             notes: sourceNotes,
           };
-        }),
+        });
+      await saveEnglishRecognizedBatch(
+        db,
+        savedCards,
         form.deck === "new" ? form.name : undefined,
         remaining.length ? JSON.stringify(nextForm) : undefined,
       );
       setSavedDeck(deck);
+      setSavedIds(savedCards.map(card => card.id));
       setNotice(
         `Đã thêm ${eligible.length} từ vào bộ “${form.deck === "new" ? form.name.trim() : decks.find((row) => row.id === deck)?.name}”.${remaining.length ? ` Còn ${remaining.length} dòng cần chọn nghĩa, sửa hoặc bỏ qua; bản nháp đã được giữ.` : ""}`,
       );
@@ -299,9 +302,11 @@ export default function EnglishBulk() {
   const box = { backgroundColor: p.surface, borderColor: p.border };
   return (
     <Screen
+      hideTitle
+      compact
       scroll={!form.items}
       title={form.deck === "new" ? "Tạo bộ từ mới" : "Thêm từ vào bộ từ"}
-      subtitle={form.items ? undefined : "Nhập nhiều từ · kiểm tra nghĩa · lưu vào bộ cá nhân"}
+      subtitle={form.items ? undefined : "Nhập từ → chọn nghĩa → học ngay"}
       avoidKeyboard
     >
       {!ready ? <ActivityIndicator color={p.primary} /> : null}
@@ -325,6 +330,7 @@ export default function EnglishBulk() {
           style={[s.alert, { backgroundColor: p.successLight }]}
         >
           <Text style={{ color: p.success }}>{notice}</Text>
+          <PrimaryButton label="Học các từ vừa thêm" onPress={() => router.push({ pathname: "/english/decks/[id]/learn", params: { id: savedDeck, added: JSON.stringify(savedIds) } } as Href)} />
         </View>
       ) : null}
       {notice && !form.items ? (
@@ -332,17 +338,17 @@ export default function EnglishBulk() {
           <Ionicons name="checkmark-circle" size={32} color={p.success} />
           <Text style={[s.heading, { color: p.textPrimary }]}>{notice}</Text>
           <Text style={{ color: p.textSecondary }}>
-            Từ mới ở trạng thái Chưa học. Bắt đầu học để vào LV1 và nhận lịch
-            ôn.
+            Chọn các từ vừa thêm để gõ theo mẫu, tự nhớ từ và ôn tập ngay.
           </Text>
           <PrimaryButton
-            label="Xem bộ vừa thêm"
+            label="Chọn từ vừa thêm để học ngay"
             onPress={() =>
               router.replace(
-                `/english?deck=${encodeURIComponent(savedDeck)}` as Href,
+                { pathname: "/english/decks/[id]/learn", params: { id: savedDeck, added: JSON.stringify(savedIds) } } as Href,
               )
             }
           />
+          <PrimaryButton variant="secondary" label="Xem bộ từ" onPress={() => router.replace({ pathname: "/english/decks/[id]", params: { id: savedDeck } } as Href)} />
         </View>
       ) : (
         <>
@@ -423,9 +429,7 @@ export default function EnglishBulk() {
                 Danh sách từ
               </Text>
               <Text style={[s.copy, { color: p.textSecondary }]}>
-                Mỗi dòng một từ hoặc cụm từ. Hệ thống tra nghĩa, loại từ, IPA và
-                ví dụ từ từ điển Anh–Việt. Bạn kiểm tra và bỏ từ không phù hợp
-                trước khi lưu.
+                Mỗi dòng một từ. App sẽ tìm nghĩa để bạn chọn trước khi lưu và học.
               </Text>
               <TextInput
                 testID="english-personal-list-input"

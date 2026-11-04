@@ -9,6 +9,10 @@ export type ToolGroup = { title: string; tools: readonly HubTool[] };
 /** Navigation only: grouping does not replace existing flows or progress. */
 export const practiceGroups: readonly ToolGroup[] = [
   {
+    title: 'Củng cố trí nhớ',
+    tools: [{id:'hanzi-memory',title:'Luyện nhớ chủ động',description:'Chữ hay quên, nhớ rồi viết, phân biệt chữ, ôn chữ cũ và cấu tạo chữ.',href:'/memory'}],
+  },
+  {
     title: "Ôn và củng cố",
     tools: [
       {

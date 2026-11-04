@@ -14,12 +14,13 @@ export type ReadingDocument = { id: string; title: string; content: string; crea
   updated_at: string; last_token_index: number; coverage_percent: number; last_read_at: string | null };
 
 type ReadingChunk = { content: string };
-/** Mirrors the existing deck-copy deduplication key without changing repository contracts/IDs. */
+/** Finds the canonical vocabulary item already linked to this deck, if any. */
 export async function getReadingDeckCopyId(db: SQLiteDatabase, deckId: string,
   word: Pick<Vocabulary, 'simplified' | 'pinyinNumeric' | 'pinyin'>): Promise<string | null> {
   const rows = await db.getAllAsync<{ id: string; pinyin_numeric: string }>(`SELECT v.id,v.pinyin_numeric
-    FROM vocabulary v JOIN personal_deck d ON d.id=v.deck_id
-    WHERE v.deck_id=? AND v.simplified=? AND d.deleted_at IS NULL ORDER BY v.id LIMIT 100`, deckId, word.simplified);
+    FROM personal_deck_vocabulary m JOIN personal_deck d ON d.id=m.deck_id
+    JOIN vocabulary v ON v.id=m.vocabulary_id
+    WHERE m.deck_id=? AND v.simplified=? AND d.deleted_at IS NULL ORDER BY v.id LIMIT 100`, deckId, word.simplified);
   const key = normalizeSearch(word.pinyinNumeric || word.pinyin);
   return rows.find((row) => normalizeSearch(row.pinyin_numeric) === key)?.id ?? null;
 }

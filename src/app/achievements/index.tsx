@@ -1,16 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, type Href } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
+import { WeeklyStudyChart } from '@/components/WeeklyStudyChart';
+import { XpJourneyCard } from '@/components/XpJourneyCard';
+import { Disclosure } from '@/components/chinese/Disclosure';
 import { AnimatedProgressBar } from '@/components/ui/AnimatedProgressBar';
 import { MotionPressable } from '@/components/ui/MotionPressable';
-import { LearningLandscape } from '@/components/visual/LearningLandscape';
 import { radius, spacing, themedCard } from '@/constants/design';
-import { getGamificationSummary, setWeeklyStudyGoal, type GamificationSummary } from '@/db/gamification';
+import { getGamificationSummary, setWeeklyStudyGoal, xpRewards, type GamificationSummary } from '@/db/gamification';
 import { getSettings } from '@/db/repository';
 import { playHaptic } from '@/services/feedback/feedback-service';
 import { useAppStore } from '@/stores/app-store';
@@ -18,17 +20,19 @@ import { useTheme } from '@/theme/ThemeProvider';
 
 function achievementIcon(id: string): keyof typeof Ionicons.glyphMap {
   if (id.includes('streak')) return 'flame';
-  if (id.includes('review')) return 'repeat';
-  if (id.includes('write')) return 'brush';
-  if (id.includes('learn')) return 'school';
+  if (id.includes('listening')) return 'headset';
+  if (id.includes('hanzi')) return 'brush';
+  if (id.includes('vocabulary')) return 'school';
+  if (id.includes('stories')) return 'book';
   return 'ribbon';
 }
 
 function achievementSeal(id: string) {
   if (id.includes('streak')) return '火';
-  if (id.includes('review')) return '复';
-  if (id.includes('write')) return '写';
-  if (id.includes('learn')) return '学';
+  if (id.includes('listening')) return '听';
+  if (id.includes('hanzi')) return '写';
+  if (id.includes('vocabulary')) return '学';
+  if (id.includes('stories')) return '读';
   return '词';
 }
 
@@ -42,6 +46,8 @@ export default function AchievementsScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(false);
   const generation = useRef(0);
   const saveBusy = useRef(false);
 
@@ -49,6 +55,7 @@ export default function AchievementsScreen() {
     const request = ++generation.current;
     setLoading(true);
     setNotice('');
+    setLoadFailed(false);
     try {
       const settings = await getSettings(db);
       const result = await getGamificationSummary(db, settings.dailyStudyMinutes);
@@ -56,7 +63,7 @@ export default function AchievementsScreen() {
       setSummary(result);
       setGoal(String(result.weeklyMinutes));
     } catch {
-      if (request === generation.current) setNotice('Chưa tải được tiến độ. Bạn có thể thử lại.');
+      if (request === generation.current) { setLoadFailed(true); setNotice('Chưa tải được tiến độ. Bạn có thể thử lại.'); }
     } finally { if (request === generation.current) setLoading(false); }
   }, [db]);
 
@@ -76,6 +83,7 @@ export default function AchievementsScreen() {
       if (request === generation.current) {
         setSummary((previous) => previous ? { ...previous, weeklyMinutes: minutes } : previous);
         setNotice('Đã lưu mục tiêu tuần.');
+        setEditingGoal(false);
         void playHaptic('success', hapticEnabled);
       }
     } catch { if (request === generation.current) setNotice('Chưa lưu được. Mục tiêu cũ vẫn giữ nguyên.'); }
@@ -85,38 +93,46 @@ export default function AchievementsScreen() {
   const unlocked = summary?.achievements.filter((item) => Boolean(item.unlockedAt)).length ?? 0;
   const weeklyProgress = summary && summary.weeklyMinutes > 0 ? Math.min(1, summary.weeklySeconds / (summary.weeklyMinutes * 60)) : 0;
 
-  return <Screen title="Thành tích & mục tiêu" subtitle="Mỗi cột mốc được tính từ hoạt động học thực tế." hideHeader>
+  return <Screen title="Thành tích & mục tiêu" hideHeader compact avoidKeyboard safeAreaEdges={['bottom']}>
     {loading ? <ActivityIndicator color={theme.primary} /> : null}
     {notice ? <Text accessibilityRole="alert" style={styles.notice}>{notice}</Text> : null}
-    {!loading && !summary ? <PrimaryButton label="Thử lại" onPress={() => void load()} /> : null}
+    {!loading && (loadFailed || !summary) ? <PrimaryButton label="Thử lại" onPress={() => void load()} /> : null}
     {summary ? <>
-      <View style={styles.hero}>
-        <View style={styles.heroArt}><LearningLandscape mood="progress" scene="achievement" height={115} /><View style={styles.todaySeal}><Text style={styles.todaySealText}>4C</Text></View></View>
-        <View style={styles.heroBody}>
-          <View style={styles.heroTop}><View style={styles.heroXp}><Text style={styles.eyebrow}>HỒ SƠ HỌC TẬP</Text><Text style={styles.heroValue}>{summary.totalXp} XP</Text><Text style={styles.heroCopy}>+{summary.todayXp} XP hôm nay</Text></View><View style={styles.streak}><Ionicons name="flame" size={21} color={theme.warning} /><Text style={styles.streakValue}>{summary.streak}</Text><Text style={styles.streakLabel}>ngày liền</Text></View></View>
-          <View style={styles.heroDivider} />
-          <Text style={styles.heroSmall}>Kỷ lục chuỗi: {summary.bestStreak} ngày · {unlocked} dấu ấn đã mở</Text>
-        </View>
+      <XpJourneyCard totalXp={summary.totalXp} todayXp={summary.todayXp} expanded />
+      <View style={styles.titleRow}><Ionicons name="flame" size={24} color={theme.warning} /><View style={{ flex: 1 }}><Text style={styles.heading}>{summary.streak} ngày giữ nhịp</Text><Text style={styles.copy}>Kỷ lục: {summary.bestStreak} ngày</Text></View><View style={styles.countPill}><Text style={styles.countText}>{unlocked} huy hiệu</Text></View></View>
+      <View style={[themedCard(theme), styles.block]}>
+        <Text style={styles.heading}>Học tiếp · tích XP</Text>
+        {([
+          { label: 'Ôn từ đến hạn', detail: '+5 XP / từ / ngày', icon: 'repeat-outline', route: '/review', activity: 'review' },
+          { label: 'Học từ mới', detail: '+10 XP / từ mới', icon: 'school-outline', route: '/learn/setup', activity: 'learn' },
+          { label: 'Đọc hiểu truyện', detail: '+15 XP / truyện lần đầu', icon: 'book-outline', route: '/stories', activity: 'story' },
+        ] as const).map(action => <MotionPressable key={action.activity} haptic accessibilityLabel={`${action.label}. ${action.detail}`} onPress={() => router.push(action.route as Href)} style={styles.action}>
+          <View style={styles.actionIcon}><Ionicons name={action.icon} size={22} color={theme.primaryText} /></View><View style={{ flex: 1, gap: 3 }}><Text style={styles.actionTitle}>{action.label}</Text><Text style={styles.copy}>+{xpRewards[action.activity]} XP{action.activity === 'review' ? ' / từ / ngày' : action.activity === 'learn' ? ' / từ mới' : ' / truyện lần đầu'}</Text></View><Ionicons name="chevron-forward" size={18} color={theme.textMuted} />
+        </MotionPressable>)}
+        <Disclosure title="XP được tính ra sao?"><Text style={styles.copy}>Chỉ nhận khi hoàn thành hoạt động. Học từ mới và đọc hiểu đúng truyện nhận một lần cho mỗi nội dung; ôn từ nhận tối đa một lần mỗi từ mỗi ngày. Ngữ pháp +{xpRewards.grammar}, thanh điệu +{xpRewards.tone}, shadowing +{xpRewards.shadowing} XP cho mỗi nội dung mỗi ngày. Mở màn hình hoặc sửa mục tiêu không cộng XP.</Text></Disclosure>
       </View>
 
       <View style={[themedCard(theme), styles.block]}>
-        <View style={styles.headingRow}><View><Text style={styles.heading}>Mục tiêu tuần</Text><Text style={styles.copy}>{Math.floor(summary.weeklySeconds / 60)} / {summary.weeklyMinutes} phút · {summary.week.start} → {summary.week.end}</Text></View><Text style={styles.percent}>{Math.round(weeklyProgress * 100)}%</Text></View>
+        <View style={styles.headingRow}><View style={{ flex: 1 }}><Text style={styles.heading}>Mục tiêu tuần</Text><Text style={styles.copy}>{Math.floor(summary.weeklySeconds / 60)} / {summary.weeklyMinutes} phút</Text></View><Text style={styles.percent}>{Math.round(weeklyProgress * 100)}%</Text><MotionPressable accessibilityLabel="Đổi mục tiêu tuần" onPress={() => setEditingGoal(value => !value)} style={styles.edit}><Ionicons name={editingGoal ? 'close' : 'create-outline'} size={22} color={theme.primaryText} /></MotionPressable></View>
         <AnimatedProgressBar progress={weeklyProgress} color={theme.primary} trackColor={theme.border} height={10} accessibilityLabel="Tiến độ mục tiêu học tuần" />
+        <WeeklyStudyChart days={summary.weeklyDays} />
+        <Text style={styles.copy}>{weeklyProgress >= 1 ? 'Đã hoàn thành tuần này ✓' : `Còn ${Math.max(0, summary.weeklyMinutes - Math.floor(summary.weeklySeconds / 60))} phút để hoàn thành tuần`}</Text>
+        {editingGoal ? <><View style={styles.goalRow}>{[70, 140, 210].map(minutes => <MotionPressable key={minutes} accessibilityLabel={`Chọn ${minutes} phút mỗi tuần`} onPress={() => setGoal(String(minutes))} style={[styles.preset, goal === String(minutes) && { borderColor: theme.primary, backgroundColor: theme.primarySoft }]}><Text style={styles.actionTitle}>{minutes} phút</Text></MotionPressable>)}</View>
         <View style={styles.goalRow}><TextInput accessibilityLabel="Mục tiêu học mỗi tuần, phút" value={goal} onChangeText={setGoal} keyboardType="number-pad" maxLength={4} editable={!saving} style={styles.input} /><Text style={styles.goalUnit}>phút/tuần</Text></View>
-        <PrimaryButton label="Lưu mục tiêu" disabled={saving} onPress={() => void save()} />
+        <PrimaryButton label="Lưu mục tiêu" loading={saving} onPress={() => void save()} /></> : null}
       </View>
 
-      <View style={styles.titleRow}><View><Text style={styles.heading}>Ấn chương hành trình</Text><Text style={styles.copy}>Mỗi dấu ấn đến từ hoạt động học thật.</Text></View><View style={styles.countPill}><Text style={styles.countText}>{unlocked}/{summary.achievements.length}</Text></View></View>
+      <View style={styles.titleRow}><View style={{ flex: 1 }}><Text style={styles.heading}>Ấn chương hành trình</Text><Text style={styles.copy}>Mỗi dấu ấn đến từ hoạt động học thật.</Text></View><View style={styles.countPill}><Text style={styles.countText}>{unlocked}/{summary.achievements.length}</Text></View></View>
       <View style={styles.achievementGrid}>
         {summary.achievements.map((item) => {
           const progress = item.threshold > 0 ? Math.min(1, item.progress / item.threshold) : 0;
           const isUnlocked = Boolean(item.unlockedAt);
-          return <MotionPressable key={item.id} haptic={isUnlocked} accessibilityLabel={`${item.title}. ${isUnlocked ? 'Đã đạt' : `${Math.min(item.progress, item.threshold)} trên ${item.threshold}`}`} onPress={() => isUnlocked ? void playHaptic('success', hapticEnabled) : undefined} style={[themedCard(theme), styles.achievement, isUnlocked && styles.achievementUnlocked]}>
+          return <View key={item.id} accessible accessibilityLabel={`${item.title}. ${isUnlocked ? 'Đã đạt' : `${Math.min(item.progress, item.threshold)} trên ${item.threshold}`}`} style={[themedCard(theme), styles.achievement, isUnlocked && styles.achievementUnlocked]}>
             <View style={[styles.seal, isUnlocked && styles.sealUnlocked, !isUnlocked && styles.sealLocked]}><Text style={[styles.sealMark, isUnlocked && styles.sealMarkUnlocked]}>{achievementSeal(item.id)}</Text><Ionicons name={achievementIcon(item.id)} size={11} color={isUnlocked ? theme.success : theme.textMuted} style={styles.sealIcon} /></View>
-            <Text style={styles.achievementTitle} numberOfLines={2}>{item.title}</Text>
+            <Text style={styles.achievementTitle}>{item.title}</Text>
             <Text style={[styles.achievementStatus, isUnlocked && styles.achievementDone]}>{isUnlocked ? 'ĐÃ MỞ · LƯU VĨNH VIỄN' : `${Math.min(item.progress, item.threshold)} / ${item.threshold}`}</Text>
             {!isUnlocked ? <AnimatedProgressBar progress={progress} color={theme.primary} trackColor={theme.border} height={5} accessibilityLabel={`${item.title}: ${Math.round(progress * 100)} phần trăm`} /> : null}
-          </MotionPressable>;
+          </View>;
         })}
       </View>
       <View style={styles.note}><Ionicons name="information-circle-outline" size={18} color={theme.primaryText} /><Text style={styles.noteText}>XP và thành tích chỉ tính từ hoạt động hoàn thành; không cộng lại số liệu lịch sử giả lập.</Text></View>
@@ -126,16 +142,11 @@ export default function AchievementsScreen() {
 
 function createStyles(theme: ReturnType<typeof useTheme>) { return StyleSheet.create({
   notice: { color: theme.primaryText, lineHeight: 22 },
-  hero: { overflow: 'hidden', backgroundColor: theme.surface, borderColor: theme.border, borderWidth: 1, borderRadius: radius.lg },
-  heroArt: { position: 'relative' }, todaySeal: { position: 'absolute', left: spacing.md, top: spacing.md, width: 38, height: 38, borderWidth: 1.5, borderColor: '#A94D45', borderRadius: 6, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-7deg' }] }, todaySealText: { color: '#A94D45', fontSize: 14, fontWeight: '900' }, heroBody: { padding: spacing.lg, gap: spacing.md }, heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md }, heroXp: { gap: 3 },
-  eyebrow: { color: theme.primaryText, fontWeight: '900', fontSize: 11, letterSpacing: 0.8 },
-  heroValue: { color: theme.textPrimary, fontWeight: '900', fontSize: 34, lineHeight: 42 },
-  heroCopy: { color: theme.textSecondary, fontSize: 13 },
-  heroDivider: { height: 1, backgroundColor: theme.border },
-  heroSmall: { color: theme.textSecondary, fontSize: 12, lineHeight: 18 },
-  streak: { width: 78, minHeight: 78, borderRadius: 24, backgroundColor: theme.warningSoft, alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.xs },
-  streakValue: { color: theme.textPrimary, fontWeight: '900', fontSize: 20, lineHeight: 22 },
-  streakLabel: { color: theme.textMuted, fontSize: 11, fontWeight: '700' },
+  action: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: theme.border, paddingVertical: 8 },
+  actionIcon: { width: 40, height: 40, borderRadius: 14, backgroundColor: theme.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  actionTitle: { color: theme.textPrimary, fontSize: 14, fontWeight: '800' },
+  edit: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  preset: { flex: 1, minHeight: 44, borderWidth: 1, borderColor: theme.border, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' },
   block: { gap: spacing.md },
   headingRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md },
   heading: { color: theme.textPrimary, fontWeight: '800', fontSize: 18 },

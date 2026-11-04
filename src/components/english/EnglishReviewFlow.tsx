@@ -15,11 +15,15 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { useReducedMotion } from "react-native-reanimated";
 
 import { EnglishAudioButton } from "@/components/EnglishAudioButton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
+import { EnglishLearningProgress } from "@/components/english/EnglishLearningProgress";
+import { EnglishNewWordWarmup } from "@/components/english/EnglishNewWordWarmup";
+import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
+import { MotionPressable } from "@/components/ui/MotionPressable";
+import { StudyTransition } from "@/components/ui/StudyTransition";
 import { englishReviewDemoCards } from "@/data/english-review-preview-fixtures";
 import {
   defaultEnglishFlashcardSettings,
@@ -33,6 +37,8 @@ import {
   reviewEnglishCard,
   type EnglishCard,
 } from "@/db/english/learner";
+import { beginEnglishNewWordReview, englishLearningIds, selectedEnglishNewCards } from "@/db/english/new-word-session";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { shuffleEnglishQueue } from "@/services/english/flashcards";
 import { readEnglishContext } from "@/services/english/reading-context";
 import { buildMeaningChoices, englishClozeForCard, exerciseForQuestion, nextReviewProgress, type EnglishReviewExercise, type EnglishReviewMode } from "@/services/english/review-exercises";
@@ -50,8 +56,9 @@ type Props = {
   quick?: boolean;
   deckId?: string;
   preview?: boolean;
+  learn?: string;
 };
-type Phase = "SETUP" | "REVIEW" | "COMPLETE" | "EMPTY";
+type Phase = "SETUP" | "WARMUP" | "REVIEW" | "COMPLETE" | "EMPTY";
 type Feedback = {
   card: EnglishCard;
   correct: boolean;
@@ -78,12 +85,12 @@ function measureResponseTime(startedAt: number) {
   return Math.max(0, Date.now() - startedAt);
 }
 
-export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false }: Props) {
+export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false, learn }: Props) {
   const db = useEnglishDatabase();
   const { preferences } = useLearningLanguage();
   const theme = useTheme();
   const palette = getEnglishPalette(theme.mode === "dark");
-  const reducedMotion = useReducedMotion();
+  const modalAnimation = useModalAnimationType();
   const { width, fontScale } = useWindowDimensions();
   const compact = width < 380 || fontScale >= 1.3;
   const selectedMode = reviewMode(mode);
@@ -94,7 +101,9 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
   const [settingsVisible, setSettingsVisible] = useState(false);
-  const [phase, setPhase] = useState<Phase>("SETUP");
+  const [phase, setPhase] = useState<Phase>(learn ? "WARMUP" : "SETUP");
+  const [newWordSession, setNewWordSession] = useState(!!learn);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -164,6 +173,7 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
       setRemainingDue(usePreview ? Math.max(0, englishReviewDemoCards.length - previewOffset.current - ordered.length) : ordered.length);
       setDueCount(usePreview ? Math.max(0, englishReviewDemoCards.length - previewOffset.current) : ordered.length);
       setPhase(ordered.length ? "REVIEW" : "EMPTY");
+      setNewWordSession(false);
       cardStartedAt.current = Date.now();
     } catch {
       setError("Chưa tải được hàng đợi ôn tập. Dữ liệu và lịch của bạn vẫn được giữ nguyên.");
@@ -189,14 +199,23 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
         setDueCount(visualPreview ? englishReviewDemoCards.length : deckDue ? deckDue.length : stats.due);
         setRemainingDue(visualPreview ? englishReviewDemoCards.length : deckDue ? deckDue.length : stats.due);
         setSettingsLoaded(true);
+        if (learn) {
+          const ids = englishLearningIds(learn);
+          const selected = await selectedEnglishNewCards(db, ids, deckId);
+          if (!live) return;
+          setRoundCards(selected);
+          setRoundTarget(selected.length);
+          setNewWordSession(true);
+          setPhase("WARMUP");
+        }
       } catch {
-        if (live) setError("Chưa đọc được cài đặt hoặc dữ liệu ôn tập. Hãy thử tải lại.");
+        if (live) setError(learn ? "Chưa tải được các từ vừa chọn. Từ đã học hoặc đã bỏ qua cần được chọn lại." : "Chưa đọc được cài đặt hoặc dữ liệu ôn tập. Hãy thử tải lại.");
       } finally {
         if (live) setLoading(false);
       }
     })();
     return () => { live = false; };
-  }, [db, deckId, startRound, visualPreview]);
+  }, [db, deckId, learn, loadAttempt, startRound, visualPreview]);
 
   const card = queue[0];
   const savedContext = card && settings.showContext !== false ? readEnglishContext(card.notes, card.sense_id) : null;
@@ -206,7 +225,7 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
   const exercise: EnglishReviewExercise = rawExercise === "CHOICE" && choices.length < 2 ? "LISTEN_CLOZE" : rawExercise;
   const answerKey = cloze?.answer ?? card?.headword ?? "";
 
-  useLanguageProtection("SESSION", loading || busy || (phase === "REVIEW" && queue.length > 0));
+  useLanguageProtection("SESSION", loading || busy || phase === "WARMUP" || (phase === "REVIEW" && queue.length > 0));
 
   useEffect(() => {
     if (phase !== "REVIEW" || feedback || settingsVisible || !screenFocused || !appActive) return;
@@ -221,11 +240,11 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
   }, [phase, feedback, settingsVisible, screenFocused, appActive]);
 
   useEffect(() => {
-    if (!settingsLoaded || !settings.autoPlayOnShow || !card || exercise !== "LISTEN_CLOZE" || feedback || settingsVisible || !screenFocused || !appActive) return;
+    if (phase !== "REVIEW" || !settingsLoaded || !settings.autoPlayOnShow || !card || exercise !== "LISTEN_CLOZE" || feedback || settingsVisible || !screenFocused || !appActive) return;
     void Speech.stop();
     Speech.speak(card.headword, { language: context.pronunciationVariant, rate: 0.9 });
     return () => { void Speech.stop(); };
-  }, [settingsLoaded, settings.autoPlayOnShow, card, exercise, feedback, settingsVisible, screenFocused, appActive, context.pronunciationVariant]);
+  }, [phase, settingsLoaded, settings.autoPlayOnShow, card, exercise, feedback, settingsVisible, screenFocused, appActive, context.pronunciationVariant]);
 
   const updateSetting = async (patch: Partial<EnglishFlashcardSettings>) => {
     if (settingsBusy) return;
@@ -293,7 +312,8 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
           operationId.current,
           card.id,
           card.revision,
-          input,
+          // Guided first exposure keeps level 1; later scheduled reviews promote normally.
+          newWordSession ? { ...input, rating: "hard" } : input,
           exercise === "CHOICE" ? "MEANING" : "LISTENING",
         );
       }
@@ -327,6 +347,8 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
 
   const continueAfterFeedback = async () => {
     setFeedback(null);
+    setHintVisible(false);
+    setHintUsed(false);
     cardStartedAt.current = Date.now();
     if (reviewedCount >= roundTarget && progress >= roundTarget) {
       await finishRound();
@@ -349,14 +371,24 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
   };
 
   const dismissFeedback = () => {
-    setFeedback(null);
-    cardStartedAt.current = Date.now();
+    void continueAfterFeedback();
   };
 
   const openHint = () => {
     setHintVisible(true);
     setHintUsed(true);
   };
+
+  if (phase === "WARMUP") {
+    if (loading || !roundCards.length) return <Screen hideHeader compact><View style={styles.center}>{loading ? <ActivityIndicator color={palette.primary} /> : <><Text accessibilityRole="alert" style={{ color: palette.error }}>{error}</Text><PrimaryButton label="Thử tải lại" onPress={() => { setError(""); setLoadAttempt(value => value + 1); }} /><PrimaryButton variant="secondary" label="Quay lại chọn từ" onPress={() => router.back()} /></>}</View></Screen>;
+    return <EnglishNewWordWarmup cards={roundCards} onExit={() => router.back()} onComplete={async () => {
+      const ready = await beginEnglishNewWordReview(db, roundCards.map(item => item.id), deckId);
+      setRoundCards(ready); setQueue(ready); setRoundTarget(ready.length);
+      setProgress(0); setReviewedCount(0); setFirstPassCorrect(0); setQuestionIndex(0);
+      reviewedIds.current = new Set(); operationId.current = englishLocalId("operation");
+      cardStartedAt.current = Date.now(); setError(""); setPhase("REVIEW");
+    }} />;
+  }
 
   if (loading && !settingsLoaded && phase === "SETUP") {
     return <Screen hideHeader><View style={styles.center}><ActivityIndicator color={palette.primary} /><Text style={{ color: palette.textSecondary }}>Đang tải lượt ôn…</Text></View></Screen>;
@@ -386,6 +418,7 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
             disabled={!dueCount || settingsBusy}
             onPress={() => void startRound()}
           />
+          <PrimaryButton label="Ôn bằng flashcard · tự đánh giá" variant="ghost" disabled={!dueCount || settingsBusy} onPress={() => router.push({ pathname: '/english/review', params: { legacy: 'true', mode: 'MEANING', ...(deckId ? { deckId } : {}), ...(quick ? { quick: '1' } : {}), ...(visualPreview ? { preview: 'true' } : {}) } } as Href)} />
         </View>
         <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backAction}><Text style={{ color: palette.textSecondary, fontWeight: "700" }}>Quay lại</Text></Pressable>
       </Screen>
@@ -410,7 +443,7 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
             <Ionicons name="trending-up" size={36} color={palette.success} style={{ marginLeft: 5 }} />
             <Ionicons name="star" size={20} color="#FBBF24" style={styles.starIcon} />
           </View>
-          <Text accessibilityRole="header" style={[styles.celebrationTitle, { color: palette.textPrimary }]}>Chúc mừng! Hãy tiếp tục học để giỏi hơn nhé!</Text>
+          <Text accessibilityRole="header" style={[styles.celebrationTitle, { color: palette.textPrimary }]}>{newWordSession ? `Đã học xong ${roundTarget} từ mới!` : "Hoàn thành lượt ôn!"}</Text>
           <View style={styles.scoreRow}><Ionicons name="arrow-up-circle" size={28} color={palette.success} /><Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>{reviewedCount} từ đã ôn</Text><Text style={{ color: palette.textMuted }}>·</Text><Text style={{ color: palette.success, fontWeight: "800" }}>{firstPassCorrect} đúng lần đầu</Text></View>
           <View style={[styles.resultCard, { backgroundColor: palette.surface, borderColor: palette.border }]}>
             <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Tiến trình lượt này</Text>
@@ -418,7 +451,8 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
             <View style={[styles.progressTrack, { backgroundColor: palette.surfaceHighlight }]}><View style={[styles.progressFill, { width: "100%", backgroundColor: palette.primary }]} /></View>
             <Text style={{ color: palette.textSecondary, lineHeight: 22 }}>{remainingDue > 0 ? `Bạn còn ${remainingDue} từ cần ôn. Tiến độ của chúng được giữ lại cho lượt tiếp theo.` : "Tuyệt vời — hiện không còn từ nào đến hạn."}</Text>
           </View>
-          {remainingDue > 0 ? <PrimaryButton label={`Tiếp tục học · ôn tối đa ${Math.min(settings.reviewBatchSize, remainingDue)} từ`} onPress={() => void startRound()} /> : <PrimaryButton label="Về kế hoạch học" onPress={() => router.push("/english/activity" as Href)} />}
+          {newWordSession && deckId ? <PrimaryButton label="Chọn thêm từ mới" onPress={() => router.replace({ pathname: "/english/decks/[id]/learn", params: { id: deckId } } as Href)} /> : null}
+          {remainingDue > 0 ? <PrimaryButton label={newWordSession ? `Ôn ${Math.min(settings.reviewBatchSize, remainingDue)} từ đến hạn khác` : `Tiếp tục học · ôn tối đa ${Math.min(settings.reviewBatchSize, remainingDue)} từ`} onPress={() => void startRound()} /> : <PrimaryButton variant={newWordSession ? "secondary" : "primary"} label="Về kế hoạch học" onPress={() => router.push("/english/activity" as Href)} />}
           <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backAction}><Text style={{ color: palette.textSecondary, fontWeight: "700" }}>Dừng tại đây</Text></Pressable>
         </View>
       </Screen>
@@ -427,7 +461,6 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
 
   const activeCard = card;
   const currentChoices = choices;
-  const progressPercent = `${roundTarget ? Math.round((progress / roundTarget) * 100) : 0}%` as `${number}%`;
   const answerFill = () => {
     if (!activeCard) return;
     if (!answerText.trim()) return;
@@ -444,24 +477,24 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
   };
 
   return (
-    <Screen hideHeader avoidKeyboard>
+    <Screen hideHeader scroll={false} compact avoidKeyboard safeAreaEdges={["top", "bottom"]}>
       <View style={[styles.reviewRoot, { backgroundColor: palette.background }]}>
         <View style={styles.topBar}>
           <Pressable accessibilityRole="button" accessibilityLabel="Thoát lượt ôn" onPress={() => router.back()} style={styles.iconButton}><Ionicons name="close" size={25} color={palette.textPrimary} /></Pressable>
-          <Text accessibilityRole="header" style={[styles.topTitle, { color: palette.textPrimary }]}>{exercise === "CHOICE" ? "Chọn nghĩa chính xác" : "Nghe & hoàn thiện câu"}</Text>
+          <Text accessibilityRole="header" style={[styles.topTitle, { color: palette.textPrimary }]}>{newWordSession ? "Học từ mới" : exercise === "CHOICE" ? "Chọn nghĩa chính xác" : "Nghe & hoàn thiện câu"}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="Cài đặt lượt ôn" onPress={() => setSettingsVisible(true)} style={styles.iconButton}><Ionicons name="options-outline" size={23} color={palette.textPrimary} /></Pressable>
         </View>
-        <View style={styles.progressHeader}>
-          <View style={[styles.progressTrack, { backgroundColor: palette.surfaceHighlight }]}><View testID="english-review-progress" style={[styles.progressFill, { width: progressPercent, backgroundColor: palette.primary }]} /></View>
+        {newWordSession ? <EnglishLearningProgress completed={roundTarget * 2 + progress} total={roundTarget * 3} /> : <View style={styles.progressHeader}>
+          <AnimatedProgressBar testID="english-review-progress" progress={roundTarget ? progress / roundTarget : 0} height={12} color={palette.primary} trackColor={palette.surfaceHighlight} accessibilityLabel="Tiến trình lượt ôn" accessibilityValue={{ min: 0, max: roundTarget, now: progress }} />
           <Text testID="english-review-progress-caption" style={[styles.progressCaption, { color: palette.textMuted }]}>{progress}/{roundTarget} · {reviewedCount}/{roundTarget} từ đã gặp · {Math.floor(activeSeconds / 60)}:{String(activeSeconds % 60).padStart(2, "0")}</Text>
-        </View>
+        </View>}
         {visualPreview ? <Text testID="english-review-preview-badge" style={{ color: palette.primary, fontSize: 12, fontWeight: "800", textAlign: "center" }}>DỮ LIỆU XEM THỬ · KHÔNG GHI VÀO LỊCH HỌC</Text> : null}
 
         {error ? <View style={[styles.notice, { borderColor: palette.error, backgroundColor: palette.errorLight }]}><Text accessibilityRole="alert" style={{ color: palette.error, flex: 1 }}>{error}</Text><Pressable accessibilityRole="button" disabled={busy} onPress={() => { if (pendingAnswer.current) void recordAnswer(pendingAnswer.current.correct, "", true); else void startRound(); }}><Text style={{ color: palette.primary, fontWeight: "800" }}>Thử lại</Text></Pressable></View> : null}
 
         {activeCard ? (
           <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.questionContent, compact && styles.questionContentCompact]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <View style={[styles.exerciseCard, { backgroundColor: palette.surface, borderColor: palette.border }]} testID="english-review-card">
+            <StudyTransition turnKey={`${questionIndex}:${activeCard.id}:${exercise}`} style={[styles.exerciseCard, { backgroundColor: palette.surface, borderColor: palette.border }]} testID="english-review-card">
               <View style={styles.cardMetaRow}>
                 <View style={[styles.badge, { backgroundColor: palette.primaryLight }]}><Text style={{ color: palette.primary, fontWeight: "800" }}>{activeCard.pos || "TỪ VỰNG"}</Text></View>
                 <Text style={{ color: palette.textMuted }}>{quick ? "ÔN NHANH" : `${Math.min(roundTarget, reviewedCount + 1)}/${roundTarget}`}</Text>
@@ -476,7 +509,7 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
                   <View style={styles.optionsGrid}>
                     {currentChoices.map(choice => {
                       const selected = choice.cardId === selectedChoice;
-                      return <Pressable key={`${activeCard.id}-${choice.cardId}`} accessibilityRole="radio" accessibilityState={{ selected }} disabled={busy} onPress={() => setSelectedChoice(choice.cardId)} style={[styles.option, { backgroundColor: selected ? palette.primaryLight : palette.surface, borderColor: selected ? palette.primary : palette.border }]}><Text style={{ color: palette.textPrimary, fontSize: compact ? 16 : 18, fontWeight: selected ? "800" : "600", textAlign: "center" }}>{choice.meaning}</Text></Pressable>;
+                      return <MotionPressable key={`${activeCard.id}-${choice.cardId}`} accessibilityRole="radio" accessibilityLabel={choice.meaning} accessibilityState={{ checked: selected, selected }} disabled={busy} onPress={() => setSelectedChoice(choice.cardId)} style={[styles.option, { backgroundColor: selected ? palette.primaryLight : palette.surface, borderColor: selected ? palette.primary : palette.border }]}><Text style={{ color: palette.textPrimary, fontSize: compact ? 16 : 18, fontWeight: selected ? "800" : "600", textAlign: "center" }}>{choice.meaning}</Text></MotionPressable>;
                     })}
                   </View>
                 </>
@@ -503,26 +536,27 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
                     editable={!busy}
                     style={[styles.answerInput, { backgroundColor: palette.surface, color: palette.textPrimary, borderColor: palette.border }]}
                   />
-                  {hintVisible ? <View accessibilityLiveRegion="polite" style={[styles.hintCard, { backgroundColor: palette.primaryLight }]}><Text style={{ color: palette.primary, fontWeight: "900" }}>Gợi ý</Text><Text style={[styles.hintText, { color: palette.textPrimary }]}>{maskedAnswer(answerKey)}</Text></View> : null}
+                  {hintVisible ? <StudyTransition turnKey={`${questionIndex}:hint`} effect="reveal" animateOnMount accessibilityLiveRegion="polite" style={[styles.hintCard, { backgroundColor: palette.primaryLight }]}><Text style={{ color: palette.primary, fontWeight: "900" }}>Gợi ý</Text><Text style={[styles.hintText, { color: palette.textPrimary }]}>{maskedAnswer(answerKey)}</Text></StudyTransition> : null}
                   <View style={styles.hintActions}>
                     <Pressable accessibilityRole="button" onPress={openHint} disabled={hintVisible || busy} style={[styles.secondaryAction, { borderColor: palette.border }]}><Text style={{ color: palette.primary, fontWeight: "800" }}>{hintVisible ? "Đã hiện gợi ý" : "Gợi ý"}</Text></Pressable>
                     <Pressable accessibilityRole="button" onPress={dontKnow} disabled={busy} style={[styles.secondaryAction, { borderColor: palette.border }]}><Text style={{ color: palette.error, fontWeight: "800" }}>Không biết</Text></Pressable>
                   </View>
                 </>
               )}
-            </View>
+            </StudyTransition>
             <PrimaryButton label="Kiểm tra" disabled={busy || (exercise === "CHOICE" ? !selectedChoice : !answerText.trim())} onPress={exercise === "CHOICE" ? selectChoice : answerFill} />
           </ScrollView>
         ) : <View style={styles.center}><ActivityIndicator color={palette.primary} /><Text style={{ color: palette.textSecondary }}>Đang chuẩn bị câu tiếp theo…</Text></View>}
       </View>
 
-      <Modal visible={!!feedback} transparent animationType={reducedMotion ? "none" : "slide"} onRequestClose={dismissFeedback}>
+      <Modal visible={!!feedback} transparent animationType={modalAnimation} onRequestClose={dismissFeedback}>
         <View style={styles.sheetOverlay}>
           <Pressable accessibilityLabel="Đóng phản hồi" onPress={dismissFeedback} style={styles.scrim} />
           <ScrollView style={[styles.feedbackSheet, { backgroundColor: palette.surface, borderColor: palette.border }]} contentContainerStyle={styles.feedbackContent} keyboardShouldPersistTaps="handled">
             <View style={styles.handle} />
-            <View style={[styles.feedbackHeader, { borderColor: palette.border }]}><Ionicons name={feedback?.correct ? "checkmark-circle" : "alert-circle"} size={34} color={feedback?.correct ? palette.success : palette.error} /><Text accessibilityRole="header" style={{ color: feedback?.correct ? palette.success : palette.error, fontSize: 22, fontWeight: "900" }}>{feedback?.correct ? "Chính xác!" : "Chưa chính xác!"}</Text></View>
+            {feedback ? <StudyTransition turnKey={`${questionIndex}:${feedback.card.id}:${feedback.correct}`} effect={feedback.correct ? 'success' : 'error'} durationMs={feedback.correct ? 280 : 240} animateOnMount testID="english-answer-feedback" accessibilityLiveRegion="polite" style={[styles.feedbackHeader, { borderColor: palette.border }]}><Ionicons name={feedback.correct ? "checkmark-circle" : "refresh-outline"} size={34} color={feedback.correct ? palette.success : palette.error} /><Text accessibilityRole="header" style={{ color: feedback.correct ? palette.success : palette.error, fontSize: 22, fontWeight: "900" }}>{feedback.correct ? "Chính xác!" : "Cùng xem lại nhé"}</Text></StudyTransition> : null}
             {feedback ? <>
+              {!feedback.correct ? <Text style={{ color: palette.textSecondary }}>Bạn đã trả lời: {feedback.answer}</Text> : null}
               <View style={styles.resultLabels}><Text style={[styles.resultBadge, { backgroundColor: palette.surfaceSubtle, color: palette.primary }]}>{feedback.card.pos || "TỪ VỰNG"}</Text><Text style={[styles.resultBadge, { backgroundColor: palette.surfaceSubtle, color: palette.textSecondary }]}>{feedback.exercise === "CHOICE" ? "CHỌN NGHĨA" : "NGHE & ĐIỀN"}</Text></View>
               <Text style={[styles.feedbackWord, { color: palette.textPrimary }]}>{feedback.answer === "Không biết" || !feedback.correct ? (feedback.exercise === "LISTEN_CLOZE" ? answerKeyForFeedback(feedback) : feedback.card.headword) : feedback.card.headword}</Text>
               {feedback.card.ipa ? <Text style={[styles.ipa, { color: palette.textMuted }]}>{feedback.card.ipa}</Text> : null}
@@ -535,7 +569,7 @@ export function EnglishReviewFlow({ mode, quick = false, deckId, preview = false
         </View>
       </Modal>
 
-      <Modal visible={settingsVisible} transparent animationType={reducedMotion ? "none" : "slide"} onRequestClose={() => setSettingsVisible(false)}>
+      <Modal visible={settingsVisible} transparent animationType={modalAnimation} onRequestClose={() => setSettingsVisible(false)}>
         <View style={styles.sheetOverlay}><Pressable accessibilityLabel="Đóng cài đặt" onPress={() => setSettingsVisible(false)} style={styles.scrim} /><ScrollView style={[styles.settingsSheet, { backgroundColor: palette.surface, borderColor: palette.border }]} contentContainerStyle={{ gap: 15 }}><View style={styles.handle} /><View style={styles.settingsHeading}><View style={{ flex: 1 }}><Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Cài đặt lượt ôn</Text><Text style={{ color: palette.textMuted }}>Số từ chọn được áp dụng từ lượt kế tiếp.</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Đóng" onPress={() => setSettingsVisible(false)} style={styles.iconButton}><Ionicons name="close" size={23} color={palette.textPrimary} /></Pressable></View>
           <Text style={{ color: palette.textPrimary, fontWeight: "900" }}>Số từ mỗi lượt</Text><View style={styles.batchRow}>{ENGLISH_REVIEW_BATCH_SIZES.map(size => <Pressable key={size} accessibilityRole="radio" accessibilityState={{ selected: settings.reviewBatchSize === size }} disabled={settingsBusy} onPress={() => void updateSetting({ reviewBatchSize: size })} style={[styles.batchOption, { backgroundColor: settings.reviewBatchSize === size ? palette.primary : palette.surface, borderColor: settings.reviewBatchSize === size ? palette.primary : palette.border }]}><Text style={{ color: settings.reviewBatchSize === size ? "#fff" : palette.textPrimary, fontSize: 18, fontWeight: "900" }}>{size}</Text></Pressable>)}</View>
           <SettingSwitch label="Trộn thứ tự ở lượt mới" value={settings.shuffleOnStart} onChange={value => void updateSetting({ shuffleOnStart: value })} palette={palette} />
@@ -580,7 +614,7 @@ const styles = StyleSheet.create({
   progressResult: { fontSize: 27, fontWeight: "900" },
   progressTrack: { height: 12, borderRadius: 8, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 8 },
-  reviewRoot: { flex: 1, minHeight: 520 },
+  reviewRoot: { flex: 1, minHeight: 0 },
   topBar: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 6 },
   iconButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   topTitle: { flex: 1, textAlign: "center", fontSize: 20, fontWeight: "900" },

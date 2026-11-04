@@ -51,6 +51,7 @@ export type ThemeTokens = {
     review: string;
     exam: string;
   };
+  skillSurfaces: Record<keyof ThemeTokens['skillColors'], string>;
   skill: { vocabulary: string; listening: string; speaking: string; reading: string; grammar: string; hanzi: string; review: string };
 };
 
@@ -61,7 +62,7 @@ const hskByLevel = {
 } as const;
 
 const shared = {
-  primary: '#2457D6', primaryPressed: '#173B9A', accent: '#E89A19',
+  primary: '#146D64', primaryPressed: '#0B5149', accent: '#E89A19',
   success: '#16754F', warning: '#96520A', error: '#B42318', info: '#2457D6',
   onPrimary: '#FFFFFF', onSuccess: '#FFFFFF', onWarning: '#FFFFFF', onError: '#FFFFFF', onDark: '#FFFFFF',
   hsk: hskColors,
@@ -86,18 +87,20 @@ function legacySkillColors(colors: ThemeTokens['skillColors']): ThemeTokens['ski
 
 export const lightTheme: ThemeTokens = {
   mode: 'light', ...shared, skillColors: lightSkillColors, skill: legacySkillColors(lightSkillColors),
-  background: '#F6F7FB', backgroundSecondary: '#EEF1F7', surface: '#FFFFFF', surfaceElevated: '#FFFFFF', surfaceRaised: '#FFFFFF', surfacePressed: '#F0F3FA', surfaceSelected: '#E9EFFF', surfaceDisabled: '#EEF1F7', readingBackground: '#FBF8EF',
-  textPrimary: '#172033', textSecondary: '#4D596E', textMuted: '#626B7B', textInverse: '#FFFFFF', border: '#E1E6F0', divider: '#E9ECF3', primarySoft: '#E9EFFF',
-  primaryText: '#2457D6',
+  skillSurfaces: { vocabulary: '#FFF0DF', listening: '#F0EBFC', speaking: '#FFF0DB', reading: '#E7F5EC', grammar: '#EEEAF9', hanzi: '#FDEAE4', review: '#FFF3CE', exam: '#E9EEF8' },
+  background: '#FAF7F2', backgroundSecondary: '#F0ECE4', surface: '#FFFFFF', surfaceElevated: '#FFFFFF', surfaceRaised: '#FFFFFF', surfacePressed: '#EEF3ED', surfaceSelected: '#E5F4EC', surfaceDisabled: '#F0ECE4', readingBackground: '#FBF8EF',
+  textPrimary: '#21352F', textSecondary: '#4D5962', textMuted: '#626B73', textInverse: '#FFFFFF', border: '#E6E1D9', divider: '#EEE9E1', primarySoft: '#E5F4EC',
+  primaryText: '#146D64',
   successSoft: '#E7F7F0', warningSoft: '#FFF4DD', errorSoft: '#FDECEC', infoSoft: '#E9EFFF', overlay: 'rgba(12, 23, 48, 0.56)', shadow: '#172033',
   tones: ['#697386', '#C95437', '#16815E', '#2457D6', '#8245A4'],
 };
 
 export const darkTheme: ThemeTokens = {
   mode: 'dark', ...shared, skillColors: darkSkillColors, skill: legacySkillColors(darkSkillColors),
-  accent: '#FFC45D', success: '#5AD3A3', onSuccess: '#10231D', warning: '#FFC65A', onWarning: '#261B07', error: '#FF9292', onError: '#351416', info: '#78A9FF', primaryText: '#78A9FF',
+  skillSurfaces: { vocabulary: '#243044', listening: '#302741', speaking: '#3C3024', reading: '#193A30', grammar: '#2D2943', hanzi: '#412B2D', review: '#3D3422', exam: '#253147' },
+  accent: '#FFC45D', success: '#5AD3A3', onSuccess: '#10231D', warning: '#FFC65A', onWarning: '#261B07', error: '#FF9292', onError: '#351416', info: '#78A9FF', primaryText: '#79D9C4',
   background: '#101624', backgroundSecondary: '#182033', surface: '#1D2738', surfaceElevated: '#263248', surfaceRaised: '#263248', surfacePressed: '#303E56', surfaceSelected: '#1C3266', surfaceDisabled: '#182033', readingBackground: '#182033',
-  textPrimary: '#F5F7FC', textSecondary: '#CBD3E2', textMuted: '#9BA8BE', textInverse: '#101624', border: '#36435A', divider: '#2B374C', primarySoft: '#1C3266',
+  textPrimary: '#F5F7FC', textSecondary: '#CBD3E2', textMuted: '#9BA8BE', textInverse: '#101624', border: '#36435A', divider: '#2B374C', primarySoft: '#193A30',
   successSoft: '#153D32', warningSoft: '#473615', errorSoft: '#482429', infoSoft: '#1C3266', overlay: 'rgba(0, 0, 0, 0.68)', shadow: '#000000',
   tones: ['#B7C0D0', '#FF977C', '#62D5A9', '#78A9FF', '#D0A5FF'],
 };

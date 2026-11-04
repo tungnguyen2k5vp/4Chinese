@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSharedDeckPayload, encodeDeckShareCode } from "./share-code";
-import { createShortDeckCode, fetchSharedDeck, normalizeShortDeckCode } from "./short-share";
+import { createShortDeckCode, fetchSharedDeck, normalizeShortDeckCode, publishShortDeck } from "./short-share";
+
+afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("short deck share code", () => {
   it("creates an eight-character code without ambiguous glyphs", () => {
@@ -52,5 +54,28 @@ describe("short deck share code", () => {
       name: "Bộ cũ",
       words: [{ simplified: "学习" }],
     });
+  });
+
+  it("keeps the v2 snapshot intact through the eight-character RPC and bounds network waits", async () => {
+    vi.stubEnv("EXPO_PUBLIC_SUPABASE_URL", "https://share.test");
+    vi.stubEnv("EXPO_PUBLIC_SUPABASE_ANON_KEY", "test-public-key");
+    const payload = { version: 2 as const, name: "Tiến độ", snapshotAt: "2026-11-04T00:00:00.000Z", words: [{
+      simplified: "你", traditional: "你", pinyin: "nǐ", pinyinNumeric: "ni3", primaryMeaningVi: "bạn",
+      meaningsVi: ["bạn"], meaningsEn: ["you"], pos: [], hskBand: 1 as const,
+      imageUri: null, imageSource: null, imageLicense: null, imageAttribution: null, examples: [], progress: null,
+    }] };
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response("true"))
+      .mockResolvedValueOnce(Response.json(payload));
+    vi.stubGlobal("fetch", fetchMock);
+    const code = await publishShortDeck(payload);
+    expect(JSON.parse(fetchMock.mock.calls[0]![1].body).p_payload).toEqual(payload);
+    await expect(fetchSharedDeck(code)).resolves.toEqual(payload);
+    vi.useFakeTimers();
+    fetchMock.mockImplementationOnce((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("timeout")));
+    }));
+    const pending = expect(fetchSharedDeck(code)).rejects.toThrow("timeout");
+    await vi.advanceTimersByTimeAsync(15_000);
+    await pending;
   });
 });

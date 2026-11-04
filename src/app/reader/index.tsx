@@ -4,6 +4,7 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { ChineseAIEntry, WordAIEntry } from "@/components/ChineseAIEntry";
 import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import { EmptyState } from "@/components/EmptyState";
 import { PinyinText } from "@/components/PinyinText";
@@ -259,12 +260,14 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
       draftSourceId.current = `reader-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     } else setInputCharacters(Array.from(text).length);
   };
-  const importImage = async () => {
+  const importImage = async (camera = false) => {
     if (ocrRequest.current || textImportRequest.current || busy || saving) return;
     setShowImport(true);
     const controller = new AbortController(); ocrRequest.current = controller; setOcrLoading(true); pickingImage.current = true;
     try {
-      const image = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
+      if (camera && !(await ImagePicker.requestCameraPermissionsAsync()).granted) throw new Error('Chưa được cấp quyền camera. Bạn có thể chọn ảnh hoặc dán văn bản.');
+      if (controller.signal.aborted) return;
+      const image = camera ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.9 }) : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
       pickingImage.current = false;
       if (controller.signal.aborted || image.canceled || !image.assets[0]) return;
       processingImage.current = true;
@@ -346,6 +349,7 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
         <Text style={styles.counter}>Tài liệu được xử lý trên thiết bị; chỉ phần hiện tại được tra từ.</Text>
         <PrimaryButton label="Mở tệp TXT / EPUB" loading={textImportLoading} disabled={busy || saving} onPress={() => void importTxt()} />
         <PrimaryButton variant="secondary" label="Nhận chữ từ ảnh (OCR)" loading={ocrLoading} disabled={!isImageOcrAvailable() || busy || saving} onPress={() => void importImage()} />
+        <PrimaryButton variant="secondary" label="Chụp ảnh để nhận chữ" disabled={!isImageOcrAvailable() || busy || saving} onPress={() => void importImage(true)} />
         <PrimaryButton variant="ghost" label="Dán văn bản" disabled={busy || saving} onPress={() => { setShowImport(true); setText(''); setInputCharacters(0); setInputError(''); }} />
         {!isImageOcrAvailable() ? <Text style={styles.readerMeta}>OCR cần bản Android hỗ trợ; bạn vẫn có thể dán văn bản.</Text> : null}
         </Disclosure>
@@ -407,6 +411,7 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
         accessibilityRole="button" accessibilityLabel={`Tra từ ${segment.text}${segment.token.vocabulary ? `, ${segment.token.vocabulary.primaryMeaningVi}` : ''}`}
         onPress={() => { setSelected(segment.token!); setSavePersonalContext(false); persistPosition(documentId, chunk.char_start + segment.token!.charStart); }}
         style={[styles.inlineToken, segment.token.vocabulary?.status === 'KNOWN' ? styles.inlineKnown : segment.token.vocabulary?.status === 'LEARNING' ? styles.inlineLearning : styles.inlineUnknown]}>{segment.text}</Text> : segment.text)}</Text>
+      <ChineseAIEntry label="Chọn đoạn để hỏi AI" context={{ label: 'Đoạn đọc tự chọn (xem trước trước khi gửi)', task: 'reader', context: { kind: 'reader', text: chunk.content.slice(0, 1200) } }} />
     </View> : null}
     {tokens.length ? <View style={[styles.card, styles.tokens]}>
       <Text style={styles.title}>Độ phủ phần hiện tại {metrics.coveragePercent}% · {metrics.difficulty}</Text>
@@ -445,7 +450,12 @@ function ReaderContent({ storyId, lessonActivityId }: { storyId?: string; lesson
           </View>
           {selected.vocabulary ? <>
             <Text style={styles.meaning}>{selected.vocabulary.primaryMeaningVi}</Text>
+            <WordAIEntry word={selected.vocabulary} sentence={Array.from(chunk?.content ?? '').slice(Math.max(0, selected.charStart - 80), selected.charEnd + 120).join('')} beforeOpen={() => setSelected(null)} />
             <Text style={styles.meta}>HSK {selected.vocabulary.hskBand} · {selected.vocabulary.status === 'LEARNING' ? 'Đang học' : selected.vocabulary.status === 'KNOWN' ? 'Đã biết' : selected.vocabulary.status === 'SKIPPED' ? 'Đã bỏ qua' : 'Mới'}</Text>
+            <PrimaryButton variant="ghost" label="Nhớ lại từ này trong ngữ cảnh" disabled={saving || busy} onPress={() => {
+              const vocabularyId=selected.vocabulary?.id;setSelected(null);
+                if(vocabularyId)router.push({pathname:'/memory/session',params:{id:vocabularyId,mode:'context',assisted:'1'}} as Href);
+            }} />
             <PrimaryButton variant="ghost" label="Mở chi tiết từ" disabled={saving || busy} onPress={() => {
               persistPosition(documentId, (chunk?.char_start ?? 0) + selected.charStart);
               const vocabularyId = selected.vocabulary?.id;

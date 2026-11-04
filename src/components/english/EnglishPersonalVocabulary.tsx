@@ -151,7 +151,7 @@ export function EnglishPersonalWordCard({
           style={s.compactMain}
         >
           <View style={s.row}>
-            <Text numberOfLines={1} style={[s.compactWord, { color: p.primary }]}>{card.headword}</Text>
+            <Text style={[s.compactWord, { color: p.primary }]}>{card.headword}</Text>
             <Text style={[s.compactLevel, { color, borderColor: color }]}>{learnerLabel}</Text>
           </View>
           <Text numberOfLines={2} style={{ color: p.textPrimary, lineHeight: 21 }}>{card.meaning_vi}</Text>
@@ -161,16 +161,8 @@ export function EnglishPersonalWordCard({
         </Pressable>
         <View style={s.compactActions}>
           {showStartAction && card.status === "NEW" && !card.suspended ? (
-            <PrimaryButton label="Bắt đầu học" disabled={busy} onPress={onStart} />
+            <PrimaryButton label="Học ngay" disabled={busy} onPress={onStart} />
           ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Xem chi tiết từ ${card.headword}`}
-            onPress={() => router.push(`/english/word?cardId=${encodeURIComponent(card.id)}` as Href)}
-            style={s.iconAction}
-          >
-            <Ionicons name="book-outline" size={19} color={p.primary} />
-          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`${card.suspended ? "Khôi phục" : "Bỏ qua"} từ ${card.headword}`}
@@ -178,11 +170,12 @@ export function EnglishPersonalWordCard({
             onPress={onSuspend}
             style={s.iconAction}
           >
-            <Ionicons name={card.suspended ? "refresh-outline" : "ellipsis-horizontal"} size={19} color={p.textSecondary} />
+            <Ionicons name={card.suspended ? "refresh-outline" : "pause-circle-outline"} size={19} color={p.textSecondary} />
+            <Text style={{ color: p.textSecondary, fontSize: 13 }}>{card.suspended ? "Khôi phục" : "Bỏ qua"}</Text>
           </Pressable>
         </View>
         {card.next_review_at && !card.suspended ? (
-          <Text style={{ color: p.textMuted, fontSize: 12 }}>Ôn tiếp {new Date(card.next_review_at).toLocaleDateString("vi-VN")}</Text>
+          <Text style={{ color: p.textMuted, fontSize: 12 }}>Ôn tiếp {new Date(card.next_review_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}</Text>
         ) : null}
       </View>
     );
@@ -264,7 +257,7 @@ const s = StyleSheet.create({
   compactWord: { flex: 1, minWidth: 0, fontSize: 19, fontWeight: "800" },
   compactLevel: { flexShrink: 0, fontSize: 12, fontWeight: "700", borderWidth: 1, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4 },
   compactActions: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
-  iconAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: 1, borderColor: "#D8E0EE" },
+  iconAction: { minWidth: 44, minHeight: 44, paddingHorizontal: 10, gap: 6, flexDirection: "row", alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: 1, borderColor: "#D8E0EE" },
   panel: {
     padding: 18,
     borderWidth: 1,

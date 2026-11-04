@@ -3,12 +3,14 @@ import { useSQLiteContext } from "expo-sqlite";
 import { useEffect, useState } from "react";
 import { Alert, Platform, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
+import { ChineseAIEntry } from "@/components/ChineseAIEntry";
 import { LanguageSettings } from "@/components/LanguageSettings";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { exportLocalBackup, importLocalBackup } from "@/db/backup-repository";
 import { getSettings, saveSettings } from "@/db/repository";
+import { usePathAccess } from "@/hooks/use-path-access";
 import { AnalyticsEvent, track } from "@/services/analytics/analytics-service";
 import { getAppVersion, getAppVersionLabel } from '@/services/app/app-version';
 import { createDeviceBackupArchive, hasArchiveRestorePoint, materializeArchiveImages, pickBackup, readRestorePointArchive,
@@ -23,6 +25,7 @@ import { useTheme, useThemeStyles } from "@/theme/ThemeProvider";
 import type { UserSettings } from "@/types/models";
 
 export default function ProfileScreen() {
+  const pathAccess = usePathAccess();
   const { preferences } = useLearningLanguage();
   const isEnglish = preferences.learningLanguage === "en";
   const db = useSQLiteContext();
@@ -166,7 +169,7 @@ export default function ProfileScreen() {
   if (!settings) return <Screen title="Cài đặt" />;
   return (
     <Screen
-      title="Tài khoản & Cài đặt"
+      title="Cài đặt"
       subtitle="Dữ liệu học đang được lưu cục bộ trên thiết bị."
       safeAreaEdges={isEnglish ? ["top"] : ["bottom"]}
       compact={!isEnglish}
@@ -183,6 +186,19 @@ export default function ProfileScreen() {
         </View>
       </View>
       <LanguageSettings />
+      {!isEnglish ? <View style={{ gap: 10 }}><ChineseAIEntry /><PrimaryButton label="Cài đặt AI & quyền riêng tư" variant="ghost" onPress={() => router.push('/ai/settings' as Href)} /></View> : null}
+      {!isEnglish ? <View style={themedCard(theme)}>
+        <Text style={styles.section}>Chế độ lộ trình</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={styles.label}>Mở khóa tất cả bài học</Text>
+            <Text style={{ color: theme.textSecondary, fontSize: 13, lineHeight: 20 }}>{pathAccess.allOpen ? 'Học tự do · có thể mở mọi bài để trải nghiệm.' : 'Học tuần tự · hoàn thành bài trước để mở bài sau.'}</Text>
+          </View>
+          <Switch accessibilityLabel="Mở khóa tất cả bài học" value={pathAccess.allOpen} disabled={!pathAccess.ready || pathAccess.saving} onValueChange={value => void pathAccess.change(value)} />
+        </View>
+        <Text style={{ color: theme.textMuted, fontSize: 12, lineHeight: 18, marginTop: 8 }}>Tắt để trở lại thứ tự cũ. Bật/tắt không đánh dấu hoàn thành hoặc đổi tiến độ học và lịch ôn.</Text>
+        {pathAccess.error ? <View><Text accessibilityRole="alert" style={{ color: theme.error }}>{pathAccess.error}</Text><PrimaryButton label="Thử lại chế độ lộ trình" variant="secondary" onPress={() => void pathAccess.load()} /></View> : null}
+      </View> : null}
       {!isEnglish ? <View style={themedCard(theme)}>
         {__DEV__ ? <PrimaryButton label="Kiểm thử bộ từ tiếng Anh · V7" variant="secondary" onPress={() => router.push('/english' as Href)} /> : null}
         <Text style={styles.section}>Mục tiêu tiếng Trung mỗi ngày</Text>

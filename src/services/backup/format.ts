@@ -1,4 +1,5 @@
 import { validateConfusableAttempt } from '@/data/confusable-words';
+import { validateNativePracticeBackupRecord } from "@/db/native-practice";
 import { ROLEPLAY_HISTORY_LIMIT, validateRoleplayAiLimits, validateRoleplayHistoryRecord } from '@/db/roleplay-history';
 import { DATABASE_VERSION } from "@/db/schema";
 import { validateSpeakingAttemptBackupRecord } from '@/db/speaking-attempts';
@@ -7,13 +8,14 @@ import { validateWordContextRecord } from '@/db/word-contexts';
 import { validateExamBackupRecord } from '@/services/exam/session';
 import { validateWrittenBackupRecord } from '@/services/exam/written-practice';
 
-export const BACKUP_FORMAT_VERSION = 3;
+export const BACKUP_FORMAT_VERSION = 4;
 
 export type BackupRecord = Record<string, unknown>;
 
 export type LocalBackupData = {
   userSettings: BackupRecord[];
   personalDecks: BackupRecord[];
+  personalDeckVocabulary?: BackupRecord[];
   customVocabulary: BackupRecord[];
   exampleSentences: BackupRecord[];
   vocabularyProgress: BackupRecord[];
@@ -39,6 +41,7 @@ export type LocalBackupData = {
   grammarAttempts?: BackupRecord[];
   examAttempts?: BackupRecord[];
   writtenPractice?: BackupRecord[];
+  nativeHandwritingPractice?: BackupRecord[];
   confusableAttempts?: BackupRecord[];
   personalVocabularyContexts?: BackupRecord[];
   wordContexts?: BackupRecord[];
@@ -116,12 +119,13 @@ function minimizeRoleplayBackupHistory(rows: BackupRecord[] | undefined): Backup
 export function createLocalBackup(data: LocalBackupData, appVersion: string): LocalBackup {
   const roleplayHistory = minimizeRoleplayBackupHistory(data.roleplayHistory);
   validateRoleplayBackupData({ ...data, roleplayHistory });
+  data.nativeHandwritingPractice?.forEach(validateNativePracticeBackupRecord);
   return {
     backupVersion: BACKUP_FORMAT_VERSION,
     schemaVersion: DATABASE_VERSION,
     createdAt: new Date().toISOString(),
     appVersion,
-    data: { ...data, roleplayHistory, timedSpeakingAttempts: data.timedSpeakingAttempts ?? [], baseVocabularyOverrides: data.baseVocabularyOverrides ?? [],
+    data: { ...data, roleplayHistory, personalDeckVocabulary: data.personalDeckVocabulary ?? [], timedSpeakingAttempts: data.timedSpeakingAttempts ?? [], baseVocabularyOverrides: data.baseVocabularyOverrides ?? [],
       imageAssets: data.imageAssets ?? [], lessonProgress: data.lessonProgress ?? [],
       lessonActivityProgress: data.lessonActivityProgress ?? [],
       grammarProgress: data.grammarProgress ?? [], readingDocuments: data.readingDocuments ?? [],
@@ -141,7 +145,7 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     fail("Tệp sao lưu không phải JSON hợp lệ.");
   }
   if (!isRecord(candidate) || !isRecord(candidate.data)) fail("Tệp sao lưu thiếu dữ liệu.");
-  if (candidate.backupVersion !== 1 && candidate.backupVersion !== 2 && candidate.backupVersion !== BACKUP_FORMAT_VERSION) {
+  if (candidate.backupVersion !== 1 && candidate.backupVersion !== 2 && candidate.backupVersion !== 3 && candidate.backupVersion !== BACKUP_FORMAT_VERSION) {
     throw new BackupValidationError("UNSUPPORTED_FORMAT", "Phiên bản tệp sao lưu không được hỗ trợ.");
   }
   if (!Number.isInteger(candidate.schemaVersion) || (candidate.schemaVersion as number) < 1) {
@@ -166,6 +170,16 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     const rows = candidate.data[key];
     if (!Array.isArray(rows) || !rows.every(isRecord)) fail(`Dữ liệu ${key} không hợp lệ.`);
     data[key] = rows;
+  }
+  const deckMemberships = candidate.data.personalDeckVocabulary;
+  if (candidate.backupVersion >= 4 && (!Array.isArray(deckMemberships) || !deckMemberships.every(isRecord))) {
+    fail('LiÃªn káº¿t tá»« vÃ  bá»™ tá»« khÃ´ng há»£p lá»‡.');
+  }
+  if (Array.isArray(deckMemberships)) {
+    if (!deckMemberships.every((row) => typeof row.deck_id === 'string' && typeof row.vocabulary_id === 'string' && typeof row.created_at === 'string')) {
+      fail('LiÃªn káº¿t tá»« vÃ  bá»™ tá»« khÃ´ng há»£p lá»‡.');
+    }
+    data.personalDeckVocabulary = deckMemberships as BackupRecord[];
   }
   for (const word of data.customVocabulary) {
     if (word.is_custom !== 1 || typeof word.id !== "string" || typeof word.simplified !== "string" || typeof word.traditional !== "string") {
@@ -213,6 +227,12 @@ export function parseLocalBackup(text: string, supportedSchemaVersion = DATABASE
     if (!Array.isArray(attempts) || !attempts.every(isRecord)) fail('Bài viết trong tệp sao lưu không hợp lệ.');
     try { attempts.forEach(validateWrittenBackupRecord); } catch { fail('Bản nháp trong tệp sao lưu không hợp lệ.'); }
     data.writtenPractice = attempts;
+  }
+  if (candidate.data.nativeHandwritingPractice !== undefined) {
+    const attempts = candidate.data.nativeHandwritingPractice;
+    if (!Array.isArray(attempts) || !attempts.every(isRecord)) fail('Lịch sử luyện viết native không hợp lệ.');
+    try { attempts.forEach(validateNativePracticeBackupRecord); } catch { fail('Metadata luyện viết native không hợp lệ.'); }
+    data.nativeHandwritingPractice = attempts;
   }
   if (candidate.data.confusableAttempts !== undefined) {
     const attempts = candidate.data.confusableAttempts;

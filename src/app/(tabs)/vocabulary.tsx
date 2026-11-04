@@ -27,7 +27,7 @@ export default function VocabularyScreen() {
   return preferences.learningLanguage === "en" ? <EnglishAvailability><EnglishWorkspace /></EnglishAvailability> : <ChineseVocabularyScreen />;
 }
 
-function ChineseVocabularyScreen() {
+export function ChineseVocabularyScreen({ fromStats = false }: { fromStats?: boolean } = {}) {
   const db = useSQLiteContext();
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
@@ -35,6 +35,10 @@ function ChineseVocabularyScreen() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number]>((filters.includes(params.filter as never) ? params.filter : "all") as (typeof filters)[number]);
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
+  // Stats shortcuts can target a tab that is already mounted.
+  useFocusEffect(useCallback(() => {
+    if (filters.includes(params.filter as never)) { setFilter(params.filter as (typeof filters)[number]); setSelectedLevel(null); }
+  }, [params.filter]));
   const [words, setWords] = useState<Vocabulary[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
@@ -118,7 +122,7 @@ function ChineseVocabularyScreen() {
   };
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.screen}>
+    <SafeAreaView edges={fromStats ? ["bottom"] : ["top"]} style={styles.screen}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <View style={styles.headerCopy}>

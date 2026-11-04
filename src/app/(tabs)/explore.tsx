@@ -42,7 +42,8 @@ function ExploreContent({ dictionaryOpen, setDictionaryOpen, query, setQuery }: 
       <HubCard icon="albums-outline" color={p.primary} title="Bộ từ của tôi" description="Tạo bộ từ, nhập nhiều từ, chia sẻ bằng mã và ôn lại theo lịch SRS hiện tại." action="Mở bộ từ" onPress={() => router.push("/english/decks" as Href)} />
       <HubCard icon="mic-outline" color={p.spelling} title="Luyện nói" description="Câu mẫu do ứng dụng biên soạn, TTS và nhận dạng offline khi hệ điều hành có mô hình phù hợp. Không có chấm điểm AI." action="Luyện nói" onPress={() => router.push("/english-speaking" as Href)} />
       <HubCard icon="stats-chart-outline" color={p.cefr} title="Tiến độ & cấp độ" description="Xem số liệu thực của lượt ôn. CEFR hiện là khung tự định hướng, chưa phải bài kiểm tra xếp trình độ." action="Xem tiến độ" onPress={() => router.push("/(tabs)/stats" as Href)} />
-      <HubCard icon="person-circle-outline" color={p.primary} title="Hồ sơ & cài đặt" description="Mở cài đặt tiếng Anh và đổi ngôn ngữ mà không xóa tiến độ." action="Mở cài đặt" onPress={() => router.push("/(tabs)/profile" as Href)} />
+      <Text style={[s.heading, { color: p.textPrimary }]}>Giải trí</Text>
+      <HubCard icon="game-controller-outline" color={p.cefr} title="Nối từ tiếng Anh" description="Chơi nối từ với mục từ trong từ điển cục bộ. Trò chơi không làm thay đổi tiến độ ôn tập." action="Mở trò chơi" onPress={() => router.push("/(tabs)/entertainment" as Href)} />
       <View style={[s.unavailable, { backgroundColor: p.surfaceSubtle, borderColor: p.border }]}>
         <Text style={[s.unavailableTitle, { color: p.textPrimary }]}>Nguồn nội dung</Text>
         <Text style={{ color: p.textSecondary, lineHeight: 21 }}>Bài thử gốc được ghi rõ trạng thái cần duyệt. Video, sách và bài báo bên ngoài chưa có nguồn/phạm vi phân phối đã xác nhận nên không hiển thị catalogue giả.</Text>

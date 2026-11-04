@@ -22,6 +22,7 @@ async function fixture() {
     insertWord.run(id, `词${index}`, `詞${index}`, `QA ${index}`, index % 2 ? '5' : '1', index === 124 ? 'trash' : index % 3 ? 'deck-1' : null);
     insertProgress.run(id, index === 121 ? 'KNOWN' : index === 123 ? 'NEW' : 'LEARNING', index === 123 ? 0 : 1, due, due, index === 121 ? 1 : 0, index === 122 ? 1 : 0, '2026-01-01', '2026-01-01');
   }
+  raw.exec("INSERT INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at) SELECT deck_id,id,'2026-01-01' FROM vocabulary WHERE id LIKE 'page-%' AND deck_id IS NOT NULL");
   raw.exec("UPDATE user_vocabulary_progress SET memory_level=6,mastery_level=6 WHERE vocabulary_id='page-120'");
   return { raw, db };
 }

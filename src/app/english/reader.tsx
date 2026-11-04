@@ -32,6 +32,7 @@ import {
   saveEnglishReaderDraft,
   type EnglishReaderDraft,
 } from "@/db/english/reader-draft";
+import { useModalAnimationType } from "@/hooks/use-reduced-motion";
 import { readerLookupTarget, type EnglishReadingContext } from "@/services/english/reading-context";
 import { useEnglishDatabase } from "@/services/languages/LanguageRuntime";
 import { englishLocalId } from "@/services/languages/ids";
@@ -48,6 +49,7 @@ const empty: EnglishReaderDraft = {
 };
 
 export default function EnglishReader() {
+  const modalAnimation = useModalAnimationType();
   const router = useRouter();
   const params = useLocalSearchParams<{ lesson?: string; draft?: string }>();
   const bundledLesson = params.draft === '1' ? englishReadingLessons.find(item => item.id === params.lesson) : undefined;
@@ -538,7 +540,7 @@ export default function EnglishReader() {
       <Modal
         visible={!!word}
         transparent
-        animationType="slide"
+        animationType={modalAnimation}
         onRequestClose={closeLookup}
       >
         <KeyboardAvoidingView
@@ -693,7 +695,7 @@ export default function EnglishReader() {
       <Modal
         visible={showInputModal}
         transparent
-        animationType="slide"
+        animationType={modalAnimation}
         onRequestClose={() => setShowInputModal(false)}
       >
         <KeyboardAvoidingView

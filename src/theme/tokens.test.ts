@@ -31,6 +31,11 @@ describe('theme semantic color contrast', () => {
     for (const color of Object.values(theme.skillColors)) {
       expect(contrastRatio(color, theme.surface), `${color} on ${theme.surface}`).toBeGreaterThanOrEqual(4.5);
     }
+    for (const skill of Object.keys(theme.skillSurfaces) as (keyof typeof theme.skillColors)[]) {
+      for (const ink of [theme.skillColors[skill], theme.textPrimary, theme.textSecondary, theme.textMuted]) {
+        expect(contrastRatio(ink, theme.skillSurfaces[skill]), `${skill}: ${ink} on ${theme.skillSurfaces[skill]}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 
   it('keeps white labels readable on every HSK solid badge color', () => {

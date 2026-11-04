@@ -19,7 +19,6 @@ import { englishCardPage } from "@/db/english/card-editor";
 import { renameEnglishDeck, setEnglishCardSuspended, setEnglishDeckTrashed } from "@/db/english/decks";
 import {
   englishDeckShareSnapshot,
-  startEnglishCard,
   type EnglishCard,
 } from "@/db/english/learner";
 import { englishDeckMemorySummary, englishMemoryLevel, type EnglishDeckMemorySummary } from "@/db/english/personal-vocabulary";
@@ -50,6 +49,7 @@ export default function EnglishDeckDetail() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const [busyCard, setBusyCard] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -155,7 +155,10 @@ export default function EnglishDeckDetail() {
     if (busyCard) return;
     setBusyCard(card.id);
     try {
-      if (action === "learn") await startEnglishCard(db, card.id);
+      if (action === "learn") {
+        router.push({ pathname: "/english/review", params: { deckId: id, learn: JSON.stringify([card.id]) } } as Href);
+        return;
+      }
       else await setEnglishCardSuspended(db, card.id, action === "skip");
       await load();
     } catch {
@@ -185,7 +188,7 @@ export default function EnglishDeckDetail() {
   };
 
   return (
-    <Screen hideTitle title="Chi tiết bộ từ" subtitle={summary ? `${summary.total} từ trong bộ · lịch học riêng của bạn` : "Xem tiến độ, thêm từ và bắt đầu học."} avoidKeyboard>
+    <Screen hideHeader compact avoidKeyboard>
       {loading && !summary ? <View style={s.loading}><ActivityIndicator color={p.primary} /><Text style={{ color: p.textSecondary }}>Đang tải bộ từ…</Text></View> : null}
       {error ? (
         <View style={[s.alert, { backgroundColor: p.errorLight }]}>
@@ -217,20 +220,25 @@ export default function EnglishDeckDetail() {
             </View>
           ) : null}
 
-          <PrimaryButton icon="＋" label="Thêm từ" onPress={() => router.push({ pathname: "/english/bulk", params: { deck: id } } as Href)} />
-
+          <View style={s.actionRow}>
+            <PrimaryButton label={`Học từ mới${summary.newCount ? ` (${summary.newCount})` : ""}`} disabled={!summary.newCount} onPress={() => router.push({ pathname: "/english/decks/[id]/learn", params: { id } } as Href)} style={s.flexButton} />
+            <PrimaryButton variant="secondary" label={`Ôn tập${due ? ` (${due})` : ""}`} disabled={!due} onPress={() => router.push({ pathname: "/english/review", params: { deckId: id } } as Href)} style={s.flexButton} />
+          </View>
           <View style={s.actionGrid}>
-            <PrimaryButton variant="secondary" icon="↗" label="Chia sẻ" loading={sharing} onPress={() => void share()} style={s.gridButton} />
+            <Pressable accessibilityRole="button" accessibilityLabel="Thêm từ" onPress={() => router.push({ pathname: "/english/bulk", params: { deck: id } } as Href)} style={s.toolAction}><Ionicons name="add-circle-outline" size={22} color={p.primary} /><Text style={{ color: p.primary, fontWeight: "700" }}>Thêm từ</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Chia sẻ bộ từ" disabled={sharing} onPress={() => void share()} style={s.toolAction}><Ionicons name="share-social-outline" size={21} color={p.primary} /><Text style={{ color: p.primary, fontWeight: "700" }}>{sharing ? "Đang tạo mã…" : "Chia sẻ"}</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Luyện thêm" accessibilityState={{ expanded: showTools }} onPress={() => setShowTools(value => !value)} style={s.toolAction}><Ionicons name="ellipsis-horizontal" size={22} color={p.primary} /><Text style={{ color: p.primary, fontWeight: "700" }}>Luyện thêm</Text></Pressable>
+          </View>
+
+          {showTools ? <View style={s.actionGrid}>
             <PrimaryButton variant="secondary" icon="♫" label="Luyện nghe" disabled={!due} onPress={() => router.push({ pathname: "/english/review", params: { deckId: id, mode: "LISTENING" } } as Href)} style={s.gridButton} />
             <PrimaryButton variant="secondary" icon="✎" label="Quiz chính tả" disabled={!due} onPress={() => router.push({ pathname: "/english/review", params: { deckId: id, mode: "SPELLING" } } as Href)} style={s.gridButton} />
             <PrimaryButton variant="secondary" icon="↻" label="Ôn flashcard SRS" disabled={!due} onPress={() => router.push({ pathname: "/english/review", params: { deckId: id, mode: "MEANING" } } as Href)} style={s.gridButton} />
-          </View>
-          <Text style={{ color: p.textMuted, fontSize: 12, lineHeight: 18 }}>Các chế độ ôn dùng từ đã đến hạn. Từ mới được chọn riêng ở mục “Học ngay” bên dưới.</Text>
+          </View> : null}
 
           <View style={[s.panel, { backgroundColor: p.surface, borderColor: p.border }]}>
-            <Text style={[s.eyebrow, { color: p.primary }]}>TÌM TRONG BỘ</Text>
-            <Text style={{ color: p.textSecondary }}>Tìm theo từ tiếng Anh hoặc nghĩa tiếng Việt.</Text>
             <View style={s.searchRow}>
+              <Ionicons name="search-outline" size={22} color={p.textMuted} />
               <TextInput accessibilityLabel="Tìm từ trong bộ tiếng Anh" value={queryDraft} onChangeText={setQueryDraft} onSubmitEditing={applySearch} placeholder="Ví dụ: achieve, đạt được" placeholderTextColor={p.textMuted} returnKeyType="search" style={[s.input, s.searchInput, { color: p.textPrimary, borderColor: p.border, backgroundColor: p.surfaceSubtle }]} />
               <Pressable accessibilityRole="button" disabled={!queryDraft.trim()} onPress={applySearch} style={[s.searchButton, { backgroundColor: queryDraft.trim() ? p.primary : p.surfaceSubtle }]}><Text style={{ color: queryDraft.trim() ? "#fff" : p.textMuted, fontWeight: "900" }}>Tìm</Text></Pressable>
             </View>
@@ -260,27 +268,6 @@ export default function EnglishDeckDetail() {
             <Text style={{ color: p.textMuted, textAlign: "center", fontSize: 12 }}>{selectedLevel ? `Đang lọc các từ cấp ${selectedLevel}` : "Chạm vào mức nhớ để lọc danh sách từ đã tải"}</Text>
           </View>
 
-          <View style={[s.learnPanel, { backgroundColor: p.surface, borderColor: p.border }]}>
-            <Text style={[s.eyebrow, { color: p.primary }]}>HỌC NGAY</Text>
-            <Text style={[s.sectionTitle, { color: p.textPrimary }]}>{summary.newCount} từ mới sẵn sàng</Text>
-            <Text style={{ color: p.textSecondary, lineHeight: 21 }}>Chọn tối đa 10 từ cho lượt này. Mỗi lựa chọn được lưu ngay để bạn có thể tiếp tục sau.</Text>
-            <PrimaryButton label={summary.newCount ? `Chọn từ để học (0/${Math.min(10, summary.newCount)})` : "Chưa có từ mới"} disabled={!summary.newCount} onPress={() => router.push({ pathname: "/english/decks/[id]/learn", params: { id } } as Href)} />
-          </View>
-
-          <View style={[s.reviewPanel, { backgroundColor: p.primaryLight }]}>
-            <View style={s.reviewHeading}>
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={[s.sectionTitle, { color: p.textPrimary }]}>Ôn tập</Text>
-                <Text style={{ color: p.textSecondary }}>{due ? `${due} từ đến hạn` : "Chưa có từ đến hạn"}</Text>
-              </View>
-              <Ionicons name="repeat" size={32} color={p.primary} />
-            </View>
-            <Text style={{ color: p.textSecondary }}>Lịch ôn được cập nhật theo kết quả từng từ.</Text>
-            <PrimaryButton label={due ? `Ôn tập ngay (${Math.min(100, due)})` : "Chưa có từ đến hạn"} disabled={!due} onPress={() => router.push({ pathname: "/english/review", params: { deckId: id } } as Href)} />
-          </View>
-
-          <PrimaryButton variant="danger" icon="🗑" label="Đưa bộ từ vào thùng rác" loading={saving} onPress={archive} />
-
           <View style={s.listHeading}>
             <Text style={[s.sectionTitle, { color: p.textPrimary }]}>{query || selectedLevel ? "Từ phù hợp" : "Từ trong bộ này"} ({visibleCards.length}{nextCursor ? "+" : ""})</Text>
             {selectedLevel ? <Pressable accessibilityRole="button" onPress={() => setSelectedLevel(null)} style={s.clearSearch}><Text style={{ color: p.primary, fontWeight: "800" }}>Xóa lọc</Text></Pressable> : null}
@@ -294,6 +281,7 @@ export default function EnglishDeckDetail() {
             <EnglishPersonalWordCard key={card.id} card={card} compact showStartAction={false} busy={busyCard === card.id} onStart={() => void cardAction(card, "learn")} onSuspend={() => void cardAction(card, card.suspended ? "restore" : "skip")} />
           )) : <View style={[s.emptyCard, { backgroundColor: p.surface, borderColor: p.border }]}><Text style={{ color: p.textSecondary }}>{selectedLevel ? "Các từ cấp này chưa nằm trong phần đang tải." : "Chưa có từ phù hợp. Hãy thêm từ hoặc đổi bộ lọc."}</Text></View>}
           {nextCursor ? <PrimaryButton variant="secondary" label={loadingMore ? "Đang tải thêm…" : "Tải thêm từ"} loading={loadingMore} onPress={() => void loadMore()} /> : null}
+          <Pressable accessibilityRole="button" disabled={saving} onPress={archive} style={s.toolAction}><Ionicons name="trash-outline" size={20} color={p.error} /><Text style={{ color: p.error }}>Đưa bộ từ vào thùng rác</Text></Pressable>
         </>
       ) : null}
     </Screen>
@@ -312,6 +300,7 @@ const s = StyleSheet.create({
   actionRow: { flexDirection: "row", gap: 8 },
   flexButton: { flex: 1 },
   actionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  toolAction: { minHeight: 44, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 6 },
   gridButton: { flexBasis: "48%", flexGrow: 1, minHeight: 48 },
   searchRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   searchInput: { flex: 1, minWidth: 0 },

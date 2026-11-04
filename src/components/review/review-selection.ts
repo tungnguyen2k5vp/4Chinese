@@ -29,7 +29,7 @@ export function reviewSelectionLabel(selection: ReviewSelection): string {
 export function reviewSelectionDescription(selection: ReviewSelection): string {
   if (selection === "mixed") return "Xen kẽ chọn nghĩa, nghe, chọn pinyin, điền câu và viết Hán tự. Mỗi từ vẫn có 3 lượt; lịch ôn và cách chấm mức nhớ giữ nguyên.";
   if (selection === "hanzi-recall-pinyin-compose") return "Nhìn Hán tự, nhớ cách đọc rồi gõ pinyin để ghép lại từ. Không hiện sẵn pinyin; bạn có thể dùng gợi ý khi cần.";
-  if (selection === "cloze") return "Điền Hán tự vào câu có sẵn. Ưu tiên ngữ cảnh bạn đã lưu; từ chưa có câu phù hợp sẽ chuyển sang nghĩa → Hán tự.";
+  if (selection === "cloze") return "Đọc câu tiếng Trung có chỗ trống rồi chọn 1 trong 4 đáp án. Sau khi chọn, xem câu hoàn chỉnh và nghe phát âm.";
   if (selection === "writing") return "Dựa vào nghĩa và pinyin để viết Hán tự. Bạn cũng có thể chuyển sang nhập bằng bàn phím.";
   return exerciseForReviewMode(selection).prompt;
 }

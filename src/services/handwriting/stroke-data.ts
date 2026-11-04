@@ -1,3 +1,5 @@
+import supplementalStrokes from './supplemental-strokes.json';
+// 巳: hanzi-writer-data 2.0.1, Arphic Public License; see docs/v8-3/THIRD_PARTY.md.
 // Static, lazy JSON requires avoid parsing the entire stroke corpus at app startup.
 const loaders = [
   () => require('@/data/stroke-shard-0.json'),
@@ -16,5 +18,5 @@ export function getStrokePaths(character: string): string[] {
   const shard = character.charCodeAt(0) % loaders.length;
   let data = cache.get(shard);
   if (!data) { data = loaders[shard]!() as Record<string, string[]>; cache.set(shard, data); }
-  return data[character] ?? [];
+  return data[character] ?? (supplementalStrokes as Record<string,string[]>)[character] ?? [];
 }

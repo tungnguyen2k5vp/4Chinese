@@ -8,12 +8,14 @@ import { EmptyState } from "@/components/EmptyState";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { resolveReviewSelection, reviewSelections, reviewSelectionLabel, reviewSelectionDescription } from "@/components/review/review-selection";
 import { radius, spacing, themedCard } from "@/constants/design";
+import { getOfflineVocabulary } from "@/db/database";
 import {
   getDueCount,
   getDueVocabulary,
   getSettings,
   saveSettings,
 } from "@/db/repository";
+import { prepareClozeReview } from "@/services/review/cloze-contexts";
 import { exerciseForReviewMode } from "@/services/review/exercise";
 import { normalizeReviewSessionSize, REVIEW_SESSION_SIZES } from "@/services/review/session-size";
 import { useAppStore } from "@/stores/app-store";
@@ -72,8 +74,10 @@ export default function ReviewIndex() {
       const [currentWords, totalDue] = await Promise.all([getDueVocabulary(db, selected, undefined, deckId), getDueCount(db, undefined, deckId)]);
       setWords(currentWords); setDueCount(totalDue);
       if (!currentWords.length) return;
-      setQueue(currentWords, selected);
-      router.push({ pathname: "/review/session", params: { mode, lessonActivityId: lessonActivityId ?? "" } } as Href);
+      const prepared = mode === 'cloze' ? await prepareClozeReview(db, currentWords, getOfflineVocabulary(), settings?.simplifiedOrTraditional === 'traditional') : { words: currentWords, omitted: 0 };
+      if (!prepared.words.length) { setError('Các từ đến hạn trong lượt này chưa có ngữ cảnh đủ rõ. Chọn kiểu ôn khác; lịch ôn của những từ này vẫn giữ nguyên.'); return; }
+      setQueue(prepared.words, selected);
+      router.push({ pathname: "/review/session", params: { mode, lessonActivityId: lessonActivityId ?? "", clozeOmitted: String(prepared.omitted) } } as Href);
     } catch { setError("Chưa bắt đầu được phiên ôn. Hãy thử lại."); }
     finally { startLock.current = false; setStarting(false); }
   };
@@ -131,6 +135,7 @@ export default function ReviewIndex() {
               })}
             </View>
             <Text accessibilityLiveRegion="polite" style={styles.modeDescription}>{reviewSelectionDescription(mode)}</Text>
+            {mode === 'cloze' ? <Text style={styles.note}>Ưu tiên câu dùng từ đã học. Từ chưa có câu phù hợp vẫn giữ lịch ôn để bạn chọn kiểu bài khác.</Text> : null}
             <Text style={styles.section}>Số từ mỗi phiên</Text>
             <Text style={styles.note}>{deckId ? "Ôn các từ đến hạn trong bộ này." : "Ôn các từ đến hạn ở tất cả bộ và cấp HSK."}</Text>
             <View style={styles.sizes}>

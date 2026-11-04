@@ -15,6 +15,7 @@ import { installBundledContentMetadata } from '@/services/content/content-versio
 import type { Hsk30Bundle } from '@/services/hsk/hsk30-source';
 import { illustrationForVocabulary, isDeviceSelectedImage } from '@/services/media/illustration';
 import { normalizeSearch } from '@/services/search/normalize';
+import { normalizeHanziIdentity, vocabularyIdentityKey } from '@/services/vocabulary/identity';
 import {
   applyVocabularyQualityOverride,
   cleanLearnerMeanings,
@@ -162,6 +163,16 @@ async function insertVocabulary(
   vocabulary: typeof starterVocabulary,
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
+    const existingWords = await db.getAllAsync<{
+      simplified: string;
+      pinyin: string;
+      pinyin_numeric: string;
+    }>('SELECT simplified,pinyin,pinyin_numeric FROM vocabulary');
+    const identities = new Set(existingWords.map((word) => vocabularyIdentityKey({
+      simplified: word.simplified,
+      pinyin: word.pinyin,
+      pinyinNumeric: word.pinyin_numeric,
+    })));
     const wordStatement = await db.prepareAsync(`INSERT OR IGNORE INTO vocabulary (
       id, simplified, traditional, pinyin, pinyin_numeric, primary_meaning_vi,
       meanings_vi, meanings_en, pos, hsk_band, frequency_rank, classifiers,
@@ -177,6 +188,9 @@ async function insertVocabulary(
       VALUES ($id,$vocabularyId,$chinese,$pinyin,$vietnamese,$english,$difficulty)`);
     try {
       for (const word of vocabulary) {
+        const identity = vocabularyIdentityKey(word);
+        if (identities.has(identity)) continue;
+        identities.add(identity);
         await wordStatement.executeAsync({
           $id: word.id, $simplified: word.simplified, $traditional: word.traditional,
           $pinyin: word.pinyin, $pinyinNumeric: word.pinyinNumeric,
@@ -219,7 +233,16 @@ export function getOfflineVocabulary(bands?: HskBand[]): Vocabulary[] {
     ...getSeedVocabulary(bands),
     ...supplementalVocabulary.filter((word) => !allowedBands || allowedBands.has(word.hskBand)),
   ];
-  return Array.from(new Map(words.map((word) => [word.id, word])).values());
+  return uniqueBundledVocabulary(Array.from(new Map(words.map((word) => [word.id, word])).values()));
+}
+
+function uniqueBundledVocabulary(words: Vocabulary[]): Vocabulary[] {
+  const byIdentity = new Map<string, Vocabulary>();
+  for (const word of words) {
+    const key = vocabularyIdentityKey(word);
+    if (!byIdentity.has(key)) byIdentity.set(key, word);
+  }
+  return Array.from(byIdentity.values());
 }
 
 function getSeedVocabulary(bands?: HskBand[]): Vocabulary[] {
@@ -227,16 +250,16 @@ function getSeedVocabulary(bands?: HskBand[]): Vocabulary[] {
   const curated = new Map(
     starterVocabulary
       .filter((word) => !allowedBands || allowedBands.has(word.hskBand))
-      .map((word) => [word.simplified, word]),
+      .map((word) => [normalizeHanziIdentity(word.simplified), word]),
   );
   const generated = (generatedVocabulary as typeof starterVocabulary).filter(
     (word) => !allowedBands || allowedBands.has(word.hskBand),
   );
   const merged = generated.map((rawWord) => {
     const word = applyVocabularyQualityOverride(rawWord);
-    const correction = curated.get(word.simplified);
+    const correction = curated.get(normalizeHanziIdentity(word.simplified));
     if (!correction) return word;
-    curated.delete(word.simplified);
+    curated.delete(normalizeHanziIdentity(word.simplified));
     return { ...word, primaryMeaningVi: correction.primaryMeaningVi, meaningsVi: correction.meaningsVi,
       translationStatus: correction.translationStatus, strokeCount: correction.strokeCount,
       examples: correction.examples, source: `${word.source}; curated Vietnamese starter correction` };

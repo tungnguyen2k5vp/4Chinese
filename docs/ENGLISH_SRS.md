@@ -1,5 +1,7 @@
 # English SRS — V7 checkpoint
 
+> Historical checkpoint. For the current immediate new-word learning flow (18/10/2026), see [ENGLISH_NEW_WORD_LEARNING.md](ENGLISH_NEW_WORD_LEARNING.md). Starting selected new words now includes two ungraded typing rounds and an immediate real review before their initial scheduled interval.
+
 Implemented in `src/db/english/learner.ts` and `src/app/english/review.tsx`.
 
 Learner data belongs to `english-learner.db`, schema 1, never `hanzi30.db`. Deck/card IDs have `en:` prefixes. A dictionary card must contain an explicitly selected sense; a custom card contains the user's own meaning and `source_id=USER`. Two meanings remain two cards. There is no automatic sense selection, guessed IPA or CEFR assignment.

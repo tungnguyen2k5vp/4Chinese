@@ -17,8 +17,10 @@ export function buildGrammarV5ReviewPreview(id: string): GrammarV5ReviewPreview 
   const advancedDrafts = listAdvancedGrammarV5ReviewQueue();
   const point = [...grammarV5Expansion, ...advancedDrafts].find((item) => item.id === id);
   if (!point) return null;
-  const exercises = buildGrammarExercises(point, [...grammarSeed, ...grammarV5Expansion, ...advancedDrafts])
-    .filter((exercise) => exercise.kind !== 'correction');
+  // Editorial preview retains one representative of each form, independent of learner pool size.
+  const pool = buildGrammarExercises(point, [...grammarSeed, ...grammarV5Expansion, ...advancedDrafts]);
+  const exercises = pool.filter((exercise, index) => exercise.kind !== 'correction' &&
+    pool.findIndex((candidate) => candidate.kind === exercise.kind) === index);
   const { wrong, correct, why } = point.commonMistake;
   exercises.push({ id: `${id}-correction`, kind: 'correction', label: 'Sửa câu sai · bản nháp',
     prompt: wrong, answer: correct, explanation: why, options: [wrong, correct], tokens: [] });

@@ -1,10 +1,11 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useIsFocused } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { LocalVoiceRecorder } from './LocalVoiceRecorder';
 import { PrimaryButton } from './PrimaryButton';
 
+import { StudyTransition } from '@/components/ui/StudyTransition';
 import { spacing, themedCard } from '@/constants/design';
 import type { ShadowingSentence } from '@/db/speaking';
 import { useModalAnimationType } from '@/hooks/use-reduced-motion';
@@ -17,6 +18,7 @@ export function ShadowingPlayer({ sentences, onPracticed }: {
   sentences: ShadowingSentence[]; onPracticed: (sentenceId: string, attemptId: string) => Promise<void>;
 }) {
   const theme = useTheme();
+  const focused = useIsFocused();
   const styles = useThemeStyles(createStyles);
   const modalAnimation = useModalAnimationType();
   const [index, setIndex] = useState(0);
@@ -100,9 +102,15 @@ export function ShadowingPlayer({ sentences, onPracticed }: {
   return <View style={[themedCard(theme), styles.content]}>
     <View style={styles.topRow}><Text style={styles.title}>Câu {index + 1}/{sentences.length}</Text><Pressable accessibilityRole="button" accessibilityLabel="Cài đặt luyện nghe nhắc lại" onPress={() => setSettingsOpen(true)} style={styles.settingsButton}><Text style={styles.settingsText}>⚙ Cài đặt</Text></Pressable></View>
     <Text style={styles.copy}>Dùng giọng đọc máy trên thiết bị, không phải bản thu người bản ngữ.</Text>
-    {showHanzi ? <Text selectable style={styles.hanzi}>{sentence.hanzi}</Text> : null}
-    {showPinyin ? <Text selectable style={styles.pinyin}>{sentence.pinyin}</Text> : null}
-    {showTranslation ? <Text selectable style={styles.copy}>{sentence.translation_vi}</Text> : null}
+    <StudyTransition active={focused} turnKey={sentence.id} effect="reveal" testID="shadowing-current-sentence" style={{ gap: spacing.sm }}>
+      {showHanzi ? <Text selectable style={styles.hanzi}>{sentence.hanzi}</Text> : null}
+      <View style={[styles.row, { flexWrap: 'wrap' }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={showPinyin ? 'Ẩn pinyin câu hiện tại' : 'Hiện pinyin câu hiện tại'} accessibilityState={{ expanded: showPinyin }} aria-expanded={showPinyin} onPress={() => setShowPinyin(value => !value)} style={styles.settingsButton}><Text style={styles.settingsText}>{showPinyin ? 'Ẩn pinyin' : 'Hiện pinyin'}</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={showTranslation ? 'Ẩn nghĩa câu hiện tại' : 'Hiện nghĩa câu hiện tại'} accessibilityState={{ expanded: showTranslation }} aria-expanded={showTranslation} onPress={() => setShowTranslation(value => !value)} style={styles.settingsButton}><Text style={styles.settingsText}>{showTranslation ? 'Ẩn nghĩa' : 'Hiện nghĩa'}</Text></Pressable>
+      </View>
+      {showPinyin ? <StudyTransition active={focused} turnKey={`${sentence.id}:pinyin`} effect="reveal" animateOnMount><Text selectable style={styles.pinyin}>{sentence.pinyin}</Text></StudyTransition> : null}
+      {showTranslation ? <StudyTransition active={focused} turnKey={`${sentence.id}:meaning`} effect="reveal" animateOnMount><Text selectable style={styles.copy}>{sentence.translation_vi}</Text></StudyTransition> : null}
+    </StudyTransition>
     <PrimaryButton label={playing ? 'Dừng mẫu / vòng lặp' : 'Nghe mẫu'} disabled={micBusy || saving} onPress={() => playing ? stop() : void play(index)} />
     <LocalVoiceRecorder key={sentence.id} playbackBlocked={playing} onRecordingChange={recordingChanged} onReplay={() => setReplayed(true)} />
     <PrimaryButton label="Lưu lượt đã luyện" disabled={!completed || saving || micBusy} loading={saving} variant="secondary" onPress={() => {

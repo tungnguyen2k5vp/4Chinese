@@ -1,6 +1,7 @@
 import type { SQLiteBindValue, SQLiteDatabase } from "expo-sqlite";
 
 import { seedAchievements } from './gamification';
+import { validateNativePracticeBackupRecord } from './native-practice';
 import { validateSpeakingAttemptBackupRecord } from './speaking-attempts';
 import { validateContextRecord, validatePersonalContextMemoryRecord } from './vocabulary-context';
 import { validateWordContextRecord } from './word-contexts';
@@ -41,6 +42,7 @@ const reviewColumns = [
   "selected_hanzi", "candidate_rank", "exercise_type",
 ] as const;
 const deckColumns = ["id", "name", "color", "created_at", "updated_at", "deleted_at"] as const;
+const deckVocabularyColumns = ["deck_id", "vocabulary_id", "created_at"] as const;
 const settingColumns = ["id", "value", "updated_at"] as const;
 const examAttemptColumns = ['id','profile_id','level','status','snapshot_json','started_at_ms','submitted_at_ms','revision','updated_at'] as const;
 const dailyColumns = ["date", "reviewed", "correct", "new_words", "study_seconds"] as const;
@@ -72,6 +74,7 @@ const practiceAttemptDailyColumns = ['mistake_id','skill_type','exercise_type','
 const timedSpeakingColumns = ['id','prompt_id','snapshot_json','recorded_at','duration_ms','self_review','checklist_json','transcript_opt_in','transcript','audio_retention'] as const;
 const roleplayHistoryColumns = ['id','scene_id','level','saved_at','attempts','completed_goals','total_goals','used_words_json','transcript_opt_in','transcript_summary'] as const;
 const roleplayLimitColumns = ['id','daily_limit','session_limit'] as const;
+const nativePracticeColumns = ['id','target','candidate','stroke_count','completed_at'] as const;
 
 function backupValue(value: unknown): SQLiteBindValue {
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
@@ -128,9 +131,10 @@ export async function exportLocalBackup(db: SQLiteDatabase, appVersion: string):
 }
 
 async function readBackupSnapshot(db: SQLiteDatabase, appVersion: string): Promise<LocalBackup> {
-  const [userSettings, personalDecks, customVocabulary, exampleSentences, vocabularyProgress, reviewLogs, dailyStats, baseRows, imageAssets, lessonProgress, lessonActivityProgress, grammarProgress, readingDocuments, readingProgress, readingVocabulary, readingDocumentChunks] = await Promise.all([
+  const [userSettings, personalDecks, personalDeckVocabulary, customVocabulary, exampleSentences, vocabularyProgress, reviewLogs, dailyStats, baseRows, imageAssets, lessonProgress, lessonActivityProgress, grammarProgress, readingDocuments, readingProgress, readingVocabulary, readingDocumentChunks] = await Promise.all([
     readRows(db, "SELECT id,value,updated_at FROM user_settings"),
     readRows(db, "SELECT id,name,color,created_at,updated_at,deleted_at FROM personal_deck"),
+    readRows(db, "SELECT deck_id,vocabulary_id,created_at FROM personal_deck_vocabulary"),
     readRows(db, `SELECT ${vocabularyColumns.join(",")} FROM vocabulary WHERE is_custom=1`),
     readRows(db, `SELECT e.${exampleColumns.join(",e.")} FROM example_sentence e INNER JOIN vocabulary v ON v.id=e.vocabulary_id WHERE v.is_custom=1`),
     readRows(db, `SELECT ${progressColumns.join(",")} FROM user_vocabulary_progress`),
@@ -172,16 +176,17 @@ async function readBackupSnapshot(db: SQLiteDatabase, appVersion: string): Promi
   const personalContextMemory = await readRows(db, `SELECT ${personalMemoryColumns.join(',')} FROM personal_context_memory`);
   const practiceAttemptDaily = await readRows(db, `SELECT ${practiceAttemptDailyColumns.join(',')} FROM practice_attempt_daily ORDER BY utc_day,mistake_id`);
   const timedSpeakingAttempts = await readRows(db, `SELECT ${timedSpeakingColumns.join(',')} FROM timed_speaking_attempts`);
+  const nativeHandwritingPractice = await readRows(db, `SELECT ${nativePracticeColumns.join(',')} FROM native_handwriting_practice`);
   // Do not even read opted-in notes/audio/usage for backup. Local consent is not cloud/backup consent.
   const roleplayHistory = await readRows(db, `SELECT id,scene_id,level,saved_at,attempts,completed_goals,total_goals,used_words_json,
     0 AS transcript_opt_in,NULL AS transcript_summary FROM roleplay_history ORDER BY saved_at DESC,id DESC LIMIT 100`);
   const roleplayAiLimits = await readRows(db, `SELECT ${roleplayLimitColumns.join(',')} FROM roleplay_ai_limits WHERE id=1`);
-  const data: LocalBackupData = { userSettings, personalDecks, customVocabulary, exampleSentences,
+  const data: LocalBackupData = { userSettings, personalDecks, personalDeckVocabulary, customVocabulary, exampleSentences,
     vocabularyProgress, reviewLogs, dailyStats, baseVocabularyOverrides, imageAssets, lessonProgress,
     lessonActivityProgress, grammarProgress,
     readingDocuments, readingProgress, readingVocabulary, readingDocumentChunks, storyProgress, mistakes, skillMastery, speakingPractice,
     xpEvents, userAchievements, learningGoals, grammarAttempts, examAttempts, writtenPractice, confusableAttempts, personalVocabularyContexts, wordContexts, personalContextMemory, practiceAttemptDaily, timedSpeakingAttempts,
-    roleplayHistory, roleplayAiLimits };
+    roleplayHistory, roleplayAiLimits, nativeHandwritingPractice };
   return createLocalBackup(data, appVersion);
 }
 
@@ -200,6 +205,7 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
   data.wordContexts?.forEach(validateWordContextRecord);
   data.personalContextMemory?.forEach(validatePersonalContextMemoryRecord);
   data.timedSpeakingAttempts?.forEach(validateSpeakingAttemptBackupRecord);
+  data.nativeHandwritingPractice?.forEach(validateNativePracticeBackupRecord);
   for (const row of data.baseVocabularyOverrides ?? []) {
     if (typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,120}$/.test(row.id)) throw new Error('INVALID_BASE_WORD_OVERRIDE');
   }
@@ -233,6 +239,14 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
     `);
     await insertRows(db, "personal_deck", deckColumns, data.personalDecks);
     await insertRows(db, "vocabulary", vocabularyColumns, data.customVocabulary);
+    if (data.personalDeckVocabulary !== undefined) {
+      await insertRows(db, "personal_deck_vocabulary", deckVocabularyColumns, data.personalDeckVocabulary);
+    } else {
+      // Legacy backups only knew about words physically owned by one deck.
+      await db.execAsync(`INSERT OR IGNORE INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at)
+        SELECT v.deck_id,v.id,COALESCE(v.created_at,v.updated_at,CURRENT_TIMESTAMP)
+        FROM vocabulary v JOIN personal_deck d ON d.id=v.deck_id WHERE v.deck_id IS NOT NULL`);
+    }
     if (data.personalVocabularyContexts !== undefined) {
       await db.execAsync('DELETE FROM personal_vocabulary_context;');
       await insertRows(db, 'personal_vocabulary_context', personalContextColumns, data.personalVocabularyContexts);
@@ -302,6 +316,10 @@ export async function importLocalBackup(db: SQLiteDatabase, backup: LocalBackup)
     if (data.writtenPractice !== undefined) {
       await db.execAsync('DELETE FROM written_practice;');
       await insertRows(db, 'written_practice', ['id','exercise_id','snapshot_json','answer','status','revision','updated_at'], data.writtenPractice);
+    }
+    if (data.nativeHandwritingPractice !== undefined) {
+      await db.execAsync('DELETE FROM native_handwriting_practice;');
+      await insertRows(db, 'native_handwriting_practice', nativePracticeColumns, data.nativeHandwritingPractice);
     }
     if (data.confusableAttempts !== undefined) {
       await db.execAsync('DELETE FROM confusable_attempts;');

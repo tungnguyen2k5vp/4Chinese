@@ -18,9 +18,10 @@ describe('Home all-due scope and bounded review sessions', () => {
       const insertProgress = raw.prepare(`INSERT INTO user_vocabulary_progress(vocabulary_id,status,studied,due,next_review_at,state,memory_level,mastery_level,is_known,is_suspended,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
       for (let index = 0; index < 25; index++) {
         const id = `scope-${index}`, due = index === 20 ? '2099-01-01T00:00:00Z' : '2020-01-01T00:00:00Z';
-        insertWord.run(id, '测试', '測試', 'cè shì', 'ce4 shi4', `QA ${index}`, '[]', '[]', '[]', index % 2 ? '5' : '1', 'user', '1', '', 'verified', `QA ${index}`, 1, index === 24 ? 'trash' : index < 10 ? 'deck-1' : 'deck-2');
+        insertWord.run(id, `测试${index}`, `測試${index}`, 'cè shì', 'ce4 shi4', `QA ${index}`, '[]', '[]', '[]', index % 2 ? '5' : '1', 'user', '1', '', 'verified', `QA ${index}`, 1, index === 24 ? 'trash' : index < 10 ? 'deck-1' : 'deck-2');
         insertProgress.run(id, index === 23 ? 'NEW' : 'LEARNING', index === 23 ? 0 : 1, due, due, 2, 1, 1, index === 21 ? 1 : 0, index === 22 ? 1 : 0, '2026-01-01', '2026-01-01');
       }
+      raw.exec("INSERT INTO personal_deck_vocabulary(deck_id,vocabulary_id,created_at) SELECT deck_id,id,'2026-01-01' FROM vocabulary WHERE id LIKE 'scope-%'");
       const before = JSON.stringify(raw.prepare('SELECT * FROM user_vocabulary_progress ORDER BY vocabulary_id').all());
       expect((await getDashboardStats(db, [1])).due).toBe(10);
       expect(await getDueCount(db)).toBe(21);

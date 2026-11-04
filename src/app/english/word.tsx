@@ -1,38 +1,27 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams, type Href } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { EnglishWritingAIEntry } from "@/components/ChineseAIEntry";
 import { EnglishAudioButton } from "@/components/EnglishAudioButton";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
 import { EnglishSensePickerModal } from "@/components/english/EnglishSensePickerModal";
 import { readEnglishCard } from "@/db/english/card-editor";
-import { addEnglishDictionaryCard, listEnglishDecks, startEnglishCard, type EnglishCard } from "@/db/english/learner";
+import { addEnglishDictionaryCard, listEnglishDecks, type EnglishCard } from "@/db/english/learner";
 import { englishMemoryLevel } from "@/db/english/personal-vocabulary";
-import {
-  lookupSkypedia,
-  rankEnglishDictionaryCandidates,
-  type SkypediaMeaning,
-} from "@/db/english/skypedia";
+import { lookupSkypedia, rankEnglishDictionaryCandidates, type SkypediaMeaning } from "@/db/english/skypedia";
 import { useEnglishDatabase } from "@/services/languages/LanguageRuntime";
 import { englishLocalId } from "@/services/languages/ids";
 import { getSkypediaDictionary } from "@/services/languages/skypedia-runtime";
 import { useTheme } from "@/theme/ThemeProvider";
 import { getEnglishPalette } from "@/theme/english-tokens";
 
-function regionLabel(region: string) {
-  const value = region.trim().toLowerCase();
-  if (/^(uk|br|bre|british|gb)$/u.test(value)) return "Anh Anh";
-  if (/^(us|ame|american)$/u.test(value)) return "Anh Mỹ";
-  return region.trim() || "Nguồn không ghi vùng giọng";
-}
-
 export default function EnglishWordDetail() {
   const params = useLocalSearchParams<{ word?: string; cardId?: string }>();
   const db = useEnglishDatabase();
   const theme = useTheme();
-  const { width, fontScale } = useWindowDimensions();
-  const stackMeaningHeader = width < 600 || fontScale >= 1.2;
   const p = getEnglishPalette(theme.mode === "dark");
   const [card, setCard] = useState<EnglishCard | null>(null);
   const [word, setWord] = useState(params.word ?? "");
@@ -44,225 +33,126 @@ export default function EnglishWordDetail() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [showFullSource, setShowFullSource] = useState(false);
+  const [dictionaryError, setDictionaryError] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [editMeaning, setEditMeaning] = useState(false);
+  const [addingAnother, setAddingAnother] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
+  const [clock, setClock] = useState(() => Date.now());
+  const saveLock = useRef(false);
+  const loadRequest = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const [availableDecks, savedCard] = await Promise.all([
-        listEnglishDecks(db),
-        params.cardId ? readEnglishCard(db, params.cardId) : Promise.resolve(null),
-      ]);
-      const currentWord = savedCard?.headword ?? params.word ?? "";
-      setCard(savedCard);
-      setWord(currentWord);
-      setDecks(availableDecks);
-      setDeckId((current) => availableDecks.some((deck) => deck.id === current) ? current : savedCard?.deck_id ?? availableDecks[0]?.id ?? "");
-      if (!currentWord.trim()) throw new Error("Chưa có từ để tra.");
-      const source = await getSkypediaDictionary();
-      const found = await lookupSkypedia(source, currentWord);
-      const ranked = rankEnglishDictionaryCandidates(found, {
-        preferredSenseId: savedCard?.sense_id,
-        preferredPos: savedCard?.pos,
-      });
-      const initialSelection = savedCard?.sense_id
-        ? ranked.find((candidate) => candidate.senseId === savedCard.sense_id) ?? null
-        : savedCard
-          ? null
-          : ranked.length === 1
-            ? ranked[0]!
-            : null;
-      setCandidates(ranked);
-      setSelected(initialSelection);
-      setMeaning(savedCard?.meaning_vi ?? initialSelection?.shortMeaning ?? "");
-      setShowFullSource(false);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Chưa tải được dữ liệu từ điển.");
-    } finally {
-      setLoading(false);
-    }
+  const load = useCallback(() => {
+    const request = ++loadRequest.current;
+    const live = () => request === loadRequest.current;
+    setLoading(true); setError(""); setDictionaryError("");
+    void (async () => {
+      try {
+        const [available, saved] = await Promise.all([listEnglishDecks(db), params.cardId ? readEnglishCard(db, params.cardId) : Promise.resolve(null)]);
+        const currentWord = saved?.headword ?? params.word ?? "";
+        if (!live()) return;
+        if (!currentWord.trim()) throw new Error("Chưa có từ để xem.");
+        setCard(saved); setWord(currentWord); setDecks(available); setDeckId(saved?.deck_id ?? available[0]?.id ?? "");
+        setMeaning(saved?.meaning_vi ?? ""); setAddingAnother(false); setExpanded(false); setEditMeaning(false); setSelected(null); setCandidates([]);
+        if (saved) setLoading(false);
+        try {
+          const source = await getSkypediaDictionary();
+          const ranked = rankEnglishDictionaryCandidates(await lookupSkypedia(source, currentWord), { preferredSenseId: saved?.sense_id, preferredPos: saved?.pos });
+          if (!live()) return;
+          const choice = saved?.sense_id ? ranked.find(item => item.senseId === saved.sense_id) ?? null : !saved && ranked.length === 1 ? ranked[0]! : null;
+          setCandidates(ranked); setSelected(choice);
+          if (!saved) setMeaning(choice?.shortMeaning ?? "");
+        } catch {
+          if (live()) setDictionaryError(saved ? "Chưa tải được nghĩa bổ sung. Bạn vẫn có thể học và sửa từ đã lưu." : "Chưa mở được từ điển. Hãy tải lại hoặc thêm từ với nghĩa riêng.");
+        }
+      } catch (failure) { if (live()) setError(failure instanceof Error ? failure.message : "Chưa tải được từ. Hãy thử lại."); }
+      finally { if (live()) { setLoading(false); setClock(Date.now()); } }
+    })();
   }, [db, params.cardId, params.word]);
+  useFocusEffect(useCallback(() => { load(); return () => { loadRequest.current++; }; }, [load]));
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
-
-  const pronunciation = useMemo(() => {
-    const list = selected?.pronunciations ?? candidates[0]?.pronunciations ?? [];
-    return list.filter((item, index) => list.findIndex((other) => other.ipa === item.ipa && other.region === item.region) === index);
-  }, [candidates, selected]);
-  const save = async () => {
-    if (!selected || !deckId || !meaning.trim() || busy) return;
-    setBusy(true);
-    setError("");
-    setNotice("");
+  const save = async (learnNow: boolean) => {
+    if (!selected || !deckId || !meaning.trim() || saveLock.current) return;
+    saveLock.current = true; setBusy(true); setError("");
     try {
-      const fromSource = meaning.trim() === (selected.shortMeaning || selected.meaning).trim();
+      const fromSource = [selected.shortMeaning, selected.meaning].some(value => meaning.trim() === value.trim());
+      const newId = englishLocalId("card");
       await addEnglishDictionaryCard(db, {
-        id: englishLocalId("card"),
-        deck_id: deckId,
-        headword: selected.headword,
-        meaning_vi: meaning.trim(),
-        pos: fromSource ? selected.pos : "",
-        ipa: fromSource ? selected.ipa : "",
-        sense_id: fromSource ? selected.senseId : null,
-        source_id: fromSource ? selected.source : "USER",
-        notes: fromSource ? [
-          selected.meaning !== selected.shortMeaning ? `Nghĩa đầy đủ từ nguồn: ${selected.meaning}` : "",
-          selected.usageNote ? `Ghi chú nguồn: ${selected.usageNote}` : "",
-          selected.example ? `Ví dụ: ${selected.example}` : "",
-        ].filter(Boolean).join("\n") : "",
+        id: newId, deck_id: deckId, headword: selected.headword, meaning_vi: meaning.trim(),
+        pos: fromSource ? selected.pos : "", ipa: fromSource ? selected.ipa : "", sense_id: fromSource ? selected.senseId : null, source_id: fromSource ? selected.source : "USER",
+        notes: fromSource ? [selected.meaning !== selected.shortMeaning ? `Nghĩa đầy đủ từ nguồn: ${selected.meaning}` : "", selected.usageNote ? `Ghi chú nguồn: ${selected.usageNote}` : "", selected.example ? `Ví dụ: ${selected.example}` : ""].filter(Boolean).join("\n") : "",
       });
-      setNotice(`Đã lưu “${selected.headword}” vào bộ từ.`);
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Chưa lưu được từ. Thẻ hiện có không bị thay đổi.");
-    } finally {
-      setBusy(false);
-    }
+      if (learnNow) router.replace({ pathname: "/english/review", params: { deckId, learn: JSON.stringify([newId]) } } as Href);
+      else router.replace({ pathname: "/english/word", params: { cardId: newId } } as Href);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Chưa lưu được từ. Hãy thử lại."); }
+    finally { saveLock.current = false; setBusy(false); }
   };
-  const start = async () => {
-    if (!card || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await startEnglishCard(db, card.id);
-      setNotice("Đã bắt đầu học. Lịch ôn vẫn dùng bộ lập lịch hiện tại.");
-      await load();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Chưa bắt đầu được thẻ.");
-    } finally {
-      setBusy(false);
-    }
-  };
+
+  const adding = !card || addingAnother;
+  const displayMeaning = adding ? meaning || selected?.shortMeaning : card.meaning_vi;
+  const ipa = !adding && card?.ipa ? card.ipa : selected?.ipa || candidates[0]?.ipa;
+  const pos = !adding && card?.pos ? card.pos : selected?.pos;
+  const due = !!card?.next_review_at && new Date(card.next_review_at).getTime() <= clock;
+  const canLearn = !!card && card.status === "NEW" && !card.suspended;
+  const canReview = !!card && card.status !== "NEW" && !card.suspended && due;
   const box = { backgroundColor: p.surface, borderColor: p.border };
+  const goLearn = () => { if (card) router.push({ pathname: "/english/review", params: { deckId: card.deck_id, learn: JSON.stringify([card.id]) } } as Href); };
 
-  return (
-    <Screen hideTitle title="Chi tiết từ" subtitle="Chọn nghĩa phù hợp để lưu vào bộ của bạn." avoidKeyboard>
-      {loading ? <ActivityIndicator accessibilityLabel="Đang tra từ" color={p.primary} /> : null}
-      {error ? <View style={[s.alert, { backgroundColor: p.errorLight }]}><Text accessibilityRole="alert" style={{ color: p.error }}>{error}</Text><Pressable accessibilityRole="button" onPress={() => void load()} style={s.touch}><Text style={{ color: p.primary }}>Thử lại</Text></Pressable></View> : null}
-      {notice ? <View style={[s.alert, { backgroundColor: p.successLight }]}><Text accessibilityLiveRegion="polite" style={{ color: p.success }}>{notice}</Text></View> : null}
-      {!loading && word ? (
-        <>
-          <View testID="english-word-detail-header" style={[s.card, box]}>
-            <Text style={[s.headword, { color: p.textPrimary }]}>{word}</Text>
-            {selected?.pos ? <Text style={[s.pos, { color: p.primary }]}>{selected.pos}</Text> : null}
-            {pronunciation.length ? pronunciation.map((item, index) => (
-              <Text key={`${item.ipa}-${item.region}-${index}`} style={[s.ipa, { color: p.textSecondary }]}>
-                IPA mục từ{item.region ? ` · ${regionLabel(item.region)}` : " · vùng giọng chưa ghi"} · {item.ipa}
-              </Text>
-            )) : <Text style={{ color: p.textMuted }}>Từ điển chưa có IPA cho mục này.</Text>}
-            <View style={s.audioRow}>
-              <EnglishAudioButton text={word} />
-              <Text style={[s.metaNote, { color: p.textMuted }]}>TTS trên thiết bị · không phải bản ghi âm từ điển</Text>
-            </View>
-          </View>
+  return <Screen hideHeader compact avoidKeyboard>
+    <EnglishWritingAIEntry />
+    {loading ? <View style={s.loading}><ActivityIndicator color={p.primary} /><Text style={{ color: p.textMuted }}>Đang mở từ…</Text></View> : null}
+    {error ? <View style={[s.alert, { backgroundColor: p.errorLight }]}><Text accessibilityRole="alert" style={{ color: p.error }}>{error}</Text><PrimaryButton variant="secondary" label="Thử tải lại" onPress={load} /></View> : null}
+    {!loading && word ? <>
+      <View testID="english-word-detail-header" style={[s.card, box]}>
+        <View style={s.titleRow}><Text accessibilityRole="header" style={[s.headword, { color: p.textPrimary }]}>{word}</Text>{card ? <Pressable accessibilityRole="button" accessibilityLabel="Sửa từ đã lưu" onPress={() => router.push({ pathname: "/english/card-edit", params: { id: card.id } } as Href)} style={[s.editButton, { backgroundColor: p.surfaceSubtle }]}><Ionicons name="create-outline" size={21} color={p.primary} /><Text style={{ color: p.primary, fontWeight: "700" }}>Sửa</Text></Pressable> : null}</View>
+        {ipa || pos ? <Text style={[s.meta, { color: p.textMuted }]}>{[ipa, pos].filter(Boolean).join(" · ")}</Text> : null}
+        <EnglishAudioButton text={word} compact />
+        <View testID="english-word-detail-meaning" style={{ gap: 8 }}>
+          {displayMeaning ? <Text style={[s.meaning, { color: p.textPrimary }]}>{displayMeaning}</Text> : <Text style={{ color: p.textSecondary }}>Chọn nghĩa bạn muốn học.</Text>}
+          {card && !adding ? <View style={s.statusRow}><Ionicons name={card.suspended ? "pause-circle-outline" : card.status === "NEW" ? "sparkles-outline" : "time-outline"} size={18} color={p.primary} /><Text style={{ color: p.textSecondary }}>{card.suspended ? "Đã bỏ qua" : card.status === "NEW" ? "Chưa học" : JSON.parse(card.progress_json).isKnown ? "Đã biết" : `Mức nhớ ${englishMemoryLevel(card)}/6`}</Text></View> : null}
+          {card?.next_review_at && !card.suspended && !adding ? <Text style={{ color: due ? p.primary : p.textMuted, lineHeight: 22 }}>{due ? "Đã đến giờ ôn" : `Ôn tiếp: ${new Date(card.next_review_at).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}`}</Text> : null}
+        </View>
+        {!adding && card ? <PrimaryButton label={canLearn ? "Học ngay" : canReview ? "Ôn bộ từ" : "Mở bộ từ"} onPress={canLearn ? goLearn : () => router.push({ pathname: canReview ? "/english/review" : "/english/decks/[id]", params: canReview ? { deckId: card.deck_id } : { id: card.deck_id } } as Href)} /> : null}
+      </View>
 
-          {card ? (
-            <View style={[s.card, box]}>
-              <Text style={[s.section, { color: p.textPrimary }]}>Thẻ cá nhân</Text>
-              <Text style={[s.personalMeaning, { color: p.textPrimary }]}>{card.meaning_vi}</Text>
-              <Text style={{ color: p.textSecondary }}>{card.status === "NEW" ? "Chưa học" : JSON.parse(card.progress_json).isKnown === true ? "Đã biết" : `Đang học · bậc ${englishMemoryLevel(card)}`}{card.suspended ? " · Đã bỏ qua" : ""}</Text>
-              {card.next_review_at && !card.suspended ? <Text style={{ color: p.textMuted }}>Ôn tiếp: {new Date(card.next_review_at).toLocaleString("vi-VN")}</Text> : null}
-              <View style={s.actionRow}>
-                {card.status === "NEW" && !card.suspended ? <Pressable accessibilityRole="button" disabled={busy} onPress={() => void start()} style={[s.secondaryButton, { borderColor: p.primary }]}><Text style={{ color: p.primary }}>Bắt đầu học</Text></Pressable> : null}
-                <Pressable accessibilityRole="button" onPress={() => router.push(`/english/card-edit?id=${encodeURIComponent(card.id)}` as Href)} style={[s.secondaryButton, { borderColor: p.border }]}><Text style={{ color: p.textPrimary }}>Sửa thẻ</Text></Pressable>
-              </View>
-            </View>
-          ) : null}
+      {candidates.length > 1 || !selected && candidates.length ? <Pressable testID="english-word-detail-meaning-heading" accessibilityRole="button" onPress={() => setPickerVisible(true)} style={[s.actionRow, box]}><Ionicons name="list-outline" size={23} color={p.primary} /><Text style={{ flex: 1, color: p.textPrimary, fontWeight: "700" }}>{card ? "Xem nghĩa khác" : selected ? "Đổi nghĩa" : `Chọn nghĩa (${candidates.length})`}</Text><Ionicons name="chevron-forward" size={20} color={p.textMuted} /></Pressable> : null}
 
-          <View testID="english-word-detail-meaning" style={[s.card, box]}>
-            <View testID="english-word-detail-meaning-heading" style={[s.sectionRow, stackMeaningHeader && s.sectionRowStacked]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[s.section, { color: p.textPrimary }]}>{selected ? "Nghĩa đang học" : "Chọn nghĩa muốn học"}</Text>
-                <Text style={{ color: p.textSecondary }}>{selected ? selected.pos : candidates.length ? `${candidates.length} nghĩa · chưa có tần suất nghĩa được xác minh` : "Không tìm thấy mục từ chính xác"}</Text>
-              </View>
-              {candidates.length ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={selected ? `Xem và đổi nghĩa, còn ${Math.max(0, candidates.length - 1)} nghĩa khác` : `Chọn một trong ${candidates.length} nghĩa`}
-                  onPress={() => setPickerVisible(true)}
-                  style={[s.secondaryButton, { borderColor: p.primary }]}
-                >
-                  <Text style={{ color: p.primary }}>{selected ? `Xem ${Math.max(0, candidates.length - 1)} nghĩa khác` : `Chọn trong ${candidates.length} nghĩa`}</Text>
-                </Pressable>
-              ) : null}
-            </View>
-            {selected ? (
-              <>
-                <Text style={[s.selectedMeaning, { color: p.textPrimary }]}>{meaning || selected.shortMeaning || selected.meaning}</Text>
-                {selected.usageNote ? <Text style={{ color: p.textSecondary }}>Ghi chú nguồn · {selected.usageNote}</Text> : null}
-                {selected.example ? <View style={s.exampleBlock}><Text style={[s.label, { color: p.textMuted }]}>Ví dụ từ nguồn</Text><Text style={[s.exampleLarge, { color: p.textPrimary }]}>{selected.example}</Text></View> : null}
-                {selected.meaning !== selected.shortMeaning ? (
-                  <>
-                    <Pressable accessibilityRole="button" accessibilityState={{ expanded: showFullSource }} onPress={() => setShowFullSource((value) => !value)} style={s.touch}>
-                      <Text style={{ color: p.primary }}>{showFullSource ? "Ẩn nghĩa đầy đủ từ nguồn" : "Xem nghĩa đầy đủ từ nguồn"}</Text>
-                    </Pressable>
-                    {showFullSource ? <Text style={[s.fullMeaning, { color: p.textSecondary }]}>{selected.meaning}</Text> : null}
-                  </>
-                ) : null}
-                <Text style={[s.label, { color: p.textSecondary }]}>Nghĩa sẽ lưu (có thể chỉnh sửa)</Text>
-                <TextInput accessibilityLabel="Chỉnh nghĩa tiếng Việt trước khi lưu" value={meaning} onChangeText={setMeaning} multiline maxLength={2000} style={[s.meaningInput, { color: p.textPrimary, borderColor: p.border }]} />
-                <Text style={[s.metaNote, { color: p.textMuted }]}>{selected.rankingExplanation} Nguồn không cung cấp định nghĩa Anh–Anh hoặc ảnh đã xác minh.</Text>
-                <Text style={[s.label, { color: p.textSecondary }]}>Bộ muốn lưu từ</Text>
-                {decks.length ? <View style={s.deckWrap}>{decks.map((deck) => <Pressable key={deck.id} accessibilityRole="radio" accessibilityState={{ selected: deck.id === deckId }} onPress={() => setDeckId(deck.id)} style={[s.deckChip, { backgroundColor: deck.id === deckId ? p.primary : p.surfaceSubtle }]}><Text style={{ color: deck.id === deckId ? "white" : p.textPrimary }}>{deck.name}</Text></Pressable>)}</View> : <Text style={{ color: p.textSecondary }}>Tạo bộ từ trước hoặc dùng nhập danh sách hàng loạt.</Text>}
-                <Text style={{ color: p.textMuted }}>Mỗi thẻ lưu một nghĩa; lưu nghĩa khác sẽ tạo thẻ riêng, không sửa thẻ đang học.</Text>
-                <PrimaryButton label={busy ? "Đang lưu…" : card ? "Lưu nghĩa này thành thẻ riêng" : "Lưu nghĩa này vào bộ"} disabled={busy || !decks.length || !deckId || !meaning.trim()} onPress={() => void save()} />
-              </>
-            ) : (
-              <Text style={{ color: p.textSecondary }}>
-                {candidates.length ? "Từ này có nhiều nghĩa. Chọn theo ngữ cảnh bạn muốn học; ứng dụng không tự đoán nghĩa phổ biến nhất." : "Bạn vẫn có thể nhập nghĩa riêng từ màn thêm từ hàng loạt."}
-              </Text>
-            )}
-          </View>
+      {adding && selected ? <View style={[s.card, box]}>
+        <View style={s.titleRow}><Text style={[s.section, { color: p.textPrimary }]}>Lưu vào bộ từ</Text><Pressable accessibilityRole="button" accessibilityLabel="Chỉnh nghĩa trước khi lưu" accessibilityState={{ expanded: editMeaning }} onPress={() => setEditMeaning(value => !value)} style={s.touch}><Ionicons name="pencil-outline" size={21} color={p.primary} /></Pressable></View>
+        {editMeaning ? <TextInput accessibilityLabel="Nghĩa tiếng Việt" value={meaning} onChangeText={setMeaning} multiline maxLength={2000} style={[s.input, { color: p.textPrimary, borderColor: p.border }]} /> : null}
+        {decks.length ? <View style={s.deckWrap}>{decks.map(deck => <Pressable key={deck.id} accessibilityRole="radio" accessibilityState={{ selected: deck.id === deckId }} onPress={() => setDeckId(deck.id)} style={[s.deckChip, { backgroundColor: deck.id === deckId ? p.primaryLight : p.surfaceSubtle, borderColor: deck.id === deckId ? p.primary : p.border }]}><Ionicons name="folder-outline" size={17} color={deck.id === deckId ? p.primary : p.textMuted} /><Text style={{ color: deck.id === deckId ? p.primary : p.textPrimary }}>{deck.name}</Text></Pressable>)}</View> : <PrimaryButton variant="secondary" label="Tạo bộ từ" onPress={() => router.push("/english/decks" as Href)} />}
+        {card ? <Text style={{ color: p.textMuted, lineHeight: 21 }}>Nghĩa này sẽ được lưu thành từ riêng trong bộ bạn chọn.</Text> : null}
+        <PrimaryButton label="Lưu & học ngay" loading={busy} disabled={!deckId || !meaning.trim()} onPress={() => void save(true)} />
+        <PrimaryButton variant="secondary" label="Lưu để học sau" disabled={busy || !deckId || !meaning.trim()} onPress={() => void save(false)} />
+        {addingAnother ? <PrimaryButton variant="ghost" label="Quay lại từ đã lưu" onPress={() => { setAddingAnother(false); setMeaning(card?.meaning_vi ?? ""); }} /> : null}
+      </View> : null}
 
-          <Pressable accessibilityRole="button" onPress={() => router.push("/english/dictionary-source" as Href)} style={s.sourceLink}>
-            <Text style={{ color: p.primary }}>Nguồn từ điển & thông tin giấy phép</Text>
-          </Pressable>
-          {pickerVisible ? <EnglishSensePickerModal
-            visible={pickerVisible}
-            headword={word}
-            meanings={candidates}
-            selected={selected}
-            initialMeaning={meaning}
-            onClose={() => setPickerVisible(false)}
-            onConfirm={(choice, selectedMeaning) => {
-              setSelected(choice);
-              setMeaning(selectedMeaning);
-              setShowFullSource(false);
-              setPickerVisible(false);
-              setError("");
-              setNotice("");
-            }}
-          /> : null}
-        </>
-      ) : null}
-    </Screen>
-  );
+      {selected?.example ? <View style={[s.example, { borderColor: p.border }]}><Ionicons name="chatbubble-ellipses-outline" size={21} color={p.primary} /><View style={{ flex: 1, gap: 5 }}><Text style={{ color: p.textMuted, fontWeight: "700" }}>Ví dụ</Text><Text style={{ color: p.textPrimary, fontSize: 17, lineHeight: 25 }}>{selected.example}</Text></View></View> : null}
+      {dictionaryError ? <Text style={{ color: p.textMuted, lineHeight: 21 }}>{dictionaryError}</Text> : null}
+      {!card && !candidates.length ? <PrimaryButton variant="secondary" label="Thêm từ với nghĩa riêng" onPress={() => router.push("/english/bulk" as Href)} /> : null}
+
+      <View style={[s.details, { borderColor: p.border }]}>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded }} onPress={() => setExpanded(value => !value)} style={s.disclosure}><Ionicons name="information-circle-outline" size={22} color={p.textMuted} /><Text style={{ flex: 1, color: p.textSecondary, fontWeight: "700" }}>Chi tiết & nguồn</Text><Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={20} color={p.textMuted} /></Pressable>
+        {expanded ? <View style={{ gap: 14, paddingBottom: 16 }}>
+          <Text style={{ color: p.textSecondary, lineHeight: 22 }}>Phát âm bằng giọng đọc máy trên thiết bị. Nút US dùng giọng Anh Mỹ, UK dùng giọng Anh Anh.</Text>
+          {selected?.meaning ? <Text style={{ color: p.textSecondary, lineHeight: 24 }}>{selected.meaning}</Text> : null}
+          {selected?.usageNote ? <Text style={{ color: p.textSecondary }}>{selected.usageNote}</Text> : null}
+          {card?.notes ? <Text style={{ color: p.textSecondary, lineHeight: 23 }}>{card.notes.split("\n[4Chinese English context v1]\n")[0]}</Text> : null}
+          <Pressable accessibilityRole="button" onPress={() => router.push("/english/dictionary-source" as Href)} style={s.touch}><Text style={{ color: p.primary, fontWeight: "700" }}>Nguồn từ điển và giấy phép</Text></Pressable>
+        </View> : null}
+      </View>
+      {pickerVisible ? <EnglishSensePickerModal visible={pickerVisible} headword={word} meanings={candidates} selected={selected} initialMeaning={meaning} onClose={() => setPickerVisible(false)} onConfirm={(choice, text) => { setSelected(choice); setMeaning(text); setAddingAnother(!!card); setPickerVisible(false); setError(""); }} /> : null}
+    </> : null}
+  </Screen>;
 }
 
 const s = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 12 },
-  headword: { fontSize: 34, fontWeight: "800", lineHeight: 42 },
-  ipa: { fontSize: 16, lineHeight: 24 },
-  audioRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
-  metaNote: { fontSize: 12, lineHeight: 17 },
-  section: { fontSize: 20, fontWeight: "800" },
-  sectionRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 },
-  sectionRowStacked: { flexDirection: "column", alignItems: "stretch" },
-  selectedMeaning: { fontSize: 24, lineHeight: 32, fontWeight: "800" },
-  personalMeaning: { fontSize: 20, lineHeight: 28 },
-  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  secondaryButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: 14, borderWidth: 1, borderRadius: 12 },
-  pos: { fontSize: 13, lineHeight: 22, fontWeight: "800", textTransform: "capitalize" },
-  meaningInput: { minHeight: 72, maxHeight: 220, borderWidth: 1, borderRadius: 12, padding: 12, textAlignVertical: "top", fontSize: 18, lineHeight: 26 },
-  fullMeaning: { lineHeight: 24 },
-  exampleBlock: { borderLeftWidth: 3, borderLeftColor: "#4779EA", paddingLeft: 12, gap: 5 },
-  exampleLarge: { fontSize: 17, lineHeight: 25 },
-  label: { fontSize: 13, fontWeight: "700" },
-  deckWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  deckChip: { minHeight: 44, justifyContent: "center", paddingHorizontal: 12, borderRadius: 12 },
-  sourceLink: { minHeight: 44, justifyContent: "center", alignItems: "center" },
-  touch: { minHeight: 44, justifyContent: "center", paddingVertical: 8 },
-  alert: { padding: 14, borderRadius: 14, gap: 6 },
+  card: { borderWidth: 1, borderRadius: 20, padding: 18, gap: 16 }, titleRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headword: { flex: 1, minWidth: 0, fontSize: 34, lineHeight: 43, fontWeight: "800" }, meta: { fontSize: 16, lineHeight: 24 }, meaning: { fontSize: 25, lineHeight: 34, fontWeight: "700" },
+  section: { flex: 1, fontSize: 19, fontWeight: "800" }, editButton: { minHeight: 44, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12 },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 7 }, actionRow: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 56, padding: 16, borderWidth: 1, borderRadius: 15 },
+  input: { minHeight: 76, borderWidth: 1, borderRadius: 12, padding: 12, textAlignVertical: "top", fontSize: 18, lineHeight: 26 },
+  deckWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 }, deckChip: { minHeight: 44, borderWidth: 1, paddingHorizontal: 12, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 6 },
+  example: { paddingVertical: 14, paddingHorizontal: 4, gap: 12, flexDirection: "row", borderBottomWidth: 1 }, details: { borderTopWidth: 1 }, disclosure: { minHeight: 56, flexDirection: "row", alignItems: "center", gap: 10 },
+  touch: { minHeight: 44, minWidth: 44, justifyContent: "center", alignItems: "center" }, alert: { padding: 14, borderRadius: 14, gap: 10 }, loading: { padding: 28, gap: 12, alignItems: "center" },
 });

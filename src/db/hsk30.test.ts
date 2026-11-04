@@ -15,6 +15,7 @@ import {
   rollbackHsk30Import,
 } from "./hsk30";
 import { migrateDatabaseSchema } from "./migrations";
+import { DATABASE_VERSION } from "./schema";
 
 import rawBundle from "@/data/hsk30-2025-11.json";
 import type { Hsk30Bundle } from "@/services/hsk/hsk30-source";
@@ -180,7 +181,7 @@ describe("HSK30 real SQLite import safety", { timeout: 30000 }, () => {
         sqlite.prepare("SELECT * FROM hsk_syllabus_imports").all(),
       ).toEqual(imported);
       expect(sqlite.prepare("PRAGMA user_version").get()).toEqual({
-        user_version: 45,
+        user_version: DATABASE_VERSION,
       });
     } finally {
       sqlite.close();

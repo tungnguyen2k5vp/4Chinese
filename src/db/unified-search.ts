@@ -19,18 +19,36 @@ export async function searchAllContent(db: SQLiteDatabase, input: string): Promi
   const expression = tokens.map(token => `"${token.replace(/"/gu, '""')}"*`).join(' AND ');
   let words: WordRow[];
   try {
-    words = await db.getAllAsync<WordRow>(`SELECT v.id,v.simplified,v.pinyin,v.primary_meaning_vi
+    // FTS5's hidden rank keeps BM25 scoring valid alongside the window function.
+    words = await db.getAllAsync<WordRow>(`WITH candidates AS (
+      SELECT v.id,v.simplified,v.pinyin,v.primary_meaning_vi,
+        vocabulary_search_fts.rank AS relevance,COALESCE(v.frequency_rank,999999) AS frequency_rank,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+            COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+            COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,v.id) AS identity_rank
       FROM vocabulary_search_fts JOIN vocabulary v ON v.id=vocabulary_search_fts.vocabulary_id
+      LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
       WHERE vocabulary_search_fts MATCH ?
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
-      ORDER BY bm25(vocabulary_search_fts),COALESCE(v.frequency_rank,999999),v.id LIMIT ?`, expression, perGroup);
+        AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+          JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
+    ) SELECT id,simplified,pinyin,primary_meaning_vi FROM candidates WHERE identity_rank=1
+      ORDER BY relevance,frequency_rank,id LIMIT ?`, expression, perGroup);
   } catch (error) {
     // Web SQLite lacks the optional native FTS table; other database errors must surface.
     if (!/no such (table|module).*fts|fts5.*unavailable/iu.test(String(error))) throw error;
-    words = await db.getAllAsync<WordRow>(`SELECT v.id,v.simplified,v.pinyin,v.primary_meaning_vi FROM vocabulary v
+    words = await db.getAllAsync<WordRow>(`WITH candidates AS (
+      SELECT v.id,v.simplified,v.pinyin,v.primary_meaning_vi,COALESCE(v.frequency_rank,999999) AS frequency_rank,
+        ROW_NUMBER() OVER (PARTITION BY v.simplified,LOWER(REPLACE(v.pinyin,' ',''))
+          ORDER BY CASE WHEN COALESCE(p.studied,0)=1 OR p.status='KNOWN' THEN 0 ELSE 1 END,
+            COALESCE(p.memory_level,0) DESC,COALESCE(p.review_count,0) DESC,
+            COALESCE(p.updated_at,v.updated_at,v.created_at,'') DESC,v.id) AS identity_rank
+      FROM vocabulary v LEFT JOIN user_vocabulary_progress p ON p.vocabulary_id=v.id
       WHERE v.search_text LIKE ? ESCAPE '\\'
-      AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck d WHERE d.id=v.deck_id AND d.deleted_at IS NULL))
-      ORDER BY COALESCE(v.frequency_rank,999999),v.id LIMIT ?`, like(normalized), perGroup);
+        AND (v.deck_id IS NULL OR EXISTS (SELECT 1 FROM personal_deck_vocabulary m
+          JOIN personal_deck d ON d.id=m.deck_id AND d.deleted_at IS NULL WHERE m.vocabulary_id=v.id))
+    ) SELECT id,simplified,pinyin,primary_meaning_vi FROM candidates WHERE identity_rank=1
+      ORDER BY frequency_rank,id LIMIT ?`, like(normalized), perGroup);
   }
   const query = like(raw.toLowerCase());
   const grammar = await db.getAllAsync<ContentRow>(`SELECT id,title,pattern AS subtitle FROM grammar_points

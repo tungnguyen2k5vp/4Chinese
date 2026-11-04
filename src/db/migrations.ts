@@ -4,6 +4,7 @@ import { migrationV35Sql } from './confusable-words';
 import { migrationV33Sql } from './exam-schema';
 import { migrationV32Sql } from './hsk-standard-schema';
 import { migrationV45Sql } from './hsk30-schema';
+import { nativePracticeSchemaSql } from './native-practice';
 import { roleplaySchemaSQL } from './roleplay-history';
 import {
   DATABASE_VERSION,
@@ -34,6 +35,7 @@ import {
   migrationV27Sql,
   migrationV28Sql,
   migrationV29Sql,
+  migrationV46Sql,
 } from './schema';
 import { migrationV37Sql } from './speaking-attempt-schema';
 import { migrationV36Sql } from './v5-content-schema';
@@ -164,6 +166,8 @@ export async function migrateDatabaseSchema(db: SQLiteDatabase): Promise<number>
     await ensureColumns(db, migrationV42Sql);
     await db.execAsync(migrationV44Sql);
     await db.execAsync(migrationV45Sql);
+    if (currentVersion < 46) await db.execAsync(migrationV46Sql);
+    if (currentVersion < 47) await db.execAsync(nativePracticeSchemaSql);
     await db.execAsync(latestIndexSql);
     await assertDatabaseIntegrity(db);
   });

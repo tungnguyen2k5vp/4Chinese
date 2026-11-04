@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { exerciseForReviewMode, exerciseTypeForReviewMode, standardReviewModes } from "./exercise";
 
 describe("review exercise definitions", () => {
+  it('presents sentence cloze as Hanzi multiple choice, keeping the persisted exercise type', () => {
+    expect(exerciseForReviewMode('cloze')).toMatchObject({ type: 'cloze', answer: 'hanzi', requiresHanziInput: false, playsAudio: false });
+  });
   it("maps legacy navigation modes to stable learning-skill types", () => {
     expect(exerciseTypeForReviewMode("meaning-hanzi")).toBe("meaning_to_hanzi");
     expect(exerciseTypeForReviewMode("pinyin-hanzi")).toBe("pinyin_to_hanzi");
