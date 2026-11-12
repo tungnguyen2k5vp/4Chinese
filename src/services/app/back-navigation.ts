@@ -1,5 +1,6 @@
 /** Parent destinations for a screen opened directly without a navigation history. */
 export function backFallback(pathname: string): string {
+  if (pathname.startsWith('/community/')) return '/community';
   if (pathname === '/stats/words') return '/(tabs)/stats';
   if (pathname === '/path' || pathname === '/hsk/syllabus') return '/(tabs)/hsk';
   if (pathname.startsWith('/path/')) return '/path';

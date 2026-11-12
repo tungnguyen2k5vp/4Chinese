@@ -11,6 +11,7 @@ import { ChineseScreen as Screen } from "@/components/ChineseScreen";
 import type { DailyQuestItem } from "@/components/DailyQuestCard";
 import { PinyinText } from "@/components/PinyinText";
 import { PrimaryButton } from "@/components/PrimaryButton";
+import { PracticeArt } from '@/components/learning/PracticeArt';
 import { AnimatedProgressBar } from "@/components/ui/AnimatedProgressBar";
 import { MotionPressable } from "@/components/ui/MotionPressable";
 import { LearningGuide } from '@/components/visual/LearningGuide';
@@ -49,6 +50,13 @@ const primaryQuick = [
 ] as const;
 
 const toolHubs = [
+  [
+    'Cộng đồng',
+    'chatbubbles-outline',
+    '/community',
+    'Hỏi đáp · kết bạn · nhắn tin trực tiếp',
+    'reading',
+  ],
   [
     'Củng cố trí nhớ',
     'bulb-outline',
@@ -298,6 +306,11 @@ function ChineseHome() {
           />
         </View>
       </View>
+
+      <MotionPressable haptic accessibilityLabel="Khám phá Tiếng Trung quanh mình" onPress={() => router.push('/practice/scenes' as Href)} style={{ borderRadius: radius.lg, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, overflow: 'hidden' }}>
+        <View style={{ height: 108 }}><PracticeArt scene="market" /></View>
+        <View style={{ padding: spacing.md, gap: 5 }}><Text style={[styles.eyebrow, { color: theme.skillColors.speaking }]}>MỘT CÁCH HỌC MỚI</Text><Text style={styles.heroTitle}>Tiếng Trung quanh mình</Text><Text style={styles.muted}>Chạm đồ vật · nghe từ · thử hội thoại →</Text></View>
+      </MotionPressable>
 
       {daily ? (
         <View>

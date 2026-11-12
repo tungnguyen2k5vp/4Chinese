@@ -12,15 +12,15 @@ import { type ParsedBackupArchive } from '@/services/backup/archive';
 import { createDeviceBackupArchive, materializeArchiveImages, writeRestorePointArchive } from '@/services/backup/device-archive';
 import { deleteCloudBackup, downloadCloudBackup, listCloudBackups, uploadCloudBackup,
   type CloudBackupItem } from '@/services/cloud/backup';
-import { getCloudClient, getCloudDeviceId } from '@/services/cloud/client';
+import { getCloudClient, getCloudDeviceId, getCommunityClient, connectPrimaryAccountForCloud, disconnectPrimaryAccountFromCloud } from '@/services/cloud/client';
 import { runManualSync, type InitialSyncMode } from '@/services/cloud/manual-sync';
 import { useAppStore } from '@/stores/app-store';
 import { useTheme, useThemeStyles } from '@/theme/ThemeProvider';
 import type { ThemeTokens } from '@/theme/tokens';
 
-const client = getCloudClient();
-
 export default function CloudBackupScreen() {
+  const [client, setClient] = useState(getCloudClient);
+  const [primaryEmail, setPrimaryEmail] = useState('');
   const theme = useTheme();
   const styles = useThemeStyles(createStyles);
   const db = useSQLiteContext();
@@ -28,17 +28,23 @@ export default function CloudBackupScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [signedIn, setSignedIn] = useState(false);
+  const [signedInEmail, setSignedInEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [items, setItems] = useState<CloudBackupItem[]>([]);
 
   useEffect(() => {
     if (!client) return;
     let live = true;
-    void client.auth.getUser().then(({ data }) => { if (live) setSignedIn(!!data.user); });
+    void client.auth.getUser().then(({ data }) => { if (live) { setSignedIn(!!data.user); setSignedInEmail(data.user?.email ?? ''); } });
     const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
-      if (live) setSignedIn(!!session?.user);
+      if (live) { setSignedIn(!!session?.user); setSignedInEmail(session?.user.email ?? ''); }
     });
     return () => { live = false; subscription.unsubscribe(); };
+  }, [client]);
+  useEffect(() => {
+    let live = true;
+    void getCommunityClient()?.auth.getSession().then(({ data }) => { if (live && data.session?.user.email_confirmed_at) setPrimaryEmail(data.session.user.email ?? ''); }).catch(() => {});
+    return () => { live = false; };
   }, []);
 
   useEffect(() => {
@@ -47,7 +53,7 @@ export default function CloudBackupScreen() {
     void listCloudBackups(client).then((backups) => { if (live) setItems(backups); })
       .catch(() => { /* The manual refresh button exposes retry without blocking offline use. */ });
     return () => { live = false; };
-  }, [signedIn]);
+  }, [client, signedIn]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -109,6 +115,7 @@ export default function CloudBackupScreen() {
   return <Screen title="Sao lưu đám mây" subtitle="Tự chọn tải lên hoặc khôi phục; dữ liệu trên máy vẫn dùng được offline.">
     {!client ? <View style={styles.card}><Text style={styles.note}>Chưa cấu hình Supabase. Sao lưu ZIP cục bộ vẫn hoạt động.</Text></View> : !signedIn ?
       <View style={[styles.card, styles.block]}>
+        {primaryEmail ? <><Text style={styles.heading}>Tài khoản 4Chinese của bạn</Text><Text selectable style={styles.note}>{primaryEmail}</Text><Pressable accessibilityRole="button" accessibilityState={{ disabled: busy, busy }} style={styles.button} disabled={busy} onPress={() => void run(async () => { setClient(await connectPrimaryAccountForCloud()); setSignedIn(true); })}><Text style={styles.buttonText}>Tiếp tục với tài khoản này</Text></Pressable><Text style={styles.note}>Chỉ kết nối đăng nhập. Không tự đồng bộ, tải bản sao lưu hoặc thay tiến độ trên máy.</Text></> : null}
         <Text style={styles.heading}>Đăng nhập</Text>
         <TextInput style={styles.input} placeholder="Email" placeholderTextColor={theme.textMuted} selectionColor={theme.primary} autoCapitalize="none" keyboardType="email-address"
           value={email} onChangeText={setEmail} editable={!busy} />
@@ -119,6 +126,8 @@ export default function CloudBackupScreen() {
       </View> : <>
         <View style={[styles.card, styles.block]}>
           <Text style={styles.heading}>Đồng bộ giữa thiết bị</Text>
+          <Text selectable style={styles.note}>Tài khoản Cloud: {signedInEmail || 'Đã đăng nhập'}</Text>
+          {primaryEmail && client !== getCommunityClient() ? <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy, busy }} style={styles.button} disabled={busy} onPress={() => void run(async () => { setClient(await connectPrimaryAccountForCloud()); })}><Text style={styles.buttonText}>Kết nối với tài khoản 4Chinese</Text></Pressable> : null}
           <Text style={styles.note}>Đồng bộ cài đặt và bộ từ theo tài khoản đang đăng nhập. Lịch sử ôn SRS vẫn ở máy này để không làm sai lịch ôn.</Text>
           <Pressable style={styles.button} disabled={busy} onPress={() => void requestSync()}><Text style={styles.buttonText}>{busy ? 'Đang xử lý…' : 'Đồng bộ ngay'}</Text></Pressable>
         </View>
@@ -145,11 +154,14 @@ export default function CloudBackupScreen() {
               ])}><Text style={styles.delete}>Xóa</Text></Pressable>
             </View>
           </View>)}
-          <Pressable disabled={busy} onPress={() => void run(async () => {
-            const { error } = await client.auth.signOut();
-            if (error) throw error;
+          <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={() => void run(async () => {
+            if (client === getCommunityClient()) setClient(await disconnectPrimaryAccountFromCloud());
+            else {
+              const { error } = await client.auth.signOut({ scope: 'local' });
+              if (error) throw error;
+            }
             setItems([]);
-          })}><Text style={styles.link}>Đăng xuất</Text></Pressable>
+          })}><Text style={styles.link}>{client === getCommunityClient() ? 'Ngắt Cloud · giữ tài khoản 4Chinese' : 'Đăng xuất'}</Text></Pressable>
         </View>
       </>}
   </Screen>;

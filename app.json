@@ -2,7 +2,7 @@
   "expo": {
     "name": "4Chinese",
     "slug": "4chinese",
-    "version": "0.1.55",
+    "version": "0.1.57",
     "orientation": "portrait",
     "icon": "./assets/images/hanzi-icon.png",
     "scheme": "4chinese",
@@ -13,8 +13,9 @@
     },
     "android": {
       "package": "com.tungnguyen2k5vp.fourchinese",
-      "versionCode": 57,
+      "versionCode": 59,
       "permissions": [
+        "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
@@ -61,7 +62,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Cho phép 4Chinese chọn ảnh minh họa cho từ vựng của bạn.",
+          "photosPermission": "Cho phép 4Chinese chọn ảnh và video cho từ vựng, bài viết và tin nhắn.",
+          "cameraPermission": "Cho phép 4Chinese quay video để chia sẻ với cộng đồng hoặc bạn bè.",
           "microphonePermission": "Cho phép 4Chinese dùng micro khi ghi âm phát âm tiếng Trung."
         }
       ],

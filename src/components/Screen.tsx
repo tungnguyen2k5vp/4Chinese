@@ -1,21 +1,22 @@
 import { HeaderShownContext } from 'expo-router/react-navigation';
 import type { PropsWithChildren, ReactNode, RefObject } from 'react';
 import { useContext, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
+import { Animated, Easing, Keyboard, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
 import { SafeAreaView, type Edge } from 'react-native-safe-area-context';
 
 import { spacing, typography, webLayout } from '@/constants/design';
+import { useSystemReducedMotion } from '@/hooks/use-reduced-motion';
 import { useAppStore } from '@/stores/app-store';
 import { useTheme } from '@/theme/ThemeProvider';
 
 const ENTRANCE_DURATION_MS = 180;
 const ENTRANCE_OFFSET = 7;
 
-export function Screen({ children, scroll = true, title, subtitle, right, refreshControl, scrollRef, onScroll, onViewportLayout, avoidKeyboard = false, hideHeader = false, hideTitle = false, safeAreaEdges = ['top'], compact = false }: PropsWithChildren<{
+export function Screen({ children, scroll = true, title, subtitle, right, refreshControl, scrollRef, onScroll, onViewportLayout, avoidKeyboard = false, hideHeader = false, hideTitle = false, safeAreaEdges = ['top'], compact = false, maxWidth }: PropsWithChildren<{
   scroll?: boolean; title?: string; subtitle?: string; right?: ReactNode; refreshControl?: ScrollViewProps['refreshControl'];
   scrollRef?: RefObject<ScrollView | null>; onScroll?: ScrollViewProps['onScroll']; onViewportLayout?: ScrollViewProps['onLayout']; avoidKeyboard?: boolean;
   hideHeader?: boolean; hideTitle?: boolean;
-  safeAreaEdges?: Edge[]; compact?: boolean;
+  safeAreaEdges?: Edge[]; compact?: boolean; maxWidth?: number;
 }>) {
   const theme = useTheme();
   const styles = createStyles(theme);
@@ -23,7 +24,7 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
   const motionMode = useAppStore((state) => state.settings?.motionMode ?? null);
   const shouldAnimateOnMount = useRef(motionMode !== null);
   const hasResolvedEntrance = useRef(false);
-  const [systemReducedMotion, setSystemReducedMotion] = useState<boolean | null>(null);
+  const systemReducedMotion = useSystemReducedMotion();
   const [opacity] = useState(() => new Animated.Value(1));
   const [translateY] = useState(() => new Animated.Value(0));
   const safeRef = useRef<View>(null);
@@ -42,27 +43,6 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
     const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardOverlap(0));
     return () => { active = false; show.remove(); hide.remove(); };
   }, [avoidKeyboard]);
-
-  useEffect(() => {
-    let active = true;
-    let receivedChangeEvent = false;
-    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', (enabled) => {
-      receivedChangeEvent = true;
-      if (active) setSystemReducedMotion(enabled);
-    });
-
-    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (active && !receivedChangeEvent) setSystemReducedMotion(enabled);
-    }).catch(() => {
-      // If the OS preference cannot be read, favor showing content without motion.
-      if (active && !receivedChangeEvent) setSystemReducedMotion(true);
-    });
-
-    return () => {
-      active = false;
-      subscription.remove();
-    };
-  }, []);
 
   useEffect(() => {
     if (systemReducedMotion === null) return;
@@ -99,7 +79,7 @@ export function Screen({ children, scroll = true, title, subtitle, right, refres
     return () => animation.stop();
   }, [motionMode, opacity, systemReducedMotion, translateY]);
 
-  const content = <Animated.View style={[styles.content, compact && { paddingTop: spacing.sm, paddingBottom: 40, gap: spacing.md }, !scroll && { flex: 1, paddingBottom: spacing.md }, { opacity, transform: [{ translateY }] }]}>
+  const content = <Animated.View style={[styles.content, Platform.OS === 'web' && maxWidth ? { maxWidth } : null, compact && { paddingTop: spacing.sm, paddingBottom: 40, gap: spacing.md }, !scroll && { flex: 1, paddingBottom: spacing.md }, { opacity, transform: [{ translateY }] }]}>
     {!hideHeader && ((title && !hideTitle) || subtitle || right) && <View style={styles.header}><View style={styles.headerCopy}>
       {title && !hideTitle ? <Text style={styles.title}>{title}</Text> : null}
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}

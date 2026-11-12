@@ -170,6 +170,7 @@ export default function ReviewIndex() {
         </>
       )}
       {error ? <Text accessibilityLiveRegion="polite" style={styles.note}>{error}</Text> : null}
+      <PrimaryButton label="Đổi cách luyện · thử thách ngắn" variant="secondary" onPress={() => router.push('/practice/challenges' as Href)} />
     </Screen>
   );
 }

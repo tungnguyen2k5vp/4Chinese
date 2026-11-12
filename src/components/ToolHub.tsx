@@ -3,6 +3,7 @@ import { router, type Href } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 
 import { ChineseScreen as Screen } from "@/components/ChineseScreen";
+import { PracticeArt } from '@/components/learning/PracticeArt';
 import { MotionPressable } from "@/components/ui/MotionPressable";
 import { StudyTransition } from "@/components/ui/StudyTransition";
 import { LearningGuide } from "@/components/visual/LearningGuide";
@@ -15,6 +16,8 @@ import { useTheme } from "@/theme/ThemeProvider";
 function toolIcon(id: string): keyof typeof Ionicons.glyphMap {
   const icons: Record<string, keyof typeof Ionicons.glyphMap> = {
     review: "repeat", weak: "analytics-outline", mistakes: "document-text-outline", upcoming: "calendar-outline",
+    'interactive-scenes': 'storefront-outline', 'sentence-tiles': 'extension-puzzle-outline', 'quick-challenges': 'flash-outline',
+    'scene-missions': 'hand-left-outline', 'choice-stories': 'git-branch-outline', 'character-assembly': 'shapes-outline', 'reading-missions': 'scan-outline',
     "recording-library": "mic-outline", "pronunciation-pairs": "ear-outline", "listening-library": "headset-outline", listening: "volume-high-outline", tones: "pulse-outline", shadowing: "radio-outline", speaking: "mic-circle-outline", conversation: "chatbubbles-outline",
     hanzi: "brush-outline", grammar: "git-branch-outline", "grammar-focus": "bulb-outline", confusables: "swap-horizontal-outline", exam: "school-outline", written: "create-outline", "timed-speaking": "timer-outline",
     stories: "book-outline", reader: "reader-outline", "global-search": "search-outline", decks: "albums-outline", dictionary: "library-outline", "grammar-reference": "document-text-outline", hsk: "layers-outline",
@@ -23,13 +26,16 @@ function toolIcon(id: string): keyof typeof Ionicons.glyphMap {
 }
 
 function toolTone(id: string, theme: ReturnType<typeof useTheme>) {
-  if (["reader", "stories"].includes(id)) return { color: theme.skillColors.reading, soft: theme.skillSurfaces.reading };
+  if (['interactive-scenes', 'scene-missions'].includes(id)) return { color: theme.skillColors.speaking, soft: theme.skillSurfaces.speaking };
+  if (id === 'sentence-tiles') return { color: theme.skillColors.grammar, soft: theme.skillSurfaces.grammar };
+  if (id === 'quick-challenges') return { color: theme.skillColors.review, soft: theme.skillSurfaces.review };
+  if (["reader", "stories", 'choice-stories', 'reading-missions'].includes(id)) return { color: theme.skillColors.reading, soft: theme.skillSurfaces.reading };
   if (["listening", "listening-library"].includes(id)) return { color: theme.skillColors.listening, soft: theme.skillSurfaces.listening };
   if (["speaking", "conversation", "tones", "shadowing", "pronunciation-pairs", "recording-library"].includes(id)) return { color: theme.skillColors.speaking, soft: theme.skillSurfaces.speaking };
   if (["exam", "written", "timed-speaking"].includes(id)) return { color: theme.skillColors.exam, soft: theme.skillSurfaces.exam };
   if (["grammar", "grammar-focus", "grammar-reference"].includes(id)) return { color: theme.skillColors.grammar, soft: theme.skillSurfaces.grammar };
   if (["review", "weak", "mistakes", "upcoming"].includes(id)) return { color: theme.skillColors.review, soft: theme.skillSurfaces.review };
-  if (id === 'hanzi') return { color: theme.skillColors.hanzi, soft: theme.skillSurfaces.hanzi };
+  if (['hanzi', 'character-assembly'].includes(id)) return { color: theme.skillColors.hanzi, soft: theme.skillSurfaces.hanzi };
   return { color: theme.primaryText, soft: theme.primarySoft };
 }
 
@@ -69,10 +75,10 @@ export function ToolHub({
   return (
     <Screen title={title} subtitle={subtitle} hideHeader>
       <View style={styles.hero}>
-        <View style={styles.heroArt}><LearningLandscape mood={mood} scene={scene ?? (title === "Thư viện" ? "read" : "learn")} height={64} /><Text style={styles.heroLabel}>{title === "Thư viện" ? "GÓC ĐỌC VÀ KHÁM PHÁ" : "LUYỆN TẬP MỖI NGÀY"}</Text></View>
+        <View style={styles.heroArt}>{scene === 'practice' ? <View style={{ height: 132 }}><PracticeArt scene="cafe" /></View> : <LearningLandscape mood={mood} scene={scene ?? (title === "Thư viện" ? "read" : "learn")} height={64} />}<Text style={styles.heroLabel}>{title === "Thư viện" ? "GÓC ĐỌC VÀ KHÁM PHÁ" : "CHẠM VÀO THẾ GIỚI TIẾNG TRUNG"}</Text></View>
         <View style={[styles.heroBody, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 12 }]}>
           <View style={{ flex: 1, minWidth: 140, gap: 4 }}><Text style={styles.heroKicker}>{title === "Thư viện" ? "KHÔNG GIAN KHÁM PHÁ" : "PHÒNG LUYỆN TẬP"}</Text><Text style={styles.heroTitle}>{title === "Thư viện" ? "Đọc sâu, nghe kỹ, lưu điều hay" : "Chọn đúng kỹ năng cho hôm nay"}</Text><Text style={styles.heroCopy}>{title === "Thư viện" ? "Từ truyện ngắn đến nội dung cá nhân, mọi thứ bạn đọc đều ở trong tầm tay." : "Mỗi công cụ là một cách khám phá. Cùng nghe, nói, đọc và viết nhé!"}</Text></View>
-          <LearningGuide mood={title === 'Thư viện' ? 'reading' : 'curious'} size={104} active={false} />
+          {scene !== 'practice' ? <LearningGuide mood={title === 'Thư viện' ? 'reading' : 'curious'} size={104} active={false} /> : null}
         </View>
       </View>
       {groups.map((group, groupIndex) => (

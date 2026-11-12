@@ -9,8 +9,10 @@ import 'react-native-reanimated';
 import { DatabaseOwnershipGate } from '@/components/DatabaseOwnershipGate';
 import { NavigationBackButton } from '@/components/NavigationBackButton';
 import { StartupLoading } from '@/components/StartupRecovery';
+import { CommunityPresence } from '@/components/community/Presence';
 import { initializeWithHsk30Backup } from '@/db/hsk30-startup';
 import { getSettings } from '@/db/repository';
+import { SystemReducedMotionProvider } from '@/hooks/use-reduced-motion';
 import { appStatusBarStyle } from '@/services/english/status-bar';
 import { useLearningLanguage } from '@/services/languages/LanguageProvider';
 import { LanguageRuntime } from '@/services/languages/LanguageRuntime';
@@ -51,17 +53,29 @@ function AppNavigator() {
     return () => subscription.remove();
   }, [router, preferences.learningLanguage]);
   return <>
+    <CommunityPresence />
     <StatusBar style={statusBarStyle} />
     <Stack screenOptions={{ statusBarStyle, headerBackVisible: false, headerLeft: () => <NavigationBackButton />, headerShadowVisible: false, headerTintColor: theme.textPrimary, headerStyle: { backgroundColor: theme.background }, headerTitleStyle: { color: theme.textPrimary }, contentStyle: { backgroundColor: theme.background } }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       {__DEV__ ? <Stack.Screen name="__qa" options={{ title: 'Visual QA', headerShown: false }} /> : null}
       <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="cloud/index" options={{ title: 'Sao lưu đám mây' }} />
+      <Stack.Screen name="community/index" options={{ title: 'Cộng đồng' }} />
+      <Stack.Screen name="community/account" options={{ title: 'Tài khoản 4Chinese' }} />
+      <Stack.Screen name="community/post/[id]" options={{ title: 'Bài viết' }} />
+      <Stack.Screen name="community/chat/[id]" options={{ title: 'Tin nhắn' }} />
       <Stack.Screen name="ai/index" options={{ title: '4Chinese AI' }} />
       <Stack.Screen name="ai/settings" options={{ title: 'Cài đặt AI' }} />
       <Stack.Screen name="ai/coach" options={{ title: 'Study Coach' }} />
       <Stack.Screen name="ai/editor" options={{ title: 'Biên tập nội dung nháp' }} />
       <Stack.Screen name="practice/index" options={{ title: 'Luyện tập' }} />
+      <Stack.Screen name="practice/scenes" options={{ title: 'Tiếng Trung quanh mình' }} />
+      <Stack.Screen name="practice/sentences" options={{ title: 'Ghép câu' }} />
+      <Stack.Screen name="practice/challenges" options={{ title: 'Thử thách ngắn' }} />
+      <Stack.Screen name="practice/missions" options={{ title: 'Nhiệm vụ trong cảnh' }} />
+      <Stack.Screen name="practice/choice-stories" options={{ title: 'Truyện có lựa chọn' }} />
+      <Stack.Screen name="practice/characters" options={{ title: 'Ghép thành phần Hán tự' }} />
+      <Stack.Screen name="practice/reading-missions" options={{ title: 'Tìm thông tin thực tế' }} />
       <Stack.Screen name="memory/index" options={{ title: 'Củng cố trí nhớ', animation: 'none' }} />
       <Stack.Screen name="memory/words" options={{ title: 'Từ cần củng cố', animation: 'none' }} />
       <Stack.Screen name="memory/session" options={{ title: 'Luyện nhớ chủ động', animation: 'none' }} />
@@ -127,7 +141,7 @@ function AppNavigator() {
 }
 
 export default function RootLayout() {
-  return <DatabaseOwnershipGate><Suspense fallback={<StartupLoading />}><SQLiteProvider databaseName="hanzi30.db" onInit={initializeWithHsk30Backup} useSuspense>
+  return <SystemReducedMotionProvider><DatabaseOwnershipGate><Suspense fallback={<StartupLoading />}><SQLiteProvider databaseName="hanzi30.db" onInit={initializeWithHsk30Backup} useSuspense>
     <ThemeProvider><LanguageRuntime><SettingsHydrator /><AppNavigator /></LanguageRuntime></ThemeProvider>
-  </SQLiteProvider></Suspense></DatabaseOwnershipGate>;
+  </SQLiteProvider></Suspense></DatabaseOwnershipGate></SystemReducedMotionProvider>;
 }

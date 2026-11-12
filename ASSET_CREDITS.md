@@ -43,6 +43,12 @@ Lottie Simple License (FL 9.13.21) cho phép dùng/sửa/phân phối cả thư�
 
 Bằng chứng source/package/license đã tải của tám repository: `../4Chinese-Archive/rich-motion-2026-10-26/research/`. Không suy ra chuyển động của sản phẩm từ README hoặc ảnh tĩnh. Chi tiết áp dụng và giới hạn kiểm tra: [báo cáo](docs/RICH_MOTION_2026-10-26.md).
 
+## Tương tác học tập — 08/11/2026
+
+`src/components/learning/PracticeArt.tsx` chứa SVG vẽ trực tiếp trong dự án: bốn khung cảnh, nhân vật và đồ vật phục vụ hoạt động tương tác. Không nhúng hình ảnh, nhân vật hoặc animation lấy từ ứng dụng tham khảo. Dùng React Native Animated và `react-native-svg` đã có trong dự án; không thêm gói tài nguyên hoặc dependency mới. Nội dung câu ví dụ/hội thoại trong `interactive-content.ts` do dự án biên soạn.
+
+Đợt bổ sung bốn hoạt động ngày 08/11/2026 dùng lại các SVG này. Nhiệm vụ, truyện phân nhánh và tư liệu đọc trong `adventure-content.ts` được biên soạn trong dự án; cấu tạo chữ dùng inventory `character-content.ts` cùng liên kết mục từ đã có, phân biệt gợi nhớ với từ nguyên. Không tải/nhúng nội dung từ ứng dụng khác. Chi tiết: [hoạt động bổ sung](docs/INTERACTIVE_ADVENTURES_2026_11_08.md).
+
 ## Motion UX V2 — 26/10/2026
 
 [yihui-dev/awesome-opus5-5-videos](https://github.com/yihui-dev/awesome-opus5-5-videos): repository LICENSE là MIT, copyright 2026 yihui-dev. Đã đọc README/LICENSE, prompt UI Motion Loop Design (@flxrnc), Animated Story (@N01ennn) và Interactive Zen Garden (@arixxbt). Chỉ tham khảo continuity, phản ứng theo state và kiểm tra điểm chuyển; không nhập code, prompt code, video, artwork hoặc nhân vật. Không suy diễn giấy phép repository thành giấy phép cho mọi video/tác phẩm liên kết. Không thêm tài nguyên ngoài hoặc dependency. Bản đọc: `../4Chinese-Archive/motion-ux-v2-2026-10-26/research/`; [đối chiếu áp dụng](docs/MOTION_UX_V2_RESEARCH.md). Chưa chạy/xem demo video của nguồn này.

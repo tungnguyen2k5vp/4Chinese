@@ -1,0 +1,453 @@
+{
+    "repository":  "https://github.com/microsoft/fluentui-emoji",
+    "tree":  "1ffb34c752ecf5d402f04cfb4b392c77f57c54bc",
+    "license":  "MIT",
+    "captions":  "Original bilingual captions authored for 4Chinese",
+    "files":  [
+                  {
+                      "key":  "alien",
+                      "path":  "assets/Alien/3D/alien_3d.png",
+                      "bytes":  38905,
+                      "sha256":  "7b2318a60f36814c289e92643cbfa8d72caac26d98e955d8cae196d3db9abddf"
+                  },
+                  {
+                      "key":  "avocado",
+                      "path":  "assets/Avocado/3D/avocado_3d.png",
+                      "bytes":  37151,
+                      "sha256":  "526f16895dee591111aa502e6a07e3a8cd6262b4189be7f670c82a76e702f4d2"
+                  },
+                  {
+                      "key":  "bear",
+                      "path":  "assets/Bear/3D/bear_3d.png",
+                      "bytes":  41872,
+                      "sha256":  "8f108a036c28d25378e3970eea68d00fbf155228b349707f0456e557013a87c9"
+                  },
+                  {
+                      "key":  "books",
+                      "path":  "assets/Books/3D/books_3d.png",
+                      "bytes":  26332,
+                      "sha256":  "36f75eaa1e1a849fc950f43962b447c206d96244858468240a6a81beaa97f7be"
+                  },
+                  {
+                      "key":  "brain",
+                      "path":  "assets/Brain/3D/brain_3d.png",
+                      "bytes":  37483,
+                      "sha256":  "37906c3f0b0495215df114d72565a389496dc4c5b2af02398abf9dc7dc5a2a43"
+                  },
+                  {
+                      "key":  "butterfly",
+                      "path":  "assets/Butterfly/3D/butterfly_3d.png",
+                      "bytes":  60804,
+                      "sha256":  "2ee52f94c6383dafdd29f471d04c17141563d7fff790d33e16781a751f72b397"
+                  },
+                  {
+                      "key":  "cat",
+                      "path":  "assets/Cat/3D/cat_3d.png",
+                      "bytes":  33603,
+                      "sha256":  "5d3fcbbfb0be45d9be0ade47fe4eb1b97d33130fe67d46a8db697e434f13289b"
+                  },
+                  {
+                      "key":  "cat_with_tears_of_joy",
+                      "path":  "assets/Cat with tears of joy/3D/cat_with_tears_of_joy_3d.png",
+                      "bytes":  41847,
+                      "sha256":  "ef898754403fe81aece4059a32a1aeba623ce6404df2868e6ba848757541f251"
+                  },
+                  {
+                      "key":  "cat_with_wry_smile",
+                      "path":  "assets/Cat with wry smile/3D/cat_with_wry_smile_3d.png",
+                      "bytes":  39551,
+                      "sha256":  "c0f18ad8b5805d10e8e0fcc86edce6764bbcb56b0f707bb1c9e66b10f2474358"
+                  },
+                  {
+                      "key":  "cherry_blossom",
+                      "path":  "assets/Cherry blossom/3D/cherry_blossom_3d.png",
+                      "bytes":  35200,
+                      "sha256":  "e911aad0884966bbeb2a3feda131d5b5aa2fb3d70284e97b9cc1e94a75f953c0"
+                  },
+                  {
+                      "key":  "clapping_hands",
+                      "path":  "assets/Clapping hands/Default/3D/clapping_hands_3d_default.png",
+                      "bytes":  34774,
+                      "sha256":  "54075bd39fd3e1860ba39898d73e61096c0e0e633ac5e9840beefddaf1d75113"
+                  },
+                  {
+                      "key":  "crying_cat",
+                      "path":  "assets/Crying cat/3D/crying_cat_3d.png",
+                      "bytes":  39555,
+                      "sha256":  "bc68537a49704dd065f935c1c78efc63ab826a980c2ff112cf4c241ce5955b14"
+                  },
+                  {
+                      "key":  "crying_face",
+                      "path":  "assets/Crying face/3D/crying_face_3d.png",
+                      "bytes":  42709,
+                      "sha256":  "9fb63e831445543e063c675ea3d428feedfe4c66a6630ae0f9223c6f9b17653f"
+                  },
+                  {
+                      "key":  "dog_face",
+                      "path":  "assets/Dog face/3D/dog_face_3d.png",
+                      "bytes":  43188,
+                      "sha256":  "7db4c311218a47053e490ec53e7b3995bb83246b0d6992e135868a5220bb32e7"
+                  },
+                  {
+                      "key":  "dragon",
+                      "path":  "assets/Dragon/3D/dragon_3d.png",
+                      "bytes":  40277,
+                      "sha256":  "c29e7f01b3a376bdb2ce55e2b631fa00395a3ea9d0d4870b8475d494ba760f34"
+                  },
+                  {
+                      "key":  "exploding_head",
+                      "path":  "assets/Exploding head/3D/exploding_head_3d.png",
+                      "bytes":  47230,
+                      "sha256":  "a915d5b325dbe3130fed54ebaf793777ab88b54c130560f8f3c17ad1af2bcdaf"
+                  },
+                  {
+                      "key":  "face_with_hand_over_mouth",
+                      "path":  "assets/Face with hand over mouth/3D/face_with_hand_over_mouth_3d.png",
+                      "bytes":  42458,
+                      "sha256":  "c87c0277c7b0ade675b69a5c90482041d8b5af42bbccd19bf0b88e8ee0865086"
+                  },
+                  {
+                      "key":  "face_with_monocle",
+                      "path":  "assets/Face with monocle/3D/face_with_monocle_3d.png",
+                      "bytes":  45911,
+                      "sha256":  "de447e866d16da68cf6c87e88a35b3312b76b20492056604259bd16e2148570e"
+                  },
+                  {
+                      "key":  "face_with_open_mouth",
+                      "path":  "assets/Face with open mouth/3D/face_with_open_mouth_3d.png",
+                      "bytes":  36399,
+                      "sha256":  "d625adc79700a83d26f15d602f6e8158598f5f80fa8d839014bc938c06222046"
+                  },
+                  {
+                      "key":  "face_with_peeking_eye",
+                      "path":  "assets/Face with peeking eye/3D/face_with_peeking_eye_3d.png",
+                      "bytes":  48834,
+                      "sha256":  "f20bf09f252c389ba7908f26a2326e4f8a38ec4e58fb9d14bf5efb64191c0251"
+                  },
+                  {
+                      "key":  "face_with_raised_eyebrow",
+                      "path":  "assets/Face with raised eyebrow/3D/face_with_raised_eyebrow_3d.png",
+                      "bytes":  38919,
+                      "sha256":  "13e2bca9b7a3cc83c2a14214fb540e7f6ea0826750ecfdc0d1e9f8ee66567b53"
+                  },
+                  {
+                      "key":  "face_with_rolling_eyes",
+                      "path":  "assets/Face with rolling eyes/3D/face_with_rolling_eyes_3d.png",
+                      "bytes":  33793,
+                      "sha256":  "2c1d7babfd5b788a90d960bf3690c39fcdc9cad37b0c7cad6c4b5d6d1b79d8c4"
+                  },
+                  {
+                      "key":  "face_with_spiral_eyes",
+                      "path":  "assets/Face with spiral eyes/3D/face_with_spiral_eyes_3d.png",
+                      "bytes":  51766,
+                      "sha256":  "a98dc8d03feb4ee9cc9b21d8ffa5c6a151aaa7f3301899469cfb5a13b6c49857"
+                  },
+                  {
+                      "key":  "face_with_tears_of_joy",
+                      "path":  "assets/Face with tears of joy/3D/face_with_tears_of_joy_3d.png",
+                      "bytes":  44153,
+                      "sha256":  "8af20fb0c64c44a8d8c8d047c1410c5e529a37c3158d496832b380198ed2e9c3"
+                  },
+                  {
+                      "key":  "fire",
+                      "path":  "assets/Fire/3D/fire_3d.png",
+                      "bytes":  26826,
+                      "sha256":  "d56355132d73df1741edcf37cb4e21ad54f1c46eeb76fa17224607abf4128c3f"
+                  },
+                  {
+                      "key":  "flexed_biceps",
+                      "path":  "assets/Flexed biceps/Default/3D/flexed_biceps_3d_default.png",
+                      "bytes":  30206,
+                      "sha256":  "c765683c47844d18dd1daa38556f27347d059d7cf54b315a41403326f5af8a38"
+                  },
+                  {
+                      "key":  "fox",
+                      "path":  "assets/Fox/3D/fox_3d.png",
+                      "bytes":  41966,
+                      "sha256":  "1a3bc43212405fb03d8d2bcc709c7f39c99d4a19af06d406cae4724e5fe2b0ad"
+                  },
+                  {
+                      "key":  "frog",
+                      "path":  "assets/Frog/3D/frog_3d.png",
+                      "bytes":  38651,
+                      "sha256":  "c7926ce26b08536982d021237b10024fd5dd0153fd8bd0334a4eb8e457fb2111"
+                  },
+                  {
+                      "key":  "ghost",
+                      "path":  "assets/Ghost/3D/ghost_3d.png",
+                      "bytes":  33215,
+                      "sha256":  "2a07c00a4af13532717a201e201b7219f02ce91232ea86abd7e74cbf1b5fb42f"
+                  },
+                  {
+                      "key":  "grinning_cat_with_smiling_eyes",
+                      "path":  "assets/Grinning cat with smiling eyes/3D/grinning_cat_with_smiling_eyes_3d.png",
+                      "bytes":  39090,
+                      "sha256":  "b8eb3151d342b7b459f1401998300a915125a3d87a44136449b1d9e884f022d7"
+                  },
+                  {
+                      "key":  "grinning_face",
+                      "path":  "assets/Grinning face/3D/grinning_face_3d.png",
+                      "bytes":  38711,
+                      "sha256":  "175d214df45fe18f6f106a9a094b695689d98abe6f343295fcbd690a7ee4f0ab"
+                  },
+                  {
+                      "key":  "grinning_face_with_sweat",
+                      "path":  "assets/Grinning face with sweat/3D/grinning_face_with_sweat_3d.png",
+                      "bytes":  42538,
+                      "sha256":  "dcac6dc921b77aabc16d524ed5d5067f66b6104d545c5f6396f7bbdba6d4cf2c"
+                  },
+                  {
+                      "key":  "hamster",
+                      "path":  "assets/Hamster/3D/hamster_3d.png",
+                      "bytes":  37781,
+                      "sha256":  "36a63a367b1d4e1bbba74284f5b2c4c741a3ff611bfec764f377ae4da4e2d51c"
+                  },
+                  {
+                      "key":  "hot_beverage",
+                      "path":  "assets/Hot beverage/3D/hot_beverage_3d.png",
+                      "bytes":  44337,
+                      "sha256":  "edeaa3fca5eace5f2546efcd3b3e42ef1fd389a0c51d374dbf7863731db8f314"
+                  },
+                  {
+                      "key":  "hugging_face",
+                      "path":  "assets/Hugging face/3D/hugging_face_3d.png",
+                      "bytes":  51316,
+                      "sha256":  "2f70a465496f45c146253fc933202a38f4f8e1af8b2a0e2555832456c03f1b2e"
+                  },
+                  {
+                      "key":  "hundred_points",
+                      "path":  "assets/Hundred points/3D/hundred_points_3d.png",
+                      "bytes":  35871,
+                      "sha256":  "2c9411a425e60a538a7ee5125d21c9fa2610e827f8d38d0c953e5d8cda8562cf"
+                  },
+                  {
+                      "key":  "koala",
+                      "path":  "assets/Koala/3D/koala_3d.png",
+                      "bytes":  36244,
+                      "sha256":  "e5ec59d366cffe5e0f7d49144264633c71af2e50961d5cfe011f155a7ddfce1a"
+                  },
+                  {
+                      "key":  "light_bulb",
+                      "path":  "assets/Light bulb/3D/light_bulb_3d.png",
+                      "bytes":  22450,
+                      "sha256":  "df7b09aa18301507e6fb8c279df66d9afa465b6fed3e63d2efa84dacebdbbf79"
+                  },
+                  {
+                      "key":  "lion",
+                      "path":  "assets/Lion/3D/lion_3d.png",
+                      "bytes":  50059,
+                      "sha256":  "1f1cf0d0dd94915f3c9f10c3415c5efbd4b8725adfa44a5d564098547076b34b"
+                  },
+                  {
+                      "key":  "nerd_face",
+                      "path":  "assets/Nerd face/3D/nerd_face_3d.png",
+                      "bytes":  44701,
+                      "sha256":  "315caf53dc0f11091494c8cceacda4ef316ae2eb28e02d2cf95a7bb34bad806e"
+                  },
+                  {
+                      "key":  "owl",
+                      "path":  "assets/Owl/3D/owl_3d.png",
+                      "bytes":  38126,
+                      "sha256":  "7dfcdcdebd599787719d98f3057b0822522678e6752369ca3498a780ca7ba443"
+                  },
+                  {
+                      "key":  "panda",
+                      "path":  "assets/Panda/3D/panda_3d.png",
+                      "bytes":  43603,
+                      "sha256":  "31524ed035f8d769bc7d437268f30a65eb309ea216e84c09823d4f36c2f97070"
+                  },
+                  {
+                      "key":  "party_popper",
+                      "path":  "assets/Party popper/3D/party_popper_3d.png",
+                      "bytes":  42512,
+                      "sha256":  "70a8e2f9daf1646be9e773751b7f3b6b281a2415cf29c3c3aeebd9c923cdc3e0"
+                  },
+                  {
+                      "key":  "partying_face",
+                      "path":  "assets/Partying face/3D/partying_face_3d.png",
+                      "bytes":  50583,
+                      "sha256":  "e01bd94de6b85468f6e59da55d380985c363f6bc300b412d18290f143f7e44a9"
+                  },
+                  {
+                      "key":  "peach",
+                      "path":  "assets/Peach/3D/peach_3d.png",
+                      "bytes":  31635,
+                      "sha256":  "16c8580f3d7e81234fb8dc0e2a56853efc2735d851ad26f55fba94d13341753a"
+                  },
+                  {
+                      "key":  "penguin",
+                      "path":  "assets/Penguin/3D/penguin_3d.png",
+                      "bytes":  32955,
+                      "sha256":  "c513a326631f3758e3ef9729ed2aa3bba46432340657ae63f32fd0332f648341"
+                  },
+                  {
+                      "key":  "pleading_face",
+                      "path":  "assets/Pleading face/3D/pleading_face_3d.png",
+                      "bytes":  44074,
+                      "sha256":  "7dfc89c51118f0adecf886063b5eafce140a613075394ebe22ed9dd2bd9e9c4f"
+                  },
+                  {
+                      "key":  "pouting_cat",
+                      "path":  "assets/Pouting cat/3D/pouting_cat_3d.png",
+                      "bytes":  39284,
+                      "sha256":  "5d123bec7e472cf71508ddd2c413bbc4635da223410d5e2119a10f5974e886ba"
+                  },
+                  {
+                      "key":  "rabbit_face",
+                      "path":  "assets/Rabbit face/3D/rabbit_face_3d.png",
+                      "bytes":  31679,
+                      "sha256":  "49e3894d0e17c2eeea2b81f50d36ff407731d8b1983f3b5d71a7f7304dcbd5b3"
+                  },
+                  {
+                      "key":  "raising_hands",
+                      "path":  "assets/Raising hands/Default/3D/raising_hands_3d_default.png",
+                      "bytes":  32215,
+                      "sha256":  "e645fbc6c7e174cb74ce168e4ad7d360d3aecc56bbadabbcb51a6d80c9375992"
+                  },
+                  {
+                      "key":  "red_heart",
+                      "path":  "assets/Red heart/3D/red_heart_3d.png",
+                      "bytes":  29389,
+                      "sha256":  "7218cb9f08ed1ef38fcd83fe699a1125d07f50725f4c87a68cb7c9f4efb3c32b"
+                  },
+                  {
+                      "key":  "relieved_face",
+                      "path":  "assets/Relieved face/3D/relieved_face_3d.png",
+                      "bytes":  41774,
+                      "sha256":  "847ffd80565cb5762d524f86c93a75ddd91cb32de5e0992b7f8507855fcf1ab5"
+                  },
+                  {
+                      "key":  "robot",
+                      "path":  "assets/Robot/3D/robot_3d.png",
+                      "bytes":  43362,
+                      "sha256":  "3f9b5a00b53c8bddda36b6a3f68d00718d9d7d8c04f986a3248e55ae93a7961b"
+                  },
+                  {
+                      "key":  "rocket",
+                      "path":  "assets/Rocket/3D/rocket_3d.png",
+                      "bytes":  36274,
+                      "sha256":  "4636925a1dfc76a45dc83c08b983699d39143a0978f794a4e2dfb6cbffdcd7ab"
+                  },
+                  {
+                      "key":  "rolling_on_the_floor_laughing",
+                      "path":  "assets/Rolling on the floor laughing/3D/rolling_on_the_floor_laughing_3d.png",
+                      "bytes":  45925,
+                      "sha256":  "22ebfd950c4df297e784babe1e31bc1713144615f78cb0262c8dc2ce0da90ca0"
+                  },
+                  {
+                      "key":  "saluting_face",
+                      "path":  "assets/Saluting face/3D/saluting_face_3d.png",
+                      "bytes":  40146,
+                      "sha256":  "3a18f67e9cb6edaa18e9331451f9b93527aca574c52f9e6d896cce691e737b5a"
+                  },
+                  {
+                      "key":  "seedling",
+                      "path":  "assets/Seedling/3D/seedling_3d.png",
+                      "bytes":  25324,
+                      "sha256":  "b16c51b1b36c68b87bc05b92841d3cbd25d93919911057bb0eb3648717615cc1"
+                  },
+                  {
+                      "key":  "sleeping_face",
+                      "path":  "assets/Sleeping face/3D/sleeping_face_3d.png",
+                      "bytes":  44597,
+                      "sha256":  "c7d1cd5d04ae7214b6ae92b9802b6c860729c755da0020ccec22c7c8171f18fa"
+                  },
+                  {
+                      "key":  "sleepy_face",
+                      "path":  "assets/Sleepy face/3D/sleepy_face_3d.png",
+                      "bytes":  44228,
+                      "sha256":  "0d5d74dc3802603b3df9234da6f671afd1ed1d80cf2d6f27f907841f3299201e"
+                  },
+                  {
+                      "key":  "smiling_cat_with_heart-eyes",
+                      "path":  "assets/Smiling cat with heart-eyes/3D/smiling_cat_with_heart-eyes_3d.png",
+                      "bytes":  43380,
+                      "sha256":  "7f5ca63e7231af11a6aba486bcca01785cca2f724f34b728ffc141c961986ebf"
+                  },
+                  {
+                      "key":  "smiling_face_with_heart-eyes",
+                      "path":  "assets/Smiling face with heart-eyes/3D/smiling_face_with_heart-eyes_3d.png",
+                      "bytes":  43664,
+                      "sha256":  "2b5ab00dd73673faa86463eac8787b7fc366935c4d82a54451df33443190b9cc"
+                  },
+                  {
+                      "key":  "smiling_face_with_hearts",
+                      "path":  "assets/Smiling face with hearts/3D/smiling_face_with_hearts_3d.png",
+                      "bytes":  52432,
+                      "sha256":  "2b8c4abe57a81fe3805ec0c271f855984e9f4a7a1d10053050a4db7b6def778e"
+                  },
+                  {
+                      "key":  "smiling_face_with_sunglasses",
+                      "path":  "assets/Smiling face with sunglasses/3D/smiling_face_with_sunglasses_3d.png",
+                      "bytes":  47859,
+                      "sha256":  "e98cb43a7a531289c82eb57441eb20cd88cb53b895c212d8e3abf05dd2647da1"
+                  },
+                  {
+                      "key":  "sparkles",
+                      "path":  "assets/Sparkles/3D/sparkles_3d.png",
+                      "bytes":  21948,
+                      "sha256":  "e4490c9ff74a3fd73a8f99c760d65b6ed51b8a3e4ad28da137fec050b77e1058"
+                  },
+                  {
+                      "key":  "star-struck",
+                      "path":  "assets/Star-struck/3D/star-struck_3d.png",
+                      "bytes":  45284,
+                      "sha256":  "89a14e242892cbe067095b75eb51cd55692841bceb384a45a90f8f3f8b9b2e9b"
+                  },
+                  {
+                      "key":  "strawberry",
+                      "path":  "assets/Strawberry/3D/strawberry_3d.png",
+                      "bytes":  29831,
+                      "sha256":  "446d640c24e146d03e8382c61ae52862848b11aadf74e7b47d200bc44d2f0223"
+                  },
+                  {
+                      "key":  "sunflower",
+                      "path":  "assets/Sunflower/3D/sunflower_3d.png",
+                      "bytes":  35269,
+                      "sha256":  "14eb41f2cb9afa1387e9b925a9458d8fc768be3bd32210e3064fb7f320e123ca"
+                  },
+                  {
+                      "key":  "thinking_face",
+                      "path":  "assets/Thinking face/3D/thinking_face_3d.png",
+                      "bytes":  45573,
+                      "sha256":  "cd29da5c3886e1e25726d3cf6ff79faa2f0d631b1c0873b115be287d358fc4be"
+                  },
+                  {
+                      "key":  "tiger_face",
+                      "path":  "assets/Tiger face/3D/tiger_face_3d.png",
+                      "bytes":  45311,
+                      "sha256":  "124229ecfb2fa27d6d343aa0827f728ff36c2b7ce6f297f103db76dc847ac3d7"
+                  },
+                  {
+                      "key":  "turtle",
+                      "path":  "assets/Turtle/3D/turtle_3d.png",
+                      "bytes":  31010,
+                      "sha256":  "86486ad9e55664aad9e28af70a8b35dbbadd0678be5f0d1f0b1b5baba616649c"
+                  },
+                  {
+                      "key":  "unicorn",
+                      "path":  "assets/Unicorn/3D/unicorn_3d.png",
+                      "bytes":  35413,
+                      "sha256":  "7d4a8a3e1040e9ba2b5a562413e258ebacc812e5c6d87946b3de53a66d1736b4"
+                  },
+                  {
+                      "key":  "whale",
+                      "path":  "assets/Whale/3D/whale_3d.png",
+                      "bytes":  30236,
+                      "sha256":  "f5c6da4e8e26ffff443017efec37f881b41c81f08320488ffa62bcbd1031b9ce"
+                  },
+                  {
+                      "key":  "winking_face",
+                      "path":  "assets/Winking face/3D/winking_face_3d.png",
+                      "bytes":  43638,
+                      "sha256":  "f14edbaa23f127ee6ee7c4a17b35969405a3c441b3f79c3356cc6406c1bf9ae4"
+                  },
+                  {
+                      "key":  "zany_face",
+                      "path":  "assets/Zany face/3D/zany_face_3d.png",
+                      "bytes":  44995,
+                      "sha256":  "3d7805655cb653c12dc4662a58dc447fadae80b29ffc2f5a28e3dbabba2f81da"
+                  }
+              ],
+    "notice":  "    MIT License\n\n    Copyright (c) Microsoft Corporation.\n\n    Permission is hereby granted, free of charge, to any person obtaining a copy\n    of this software and associated documentation files (the \"Software\"), to deal\n    in the Software without restriction, including without limitation the rights\n    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n    copies of the Software, and to permit persons to whom the Software is\n    furnished to do so, subject to the following conditions:\n\n    The above copyright notice and this permission notice shall be included in all\n    copies or substantial portions of the Software.\n\n    THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n    SOFTWARE\n"
+}

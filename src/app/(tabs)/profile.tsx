@@ -7,6 +7,7 @@ import { ChineseAIEntry } from "@/components/ChineseAIEntry";
 import { LanguageSettings } from "@/components/LanguageSettings";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Screen } from "@/components/Screen";
+import { AccountIdentityCard } from '@/components/community/SocialUI';
 import { designColors, radius, spacing, themedCard } from "@/constants/design";
 import { exportLocalBackup, importLocalBackup } from "@/db/backup-repository";
 import { getSettings, saveSettings } from "@/db/repository";
@@ -174,18 +175,9 @@ export default function ProfileScreen() {
       safeAreaEdges={isEnglish ? ["top"] : ["bottom"]}
       compact={!isEnglish}
     >
-      <View style={[themedCard(theme), styles.profile]}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>学</Text>
-        </View>
-        <View>
-        <Text style={styles.name}>Người học 4Chinese</Text>
-          <Text style={styles.offline}>
-            ● Offline-first · Không cần đăng nhập
-          </Text>
-        </View>
-      </View>
+      <AccountIdentityCard />
       <LanguageSettings />
+      <PrimaryButton label="Cộng đồng · bạn bè & tin nhắn" variant="secondary" onPress={() => router.push('/community' as Href)} />
       {!isEnglish ? <View style={{ gap: 10 }}><ChineseAIEntry /><PrimaryButton label="Cài đặt AI & quyền riêng tư" variant="ghost" onPress={() => router.push('/ai/settings' as Href)} /></View> : null}
       {!isEnglish ? <View style={themedCard(theme)}>
         <Text style={styles.section}>Chế độ lộ trình</Text>

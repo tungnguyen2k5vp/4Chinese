@@ -9,6 +9,18 @@ export type ToolGroup = { title: string; tools: readonly HubTool[] };
 /** Navigation only: grouping does not replace existing flows or progress. */
 export const practiceGroups: readonly ToolGroup[] = [
   {
+    title: 'Chạm, chơi và khám phá',
+    tools: [
+      { id: 'interactive-scenes', title: 'Tiếng Trung quanh mình', description: 'Bốn khung cảnh tương tác, nghe từ và thử hội thoại.', href: '/practice/scenes' },
+      { id: 'sentence-tiles', title: 'Ghép câu', description: 'Kéo hoặc chạm mảnh từ để ghép câu trong khung cảnh.', href: '/practice/sentences' },
+      { id: 'quick-challenges', title: 'Thử thách ngắn', description: 'Nghe đoán, tìm đôi, đáp lời và thám tử câu.', href: '/practice/challenges' },
+      { id: 'scene-missions', title: 'Nhiệm vụ trong cảnh', description: 'Nghe yêu cầu rồi kéo đồ vật đến đúng nơi nhận.', href: '/practice/missions' },
+      { id: 'choice-stories', title: 'Truyện có lựa chọn', description: 'Lời đáp đổi diễn biến, mở bốn kết thúc cho mỗi truyện.', href: '/practice/choice-stories' },
+      { id: 'character-assembly', title: 'Ghép thành phần Hán tự', description: 'Kéo/chạm thành phần vào đúng bố cục của 12 chữ.', href: '/practice/characters' },
+      { id: 'reading-missions', title: 'Tìm thông tin thực tế', description: 'Đọc thực đơn, vé tàu và tin nhắn để tìm dữ kiện.', href: '/practice/reading-missions' },
+    ],
+  },
+  {
     title: 'Củng cố trí nhớ',
     tools: [{id:'hanzi-memory',title:'Luyện nhớ chủ động',description:'Chữ hay quên, nhớ rồi viết, phân biệt chữ, ôn chữ cũ và cấu tạo chữ.',href:'/memory'}],
   },
