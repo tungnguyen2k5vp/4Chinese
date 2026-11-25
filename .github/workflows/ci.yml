@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -18,4 +21,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run content:validate
       - run: npm test
+      - run: node --test supabase/functions/pronunciation-score/index.test.cjs
       - run: npx expo export --platform android

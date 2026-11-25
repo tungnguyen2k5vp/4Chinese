@@ -2,7 +2,7 @@
 
 Ứng dụng học từ vựng tiếng Trung cho người Việt, xây dựng bằng Expo/React Native. 4Chinese ưu tiên học chủ động: viết hoặc chọn Hán tự, tự nhớ pinyin, chọn nghĩa, luyện nghe/nói và ôn lặp ngắt quãng theo cấp độ.
 
-Phiên bản source hiện tại: **0.1.55 (57)**. Các cập nhật gồm motion và phản hồi tương tác, lộ trình/ngữ pháp HSK, luyện viết và cấu tạo Hán tự, chia sẻ tiến độ bộ từ bằng mã 8 ký tự, cùng AI Tutor dùng phiên khách tự động. AI Tutor hiện chưa mở sử dụng: kiểm thử Gemini thật còn lỗi 503/timeout; xem [trạng thái backend và kiểm thử](docs/AI_BACKEND_2026-11-04.md).
+Xem phiên bản và mã bản dựng trong [app.json](app.json). Các tính năng gồm lộ trình và ngữ pháp HSK, luyện viết và cấu tạo Hán tự, chia sẻ tiến độ bộ từ bằng mã 8 ký tự, cùng AI Tutor dùng phiên khách tự động. Xem [trạng thái backend và kiểm thử AI Tutor](docs/AI_BACKEND_2026-11-04.md).
 
 > Dự án chạy offline-first: từ vựng, tiến độ học và lịch ôn được lưu trên thiết bị bằng SQLite. Supabase phục vụ chia sẻ bộ từ, sao lưu/đồng bộ tùy chọn và các tính năng AI khi được bật. Khóa AI chỉ lưu ở server.
 
@@ -18,7 +18,7 @@ Phiên bản source hiện tại: **0.1.55 (57)**. Các cập nhật gồm motio
 - Luyện 50 bộ thủ thông dụng: ý nghĩa, cách dùng, từ liên quan và animation thứ tự nét.
 - Chia sẻ bộ từ bằng mã 8 ký tự; nhập mã để thêm bộ từ của bạn bè.
 - Đổi tên, tìm trong bộ từ bằng pinyin/Hán tự, xóa mềm/khôi phục bộ từ; giữ lâu một từ để xác nhận xóa.
-- Quiz điền chỗ trống/chọn Hán tự với ví dụ của chính bộ từ riêng, và luyện phát âm AI chấm điểm 0–100.
+- Quiz điền chỗ trống/chọn Hán tự với ví dụ của bộ từ riêng và đối chiếu từ được nhận diện trong bản ghi âm.
 
 ## Công nghệ
 
@@ -65,23 +65,11 @@ Chỉ dùng **Publishable key** (hoặc legacy `anon` key) của Supabase. Khôn
 
 Schema này tạo các RPC an toàn để xuất bản và tải bộ từ qua mã gồm 8 ký tự. Dữ liệu học cá nhân vẫn nằm cục bộ trên thiết bị.
 
-## Chấm phát âm AI
+## Đối chiếu từ nhận diện từ bản ghi âm
 
-Từ chi tiết một bộ từ, chọn **Luyện phát âm AI**. App ghi một đoạn ngắn, gửi thẳng đến Supabase Edge Function để AI phiên âm tiếng Trung và trả về điểm 0–100. Khóa OpenAI chỉ nằm trên Supabase; Edge Function không lưu file ghi âm.
+Trong chi tiết bộ từ, **Luyện phát âm AI** gửi bản ghi ngắn qua Edge Function để phiên âm và so khớp chữ Hán với từ mục tiêu. Điểm thể hiện mức khớp của văn bản nhận diện. Khóa OpenAI được cấu hình ở server.
 
-Thiết lập một lần bằng Supabase CLI:
-
-```bash
-supabase link --project-ref your-project-ref
-supabase secrets set OPENAI_API_KEY=your_openai_api_key
-supabase functions deploy pronunciation-score --no-verify-jwt
-```
-
-`--no-verify-jwt` chỉ phù hợp khi kiểm tra development chưa có tài khoản. Trước khi phát hành công khai, hãy thêm Supabase Auth và rate limit để bảo vệ chi phí API. Sau khi thêm `expo-audio`, cài lại development build một lần để Android có quyền ghi âm:
-
-```bash
-npx expo run:android --device
-```
+Giữ chức năng này trong môi trường kiểm thử riêng. Trước khi bật công khai, cần xác thực phiên người dùng, hạn mức bền vững theo tài khoản và giới hạn chi phí toàn dịch vụ. Có thể kiểm tra hợp đồng phản hồi, giới hạn tải lên và xử lý lỗi bằng `node --test supabase/functions/pronunciation-score/index.test.cjs`.
 
 ## Chạy ứng dụng
 

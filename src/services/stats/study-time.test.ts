@@ -35,15 +35,63 @@ describe('foreground study time', () => {
     expect(rows).toEqual([['2026-09-27', 5], ['2026-09-28', 10]]);
     await tracker.flush(); expect(calls).toBe(3);
   });
-  it('serializes overlapping flushes without counting twice', async () => {
+  it('drains final blur time during an in-flight flush without another timer', async () => {
     let now = new Date(2026, 8, 27).getTime();
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const rows: number[] = [];
     const tracker = new StudyTimeTracker(() => now, async (_day, seconds) => { await gate; rows.push(seconds); });
     tracker.setActive(true); now += 5000;
-    const first = tracker.flush(); now += 2000; await tracker.flush();
-    release(); await first; tracker.setActive(false); await tracker.flush();
+    const first = tracker.flush(); now += 2000;
+    tracker.setActive(false);
+    const final = tracker.flush();
+    release(); await Promise.all([first, final]);
+    expect(rows).toEqual([5, 2]);
+    await tracker.flush();
+    expect(rows).toEqual([5, 2]);
+  });
+  it('retains an overlapping tail after a failed write without retrying in a loop', async () => {
+    let now = new Date(2026, 8, 27).getTime();
+    let release: () => void = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let calls = 0;
+    const rows: number[] = [];
+    const tracker = new StudyTimeTracker(() => now, async (_day, seconds) => {
+      calls++;
+      if (calls === 1) { await gate; throw new Error('SQLITE_BUSY'); }
+      rows.push(seconds);
+    });
+    tracker.setActive(true); now += 5000;
+    const first = tracker.flush(); now += 2000;
+    tracker.setActive(false);
+    const final = tracker.flush();
+    release(); await Promise.all([first, final]);
+    expect(calls).toBe(1);
+    expect(rows).toEqual([]);
+    await tracker.flush();
+    expect(rows).toEqual([7]);
+    expect(calls).toBe(2);
+  });
+
+  it('saves final seconds collected as the previous drain settles', async () => {
+    let now = new Date(2026, 8, 27).getTime();
+    let release = () => {};
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const rows: number[] = [];
+    const tracker = new StudyTimeTracker(() => now, (_day, seconds) => {
+      rows.push(seconds);
+      return gate;
+    });
+    tracker.setActive(true);
+    now += 5000;
+    const first = tracker.flush();
+    const final = gate.then(() => {
+      now += 2000;
+      tracker.setActive(false);
+      return tracker.flush();
+    });
+    release();
+    await Promise.all([first, final]);
     expect(rows).toEqual([5, 2]);
   });
 });
