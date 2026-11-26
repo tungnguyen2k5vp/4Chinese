@@ -597,23 +597,22 @@ export async function reviewWord(
 ): Promise<ReviewTransition | null> {
   if (activeReviewWrites.has(vocabularyId)) return null;
   activeReviewWrites.add(vocabularyId);
-  const progress = await getProgress(db, vocabularyId);
-  const now = new Date();
-  // Reviews are only valid for studied learning words that are actually due.
-  // This guard prevents a newly learned word (or a known/skipped word) from
-  // accidentally entering the spaced-repetition flow.
-  if (
-    !progress ||
-    progress.status !== "LEARNING" ||
-    !progress.studied ||
-    progress.isKnown ||
-    progress.isSuspended ||
-    !isReviewDue(progress, now)
-  ) {
-    activeReviewWrites.delete(vocabularyId);
-    return null;
-  }
   try {
+    const progress = await getProgress(db, vocabularyId);
+    const now = new Date();
+    // Reviews are only valid for studied learning words that are actually due.
+    // This guard prevents a newly learned word (or a known/skipped word) from
+    // accidentally entering the spaced-repetition flow.
+    if (
+      !progress ||
+      progress.status !== "LEARNING" ||
+      !progress.studied ||
+      progress.isKnown ||
+      progress.isSuspended ||
+      !isReviewDue(progress, now)
+    ) {
+      return null;
+    }
     const result = applyReview(progress, input, now);
     const answeredCorrect = input.rating === "again" ? false : input.correct;
     await db.withTransactionAsync(async () => {

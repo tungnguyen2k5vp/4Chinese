@@ -814,6 +814,7 @@ export function Hsk30Catalog({
     () => new Set(),
   );
   const generation = useRef(0);
+  const dataGeneration = useRef(-1);
   const pageBusy = useRef(false);
   const pageSize = kind === "vocabulary" || kind === "hanzi" ? 100 : 200;
 
@@ -839,6 +840,7 @@ export function Hsk30Catalog({
       ])
         .then(([rows, counts]) => {
           if (gen === generation.current) {
+            dataGeneration.current = gen;
             setItems(rows);
             setStats(counts);
             setMore(rows.length === pageSize);
@@ -902,7 +904,7 @@ export function Hsk30Catalog({
   );
 
   const loadMore = async () => {
-    if (!more || loading || pageBusy.current) return;
+    if (!more || loading || pageBusy.current || dataGeneration.current !== generation.current) return;
     pageBusy.current = true;
     const gen = generation.current;
     try {

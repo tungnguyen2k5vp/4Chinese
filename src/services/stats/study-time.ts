@@ -20,7 +20,7 @@ export function splitStudySeconds(start: number, end: number): { date: string; s
 export class StudyTimeTracker {
   private since: number | null = null;
   private readonly pending = new Map<string, number>();
-  private writing = false;
+  private writing: Promise<boolean> | null = null;
   constructor(private readonly clock: () => number, private readonly write: (date: string, seconds: number) => Promise<void>) {}
   private collect() {
     if (this.since === null) return;
@@ -39,22 +39,31 @@ export class StudyTimeTracker {
   }
   async flush(): Promise<void> {
     this.collect();
-    if (this.writing || !this.pending.size) return;
-    this.writing = true;
-    const entries = [...this.pending];
-    this.pending.clear();
-    let index = 0;
-    try {
-      for (; index < entries.length; index++) {
-        const [date, seconds] = entries[index]!;
-        await this.write(date, seconds);
+    while (this.writing || this.pending.size) {
+      this.writing ??= this.drain().finally(() => { this.writing = null; });
+      if (!await this.writing) return;
+    }
+  }
+  private async drain(): Promise<boolean> {
+    // A final blur flush can collect more time while an earlier write is pending.
+    while (this.pending.size) {
+      const entries = [...this.pending];
+      this.pending.clear();
+      let index = 0;
+      try {
+        for (; index < entries.length; index++) {
+          const [date, seconds] = entries[index]!;
+          await this.write(date, seconds);
+        }
+      } catch {
+        // Retry on the next timer/foreground event, never spin on a locked/full DB.
+        for (; index < entries.length; index++) {
+          const [date, seconds] = entries[index]!;
+          this.pending.set(date, (this.pending.get(date) ?? 0) + seconds);
+        }
+        return false;
       }
-    } catch {
-      // Retry on the next timer/foreground event, never spin on a locked/full DB.
-      for (; index < entries.length; index++) {
-        const [date, seconds] = entries[index]!;
-        this.pending.set(date, (this.pending.get(date) ?? 0) + seconds);
-      }
-    } finally { this.writing = false; }
+    }
+    return true;
   }
 }
